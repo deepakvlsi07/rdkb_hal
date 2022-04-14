@@ -24,8 +24,8 @@
 #include <sys/ioctl.h>  /* ioctl()  */
 #include <sys/socket.h> /* socket() */
 #include <arpa/inet.h>  
-#include <unistd.h>     /* close()  */
 #include <linux/if.h>   /* struct ifreq */
+#include <stdbool.h>
 
 #include "ccsp_hal_ethsw.h" 
 
@@ -39,7 +39,15 @@
 #define MACADDRESS_SIZE 6
 #define LM_ARP_ENTRY_FORMAT  "%63s %63s %63s %63s %17s %63s"
 
-#define  ETH_WAN_IFNAME   "erouter0"
+#define ETH_WAN_INTERFACE  "erouter0"
+#define ETH_WAN_IFNAME   "eth2"
+#if defined(FEATURE_RDKB_WAN_MANAGER)
+static pthread_t ethsw_tid;
+static int hal_init_done = 0;
+appCallBack ethWanCallbacks;
+#define  ETH_INITIALIZE  "/tmp/ethagent_initialized"
+void *ethsw_thread_main(void *context __attribute__((unused)));
+#endif
 
 #define  ETHSWITCHTOOL   "ethtool"
 /**********************************************************************
@@ -95,6 +103,21 @@ CcspHalEthSwInit
         void
     )
 {
+#if defined(FEATURE_RDKB_WAN_MANAGER)
+    int rc;
+
+    if (hal_init_done) {
+        return RETURN_OK;
+    }
+
+    // Create thread to handle async events and callbacks.
+    rc = pthread_create(&ethsw_tid, NULL, ethsw_thread_main, NULL);
+    if (rc != 0) {
+        return RETURN_ERR;
+    }
+
+    hal_init_done = 1;
+#endif	
     return  RETURN_OK;
 }
 
@@ -949,7 +972,7 @@ INT CcspHalExtSw_getEthWanEnable(BOOLEAN *enable)
     }
 
     memset(&ifr, 0, sizeof(ifr));
-    snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "%s", ETH_WAN_IFNAME);
+    snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "%s", ETH_WAN_INTERFACE);
 
     if (ioctl(sockfd, SIOCGIFFLAGS, &ifr) < 0)
     {
@@ -999,7 +1022,7 @@ INT CcspHalExtSw_setEthWanEnable(BOOLEAN enable)
 {
     char cmd[32] = {0};
 
-    sprintf(cmd,"ifconfig %s %s",ETH_WAN_IFNAME, enable ? "up":"down");
+    sprintf(cmd,"ifconfig %s %s",ETH_WAN_INTERFACE, enable ? "up":"down");
     system(cmd);
 
 	return RETURN_OK;
@@ -1027,16 +1050,86 @@ INT CcspHalExtSw_setEthWanPort(UINT Port)
 
 INT GWP_GetEthWanLinkStatus()
 {
-    INT status = 0;
-    char path[32] = {0};
-    sprintf(path, "/sys/class/net/%s/carrier",ETH_WAN_IFNAME);
-    status = is_interface_link(path);
-    
-    return status;
+	FILE *fp = NULL;
+	char command[128] = {0};
+	char buff[32] = {0};
+
+	snprintf(command,128, "%s %s | grep \"Link detected\" | cut -d ':' -f2 | cut -d ' ' -f2", ETHSWITCHTOOL, ETH_WAN_INTERFACE);
+	fp = popen(command, "r");
+	if (fp == NULL)
+	{
+
+		return 0;
+	}
+	if (fgets(buff, sizeof(buff), fp) != NULL)
+	{
+		pclose(fp);
+
+		if (strstr(buff, "yes") != NULL)
+			return 1;  
+		else
+			return 0;
+	}  
 }
 
+#if defined(FEATURE_RDKB_WAN_MANAGER)
+void *ethsw_thread_main(void *context __attribute__((unused)))
+{
+	int previousLinkDetected = 0;
+	int currentLinkDeteced = 0;
+	int timeout = 0;
+	int file = 0;
+
+	while(timeout != 180)
+	{
+		if (file == access(ETH_INITIALIZE, R_OK))
+		{
+			CcspHalEthSwTrace(("Eth agent initialized \n"));
+			break;
+		}
+		else
+		{
+			timeout = timeout+1;
+			sleep(1);
+		}
+	}
+
+	while(1)
+	{
+		currentLinkDeteced = GWP_GetEthWanLinkStatus();
+
+		if (currentLinkDeteced != previousLinkDetected)
+		{
+			if (currentLinkDeteced)
+			{
+				CcspHalEthSwTrace(("send_link_event: Got Link UP Event\n"));
+				ethWanCallbacks.pGWP_act_EthWanLinkUP();    
+			}
+			else
+			{
+				CcspHalEthSwTrace(("send_link_event: Got Link DOWN Event\n"));
+				ethWanCallbacks.pGWP_act_EthWanLinkDown();   
+			}
+			previousLinkDetected = currentLinkDeteced;
+		}
+		sleep(5);
+	}
+
+    return NULL;
+}
+#endif
 void GWP_RegisterEthWan_Callback(appCallBack *obj) {
-    return;
+#if defined(FEATURE_RDKB_WAN_MANAGER)
+    int rc;
+
+    if (obj == NULL) {
+        rc = RETURN_ERR;
+    } else {
+        ethWanCallbacks.pGWP_act_EthWanLinkUP = obj->pGWP_act_EthWanLinkUP;
+        ethWanCallbacks.pGWP_act_EthWanLinkDown = obj->pGWP_act_EthWanLinkDown;
+        rc = RETURN_OK;
+    }
+#endif	
 }
 
 INT GWP_GetEthWanInterfaceName
