@@ -50,6 +50,9 @@ void *ethsw_thread_main(void *context __attribute__((unused)));
 #endif
 
 #define  ETHSWITCHTOOL   "ethtool"
+#define  MIITOOL         "mii_mgr_cl45"
+#define  WANLINKUP       "0x796D"
+
 /**********************************************************************
                             MAIN ROUTINES
 **********************************************************************/
@@ -1052,20 +1055,23 @@ INT GWP_GetEthWanLinkStatus()
 {
 	FILE *fp = NULL;
 	char command[128] = {0};
-	char buff[32] = {0};
+	char buff[64] = {0};
+	int wanport = 0;
 
-	snprintf(command,128, "%s %s | grep \"Link detected\" | cut -d ':' -f2 | cut -d ' ' -f2", ETHSWITCHTOOL, ETH_WAN_INTERFACE);
+	CcspHalExtSw_getEthWanPort (&wanport);
+	
+	snprintf(command,128, "%s -g -p %d -d 0x0 -r 0x1 -i %s", MIITOOL, wanport, ETH_WAN_INTERFACE);
 	fp = popen(command, "r");
 	if (fp == NULL)
 	{
-
 		return 0;
 	}
 	if (fgets(buff, sizeof(buff), fp) != NULL)
 	{
 		pclose(fp);
 
-		if (strstr(buff, "yes") != NULL)
+		/* wan link up =>0x796D , wan link down => 0x7949 */
+		if (strstr(buff, WANLINKUP) != NULL)
 			return 1;  
 		else
 			return 0;
