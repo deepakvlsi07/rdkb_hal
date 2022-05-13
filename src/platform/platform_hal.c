@@ -236,3 +236,45 @@ INT platform_hal_GetRouterRegion(CHAR* pValue)
 {
 	return RETURN_OK;
 }
+
+char ifname[32];
+char *get_current_wan_ifname()
+{
+	FILE *fp = NULL;
+	char command[128] = {0};
+	char ert_ifname[32] = {0};
+	snprintf(command, 128, "sysevent get %s", "current_wan_ifname");
+	fp = popen(command, "r");
+	if (fp == NULL)
+	{
+		return "0";
+	}
+	if (fgets(ert_ifname, sizeof(ert_ifname), fp) != NULL)
+	{
+		if(strlen(ert_ifname) == 0){
+			fprintf(stderr, "%s %d syseventError %d\n", __FUNCTION__, __LINE__, RETURN_ERR);
+			pclose(fp);
+			return "0";
+		}
+	}	
+	pclose(fp);
+	memset(ifname, 0, sizeof(ifname));
+	strncpy(ifname, ert_ifname, strlen(ert_ifname)-1);
+
+	return ifname;
+}
+
+
+
+INT platform_hal_GetDhcpv6_Options ( dhcp_opt_list ** req_opt_list, dhcp_opt_list ** send_opt_list)
+{
+	return RETURN_OK;
+}
+
+
+
+INT platform_hal_GetDhcpv4_Options ( dhcp_opt_list ** req_opt_list, dhcp_opt_list ** send_opt_list)
+{
+	return RETURN_OK;
+}
+
