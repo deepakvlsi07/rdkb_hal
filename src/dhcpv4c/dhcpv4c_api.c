@@ -22,7 +22,7 @@
 #include "dhcp4cApi.h"
 #include "dhcpv4c_api.h"
 
-#if defined(UDHCPC_SWITCH)
+
 // start of UDHCPC client required API
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -60,35 +60,47 @@ static INT dhcpv4c_sysevent_get_value(char *query_name, char *query_value, unsig
 	if (query_name == NULL || query_value == NULL || query_value_size == 0) {
 		return STATUS_FAILURE;
 	} else {
-		token_t        se_token;
-		int            se_fd = -1;
-
-		se_fd = s_sysevent_connect(&se_token);
-		if (0 > se_fd) {
-			HAL_DHCPV4C_ERT_DBG((stderr, "%s %d syseventError\n", __FUNCTION__, __LINE__));
+		FILE *fp = NULL;
+		char command[128] = {0};
+		char ert_ifname[32] = {0};
+		char name[64] = {0};
+		char inf[32] = {0};
+		char query[64] = {0};
+		
+		snprintf(command, 128, "sysevent get %s", "current_wan_ifname");
+		fp = popen(command, "r");
+		if (fp == NULL)
+		{
 			return STATUS_FAILURE;
-		} else {
-			int ret = STATUS_SUCCESS;
-			char ert_ifname[32];
-			char name[64];
-
-			memset(ert_ifname, 0, sizeof(ert_ifname));
-
-			ret = sysevent_get(se_fd, se_token, "current_wan_ifname", ert_ifname, sizeof(ert_ifname));
-			if (ret != 0 || strlen(ert_ifname) == 0) {
-				HAL_DHCPV4C_ERT_DBG((stderr, "%s %d syseventError %d\n", __FUNCTION__, __LINE__, ret));
+		}
+		if (fgets(inf, sizeof(inf), fp) != NULL)
+		{
+			if(strlen(inf) == 0){
+				HAL_DHCPV4C_ERT_DBG((stderr, "%s %d syseventError %d\n", __FUNCTION__, __LINE__, STATUS_FAILURE));
+				pclose(fp);
 				return STATUS_FAILURE;
 			}
+		}	
+		pclose(fp);
+		strncpy(ert_ifname, inf, strlen(inf)-1);
+		snprintf(name, sizeof(name), query_name, ert_ifname);
+		snprintf(command, 128, "sysevent get %s", name);
+		fp = popen(command, "r");
+		if (fp == NULL)
+		{
+			return STATUS_FAILURE;
+		}
 
-			snprintf(name, sizeof(name), query_name, ert_ifname);
-
-			ret = sysevent_get(se_fd, se_token, name, query_value, query_value_size);
-
-			if (ret != 0 || strlen(query_value) == 0) {
-				HAL_DHCPV4C_ERT_DBG((stderr, "%s %d syseventError %d\n", __FUNCTION__, __LINE__, ret));
+		if (fgets(query, query_value_size, fp) != NULL)
+		{
+			if(strlen(query) == 0){
+				HAL_DHCPV4C_ERT_DBG((stderr, "%s %d syseventError %d\n", __FUNCTION__, __LINE__, STATUS_FAILURE));
+				pclose(fp);
 				return STATUS_FAILURE;
 			}
 		}
+		pclose(fp);
+		strncpy(query_value, query, strlen(query)-1);
 	}
 	return STATUS_SUCCESS;
 }
@@ -132,7 +144,7 @@ static int dhcpv4c_get_up_time(unsigned int *up_time)
 
 INT dhcpv4c_get_ert_lease_time_udhcp(UINT *pValue)
 {
-	HAL_DHCPV4C_ERT_DBG((stderr, "%s %d in\n", __func__, __LINE__));
+
 	if (NULL == pValue) {
 		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d invalid parameter\n", __FUNCTION__, __LINE__));
 		return STATUS_FAILURE;
@@ -147,7 +159,6 @@ INT dhcpv4c_get_ert_lease_time_udhcp(UINT *pValue)
 			return STATUS_FAILURE;
 		}
 
-		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d query_value===%s===\n", __func__, __LINE__, query_value));
 		*pValue = atoi(query_value);
 	}
 
@@ -156,7 +167,6 @@ INT dhcpv4c_get_ert_lease_time_udhcp(UINT *pValue)
 
 INT dhcpv4c_get_ert_remain_lease_time_udhcp(UINT *pValue)
 {
-	HAL_DHCPV4C_ERT_DBG((stderr, "%s %d in\n", __func__, __LINE__));
 
 	if (NULL == pValue) {
 		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d invalid parameter\n", __FUNCTION__, __LINE__));
@@ -172,7 +182,6 @@ INT dhcpv4c_get_ert_remain_lease_time_udhcp(UINT *pValue)
 			return STATUS_FAILURE;
 		}
 
-		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d lease time===%s===\n", __func__, __LINE__, query_value));
 		lease_time = atoi(query_value);
 
 		ret = dhcpv4c_sysevent_get_value("ipv4_%s_start_time", query_value, sizeof(query_value));
@@ -180,13 +189,11 @@ INT dhcpv4c_get_ert_remain_lease_time_udhcp(UINT *pValue)
 			return STATUS_FAILURE;
 		}
 
-		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d start time===%s===\n", __func__, __LINE__, query_value));
 		start_time = atoi(query_value);
 
 		dhcpv4c_get_up_time(&up_time);
 
 		remain_lease_time = lease_time - (up_time - start_time);
-		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d remain lease time===%u===\n", __func__, __LINE__, remain_lease_time));
 
 		*pValue = remain_lease_time;
 	}
@@ -196,7 +203,6 @@ INT dhcpv4c_get_ert_remain_lease_time_udhcp(UINT *pValue)
 
 INT dhcpv4c_get_ert_remain_renew_time_udhcp(UINT *pValue)
 {
-	HAL_DHCPV4C_ERT_DBG((stderr, "%s %d in\n", __func__, __LINE__));
 
 	if (NULL == pValue) {
 		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d invalid parameter\n", __FUNCTION__, __LINE__));
@@ -213,23 +219,20 @@ INT dhcpv4c_get_ert_remain_renew_time_udhcp(UINT *pValue)
 			return STATUS_FAILURE;
 		}
 
-		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d lease time===%s===\n", __func__, __LINE__, query_value));
 		lease_time = atoi(query_value);
 		renew_time = lease_time/2;
-		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d renew time===%u===\n", __func__, __LINE__, renew_time));
 
 		ret = dhcpv4c_sysevent_get_value("ipv4_%s_start_time", query_value, sizeof(query_value));
 		if (ret != STATUS_SUCCESS || strlen(query_value) == 0) {
 			return STATUS_FAILURE;
 		}
 
-		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d start time===%s===\n", __func__, __LINE__, query_value));
+
 		start_time = atoi(query_value);
 
 		dhcpv4c_get_up_time(&up_time);
 
 		remain_renew_time = renew_time - (up_time - start_time);
-		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d remain renew time===%u===\n", __func__, __LINE__, remain_renew_time));
 
 		*pValue = remain_renew_time;
 	}
@@ -239,7 +242,6 @@ INT dhcpv4c_get_ert_remain_renew_time_udhcp(UINT *pValue)
 
 INT dhcpv4c_get_ert_remain_rebind_time_udhcp(UINT *pValue)
 {
-	HAL_DHCPV4C_ERT_DBG((stderr, "%s %d in\n", __func__, __LINE__));
 
 	if (NULL == pValue) {
 		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d invalid parameter\n", __FUNCTION__, __LINE__));
@@ -256,23 +258,19 @@ INT dhcpv4c_get_ert_remain_rebind_time_udhcp(UINT *pValue)
 			return STATUS_FAILURE;
 		}
 
-		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d lease time===%s===\n", __func__, __LINE__, query_value));
 		lease_time = atoi(query_value);
 		rebind_time = lease_time*7/8;
-		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d rebind time===%u===\n", __func__, __LINE__, rebind_time));
 
 		ret = dhcpv4c_sysevent_get_value("ipv4_%s_start_time", query_value, sizeof(query_value));
 		if (ret != STATUS_SUCCESS || strlen(query_value) == 0) {
 			return STATUS_FAILURE;
 		}
 
-		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d start time===%s===\n", __func__, __LINE__, query_value));
 		start_time = atoi(query_value);
 
 		dhcpv4c_get_up_time(&up_time);
 
 		remain_bind_time = rebind_time - (up_time - start_time);
-		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d remain rebind time===%u===\n", __func__, __LINE__, remain_bind_time));
 
 		*pValue = remain_bind_time;
 	}
@@ -282,7 +280,6 @@ INT dhcpv4c_get_ert_remain_rebind_time_udhcp(UINT *pValue)
 
 INT dhcpv4c_get_ert_config_attempts_udhcp(INT *pValue)
 {
-	HAL_DHCPV4C_ERT_DBG((stderr, "%s %d in\n", __func__, __LINE__));
 
 	if (NULL == pValue) {
 		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d invalid parameter\n", __FUNCTION__, __LINE__));
@@ -295,42 +292,37 @@ INT dhcpv4c_get_ert_config_attempts_udhcp(INT *pValue)
 
 INT dhcpv4c_get_ert_ifname_udhcp(CHAR *pName)
 {
-	HAL_DHCPV4C_ERT_DBG((stderr, "%s %d in\n", __func__, __LINE__));
 
 	if (NULL == pName) {
 		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d invalid parameter\n", __FUNCTION__, __LINE__));
 		return STATUS_FAILURE;
 	} else {
-		token_t        se_token;
-		int            se_fd = -1;
-
-		se_fd = s_sysevent_connect(&se_token);
-		if (0 > se_fd) {
-			HAL_DHCPV4C_ERT_DBG((stderr, "%s %d syseventError\n", __FUNCTION__, __LINE__));
+		FILE *fp = NULL;
+		char command[128] = {0};
+		char ert_ifname[32] = {0};
+		
+		snprintf(command, 128, "sysevent get %s", "current_wan_ifname");
+		fp = popen(command, "r");
+		if (fp == NULL)
+		{
 			return STATUS_FAILURE;
-		} else {
-			int ret = STATUS_SUCCESS;
-			char ert_ifname[32];
-
-			memset(ert_ifname, 0, sizeof(ert_ifname));
-
-			ret = sysevent_get(se_fd, se_token, "current_wan_ifname", ert_ifname, sizeof(ert_ifname));
-			if (ret != 0 || strlen(ert_ifname) == 0) {
-				HAL_DHCPV4C_ERT_DBG((stderr, "%s %d syseventError use default name %s\n", __FUNCTION__, __LINE__, DEFAULT_ERT_IFNAME));
-				strcpy(pName, DEFAULT_ERT_IFNAME);
-				return STATUS_SUCCESS;
-			}
-
-			strcpy(pName, ert_ifname);
 		}
+		if (fgets(ert_ifname, sizeof(ert_ifname), fp) != NULL)
+		{
+			if(strlen(ert_ifname) == 0){
+				HAL_DHCPV4C_ERT_DBG((stderr, "%s %d syseventError %d\n", __FUNCTION__, __LINE__, STATUS_FAILURE));
+				pclose(fp);
+				return STATUS_FAILURE;
+			}
+		}	
+		pclose(fp);
+		strncpy(pName, ert_ifname, strlen(ert_ifname)-1);
 	}
-
-        return STATUS_SUCCESS;
+	return STATUS_SUCCESS;
 }
 
 INT dhcpv4c_get_ert_fsm_state_udhcp(INT *pValue)
 {
-	HAL_DHCPV4C_ERT_DBG((stderr, "%s %d in\n", __func__, __LINE__));
 
 	if (NULL == pValue) {
 		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d invalid parameter\n", __FUNCTION__, __LINE__));
@@ -347,7 +339,6 @@ INT dhcpv4c_get_ert_fsm_state_udhcp(INT *pValue)
 			return STATUS_FAILURE;
 		}
 
-		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d dhcp state===%s===\n", __func__, __LINE__, query_value));
 
 		int i = 0;
 		for (i=0; i<sizeof(dhcp_state)/sizeof(char*); i++) {
@@ -367,7 +358,6 @@ INT dhcpv4c_get_ert_fsm_state_udhcp(INT *pValue)
 
 INT dhcpv4c_get_ert_ip_addr_udhcp(UINT *pValue)
 {
-	HAL_DHCPV4C_ERT_DBG((stderr, "%s %d in\n", __func__, __LINE__));
 
 	if (NULL == pValue) {
 		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d invalid parameter\n", __FUNCTION__, __LINE__));
@@ -384,7 +374,6 @@ INT dhcpv4c_get_ert_ip_addr_udhcp(UINT *pValue)
 			return STATUS_FAILURE;
 		}
 
-		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d ip addr===%s===\n", __func__, __LINE__, query_value));
 		inet_aton(query_value, &addr);
 		*pValue = addr.s_addr;
 	}
@@ -394,7 +383,6 @@ INT dhcpv4c_get_ert_ip_addr_udhcp(UINT *pValue)
 
 INT dhcpv4c_get_ert_mask_udhcp(UINT *pValue)
 {
-	HAL_DHCPV4C_ERT_DBG((stderr, "%s %d in\n", __func__, __LINE__));
 
 	if (NULL == pValue) {
 		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d invalid parameter\n", __FUNCTION__, __LINE__));
@@ -410,11 +398,9 @@ INT dhcpv4c_get_ert_mask_udhcp(UINT *pValue)
 		if (ret != STATUS_SUCCESS || strlen(query_value) == 0) {
 			return STATUS_FAILURE;
 		}
-
-		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d mask===%s===\n", __func__, __LINE__, query_value));
-		mask = atoi(query_value);
-		mask = (0xFFFFFFFF << (32 - mask)) & 0xFFFFFFFF;
-		*pValue = htonl(mask);
+		
+		inet_aton(query_value, &addr);
+		*pValue = addr.s_addr;
 	}
 
 	return STATUS_SUCCESS;
@@ -422,7 +408,6 @@ INT dhcpv4c_get_ert_mask_udhcp(UINT *pValue)
 
 INT dhcpv4c_get_ert_gw_udhcp(UINT *pValue)
 {
-	HAL_DHCPV4C_ERT_DBG((stderr, "%s %d in\n", __func__, __LINE__));
 
 	if (NULL == pValue) {
 		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d invalid parameter\n", __FUNCTION__, __LINE__));
@@ -440,7 +425,6 @@ INT dhcpv4c_get_ert_gw_udhcp(UINT *pValue)
 			return STATUS_FAILURE;
 		}
 
-		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d gw number===%s===\n", __func__, __LINE__, query_value));
 		gw_num = atoi(query_value);
 
 		if (gw_num >= 1) {
@@ -449,7 +433,6 @@ INT dhcpv4c_get_ert_gw_udhcp(UINT *pValue)
 				return STATUS_FAILURE;
 			}
 
-			HAL_DHCPV4C_ERT_DBG((stderr, "%s %d the first gw===%s===\n", __func__, __LINE__, query_value));
 			inet_aton(query_value, &addr);
 			*pValue = addr.s_addr;
 		} else {
@@ -462,9 +445,6 @@ INT dhcpv4c_get_ert_gw_udhcp(UINT *pValue)
 
 INT dhcpv4c_get_ert_dns_svrs_udhcp(dhcpv4c_ip_list_t *pList)
 {
-
-	HAL_DHCPV4C_ERT_DBG((stderr, "%s %d in\n", __func__, __LINE__));
-
 	if (NULL == pList) {
 		return STATUS_FAILURE;
 	} else {
@@ -480,7 +460,6 @@ INT dhcpv4c_get_ert_dns_svrs_udhcp(dhcpv4c_ip_list_t *pList)
 			return STATUS_FAILURE;
 		}
 
-		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d query_value===%s===\n", __func__, __LINE__, query_value));
 		dns_num = atoi(query_value);
 
 		if (dns_num >= 1) {
@@ -498,7 +477,6 @@ INT dhcpv4c_get_ert_dns_svrs_udhcp(dhcpv4c_ip_list_t *pList)
 					continue;
 				}
 
-				HAL_DHCPV4C_ERT_DBG((stderr, "%s %d query_value===%s===\n", __func__, __LINE__, query_value));
 				inet_aton(query_value, &addr);
 				pList->addrs[i] = addr.s_addr;
 			}
@@ -513,7 +491,6 @@ INT dhcpv4c_get_ert_dns_svrs_udhcp(dhcpv4c_ip_list_t *pList)
 
 INT dhcpv4c_get_ert_dhcp_svr_udhcp(UINT *pValue)
 {
-	HAL_DHCPV4C_ERT_DBG((stderr, "%s %d in\n", __func__, __LINE__));
 
 	if (NULL == pValue) {
 		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d invalid parameter\n", __FUNCTION__, __LINE__));
@@ -530,7 +507,6 @@ INT dhcpv4c_get_ert_dhcp_svr_udhcp(UINT *pValue)
 			return STATUS_FAILURE;
 		}
 
-		HAL_DHCPV4C_ERT_DBG((stderr, "%s %d dhcp server===%s===\n", __func__, __LINE__, query_value));
 		inet_aton(query_value, &addr);
 		*pValue = addr.s_addr;
 	}
@@ -547,667 +523,149 @@ static int query_all_in_progress = 0;
 
 INT dhcpv4c_get_ert_lease_time(UINT *pValue)
 {
-	char udhcpflag[10]="";
-	syscfg_get( NULL, "UDHCPEnable", udhcpflag, sizeof(udhcpflag));
 	if (NULL == pValue)
 	{
 		return STATUS_FAILURE;
 	}
 	else
 	{
-		if( 0 == strcmp(udhcpflag,"false"))
-		{
-			return dhcp4c_get_ert_lease_time(pValue);
-		}
-		else
-		{
-			return dhcpv4c_get_ert_lease_time_udhcp(pValue);
-		}
+		return dhcpv4c_get_ert_lease_time_udhcp(pValue);
 	}
 }
 
 INT dhcpv4c_get_ert_remain_lease_time(UINT *pValue)
 {
-	char udhcpflag[10]="";
-	syscfg_get( NULL, "UDHCPEnable", udhcpflag, sizeof(udhcpflag));
 	if(pValue==NULL)
 	{
 		return(STATUS_FAILURE);
 	}
 	else
 	{
-		if( 0 == strcmp(udhcpflag,"false"))
-		{
-			return dhcp4c_get_ert_remain_lease_time(pValue);
-		}
-		else
-		{
-			return dhcpv4c_get_ert_remain_lease_time_udhcp(pValue);
-		}
+		return dhcpv4c_get_ert_remain_lease_time_udhcp(pValue);
 	}
 }
 
 INT dhcpv4c_get_ert_remain_renew_time(UINT *pValue)
 {
-	char udhcpflag[10]="";
-	syscfg_get( NULL, "UDHCPEnable", udhcpflag, sizeof(udhcpflag));
 	if (NULL == pValue)
 	{
 		return STATUS_FAILURE;
 	}
 	else
 	{
-		if( 0 == strcmp(udhcpflag,"false"))
-		{
-			return dhcp4c_get_ert_remain_renew_time(pValue);
-		}
-		else
-		{
-			return dhcpv4c_get_ert_remain_renew_time_udhcp(pValue);
-		}
+		return dhcpv4c_get_ert_remain_renew_time_udhcp(pValue);
 	}
 }
 
 INT dhcpv4c_get_ert_remain_rebind_time(UINT *pValue)
 {
-	char udhcpflag[10]="";
-	syscfg_get( NULL, "UDHCPEnable", udhcpflag, sizeof(udhcpflag));
 	if (NULL == pValue)
 	{
 		return STATUS_FAILURE;
 	}
 	else
 	{
-		if( 0 == strcmp(udhcpflag,"false"))
-		{
-			return dhcp4c_get_ert_remain_rebind_time(pValue);
-		}
-		else
-		{
-			return dhcpv4c_get_ert_remain_rebind_time_udhcp(pValue);
-		}
+		return dhcpv4c_get_ert_remain_rebind_time_udhcp(pValue);
 	}
 }
 
 INT dhcpv4c_get_ert_config_attempts(INT *pValue)
 {
-	char udhcpflag[10]="";
-	syscfg_get( NULL, "UDHCPEnable", udhcpflag, sizeof(udhcpflag));
 	if (NULL == pValue)
 	{
 		return STATUS_FAILURE;
 	}
 	else
 	{
-		if( 0 == strcmp(udhcpflag,"false"))
-		{
-			return dhcp4c_get_ert_config_attempts(pValue);
-		}
-		else
-		{
-			return dhcpv4c_get_ert_config_attempts_udhcp(pValue);
-		}
+		return dhcpv4c_get_ert_config_attempts_udhcp(pValue);
 	}
 }
 
 INT dhcpv4c_get_ert_ifname(CHAR *pName)
 {
-	char udhcpflag[10]="";
-	syscfg_get( NULL, "UDHCPEnable", udhcpflag, sizeof(udhcpflag));
 	if (NULL == pName)
 	{
 		return STATUS_FAILURE;
 	}
 	else
 	{
-		if( 0 == strcmp(udhcpflag,"false"))
-		{
-			return dhcp4c_get_ert_ifname(pName);
-		}
-		else
-		{
-			return dhcpv4c_get_ert_ifname_udhcp(pName);
-		}
+		return dhcpv4c_get_ert_ifname_udhcp(pName);
 	}
 }
 
 INT dhcpv4c_get_ert_fsm_state(INT *pValue)
 {
-	char udhcpflag[10]="";
-	syscfg_get( NULL, "UDHCPEnable", udhcpflag, sizeof(udhcpflag));
 	if(pValue==NULL)
 	{
 		return(STATUS_FAILURE);
 	}
 	else
 	{
-		if( 0 == strcmp(udhcpflag,"false"))
-		{
-			return dhcp4c_get_ert_fsm_state(pValue);
-		}
-		else
-		{
-			return dhcpv4c_get_ert_fsm_state_udhcp(pValue);
-		}
+		return dhcpv4c_get_ert_fsm_state_udhcp(pValue);
 	}
 }
 
 INT dhcpv4c_get_ert_ip_addr(UINT *pValue)
 {
-	char udhcpflag[10]="";
-	syscfg_get( NULL, "UDHCPEnable", udhcpflag, sizeof(udhcpflag));
 	if (NULL == pValue)
 	{
 		return STATUS_FAILURE;
 	}
 	else
 	{
-		if( 0 == strcmp(udhcpflag,"false"))
-		{
-			return dhcp4c_get_ert_ip_addr(pValue);
-		}
-		else
-		{
-			return dhcpv4c_get_ert_ip_addr_udhcp(pValue);
-		}
+		return dhcpv4c_get_ert_ip_addr_udhcp(pValue);
 	}
 }
 
 INT dhcpv4c_get_ert_mask(UINT *pValue)
 {
-	char udhcpflag[10]="";
-	syscfg_get( NULL, "UDHCPEnable", udhcpflag, sizeof(udhcpflag));
 	if (NULL == pValue)
 	{
 		return STATUS_FAILURE;
 	}
 	else
 	{
-		if( 0 == strcmp(udhcpflag,"false"))
-		{
-			return dhcp4c_get_ert_mask(pValue);
-		}
-		else
-		{
-			return dhcpv4c_get_ert_mask_udhcp(pValue);
-		}
+		return dhcpv4c_get_ert_mask_udhcp(pValue);
 	}
 }
 
 INT dhcpv4c_get_ert_gw(UINT *pValue)
 {
-	char udhcpflag[10]="";
-	syscfg_get( NULL, "UDHCPEnable", udhcpflag, sizeof(udhcpflag));
 	if(pValue==NULL)
 	{
-		return(STATUS_FAILURE);
+		return STATUS_FAILURE;
 	}
 	else
 	{
-		if( 0 == strcmp(udhcpflag,"false"))
-		{
-			return dhcp4c_get_ert_gw(pValue);
-		}
-		else
-		{
-			return dhcpv4c_get_ert_gw_udhcp(pValue);
-		}
+		return dhcpv4c_get_ert_gw_udhcp(pValue);
 	}
 }
 
 INT dhcpv4c_get_ert_dns_svrs(dhcpv4c_ip_list_t *pList)
 {
-	char udhcpflag[10]="";
-	syscfg_get( NULL, "UDHCPEnable", udhcpflag, sizeof(udhcpflag));
 	if (NULL == pList)
 	{
 		return STATUS_FAILURE;
 	}
 	else
 	{
-		if( 0 == strcmp(udhcpflag,"false"))
-		{
-			return dhcp4c_get_ert_dns_svrs((ipv4AddrList_t*) pList);
-		}
-		else
-		{
-			return dhcpv4c_get_ert_dns_svrs_udhcp((ipv4AddrList_t*) pList);
-		}
+		return dhcpv4c_get_ert_dns_svrs_udhcp((ipv4AddrList_t*) pList);
 	}
 }
 
 INT dhcpv4c_get_ert_dhcp_svr(UINT *pValue)
 {
-	char udhcpflag[10]="";
-	syscfg_get( NULL, "UDHCPEnable", udhcpflag, sizeof(udhcpflag));
+
 	if (NULL == pValue)
 	{
 		return STATUS_FAILURE;
 	}
 	else
 	{
-		if( 0 == strcmp(udhcpflag,"false"))
-		{
-			return dhcp4c_get_ert_dhcp_svr(pValue);
-		}
-		else
-		{
-			return dhcpv4c_get_ert_dhcp_svr_udhcp(pValue);
-		}
+		return dhcpv4c_get_ert_dhcp_svr_udhcp(pValue);
 	}
 }
 
-#else
-/**********************************************************************************
- *
- *  DHCPV4-Client Subsystem level function definitions
- *
-**********************************************************************************/
-
-#ifdef DEBUG_QUERY_ALL
-void query_all();
-static int query_all_in_progress = 0;
-#endif
-
-/* dhcpv4c_get_ert_lease_time() function */
-/**
-* Description: Gets the E-Router Offered Lease Time
-* Parameters : 
-*    pValue - Value in Seconds.
-* @return The status of the operation.
-* @retval STATUS_SUCCESS if successful.
-* @retval STATUS_FAILURE if any error is detected 
-* 
-* @execution Synchronous.
-* @sideeffect None.
-*
-* @note This function must not suspend and must not invoke any blocking system 
-* calls. It should probably just send a message to a driver event handler task. 
-*
-*/
-INT dhcpv4c_get_ert_lease_time(UINT *pValue)
-{
-    if (NULL == pValue) 
-    {
-        return STATUS_FAILURE;
-    } 
-    else 
-    {
-        return STATUS_SUCCESS;
-        //return dhcp4c_get_ert_lease_time(pValue);
-    }
-}
- 
-/* dhcpv4c_get_ert_remain_lease_time() function */
-/**
-* Description: Gets the E-Router Remaining Lease Time
-* Parameters : 
-*    pValue - Value in Seconds.
-* @return The status of the operation.
-* @retval STATUS_SUCCESS if successful.
-* @retval STATUS_FAILURE if any error is detected 
-* 
-* @execution Synchronous.
-* @sideeffect None.
-*
-* @note This function must not suspend and must not invoke any blocking system 
-* calls. It should probably just send a message to a driver event handler task. 
-*
-*/
-INT dhcpv4c_get_ert_remain_lease_time(UINT *pValue)
-{       
-    if(pValue==NULL)
-    {
-       return(STATUS_FAILURE);
-    }
-    else
-    {
-       return STATUS_SUCCESS;
-       //return dhcp4c_get_ert_remain_lease_time(pValue);
-    }
-}
-
-/* dhcpv4c_get_ert_remain_renew_time() function */
-/**
-* Description: Gets the E-Router Interface Remaining Time to Renew
-* Parameters : 
-*    pValue - Value in Seconds.
-* @return The status of the operation.
-* @retval STATUS_SUCCESS if successful.
-* @retval STATUS_FAILURE if any error is detected 
-* 
-* @execution Synchronous.
-* @sideeffect None.
-*
-* @note This function must not suspend and must not invoke any blocking system 
-* calls. It should probably just send a message to a driver event handler task. 
-*
-*/
-INT dhcpv4c_get_ert_remain_renew_time(UINT *pValue)
-{
-    if (NULL == pValue) 
-    {
-        return STATUS_FAILURE;
-    } 
-    else 
-    {
-        return STATUS_SUCCESS;
-        //return dhcp4c_get_ert_remain_renew_time(pValue);
-    }
-}
-
-/* dhcpv4c_get_ert_remain_rebind_time() function */
-/**
-* Description: Gets the E-Router Interface Remaining Time to Rebind
-* Parameters : 
-*    pValue - Value in Seconds.
-* @return The status of the operation.
-* @retval STATUS_SUCCESS if successful.
-* @retval STATUS_FAILURE if any error is detected 
-* 
-* @execution Synchronous.
-* @sideeffect None.
-*
-* @note This function must not suspend and must not invoke any blocking system 
-* calls. It should probably just send a message to a driver event handler task. 
-*
-*/
-INT dhcpv4c_get_ert_remain_rebind_time(UINT *pValue)
-{
-    if (NULL == pValue) 
-    { 
-        return STATUS_FAILURE;
-    } 
-    else 
-    {
-        return STATUS_SUCCESS;
-        //return dhcp4c_get_ert_remain_rebind_time(pValue);
-    }
-}
-
-/* dhcpv4c_get_ert_config_attempts() function */
-/**
-* Description: Gets the E-Router Number of Attemts to Configure.
-* Parameters : 
-*    pValue - Count.
-* @return The status of the operation.
-* @retval STATUS_SUCCESS if successful.
-* @retval STATUS_FAILURE if any error is detected 
-* 
-* @execution Synchronous.
-* @sideeffect None.
-*
-* @note This function must not suspend and must not invoke any blocking system 
-* calls. It should probably just send a message to a driver event handler task. 
-*
-*/
-INT dhcpv4c_get_ert_config_attempts(INT *pValue)
-{
-    if (NULL == pValue) 
-    {    
-        return STATUS_FAILURE;
-    } 
-    else 
-    {
-        return STATUS_SUCCESS;
-        //return dhcp4c_get_ert_config_attempts(pValue);
-    }
-}
-
-/* dhcpv4c_get_ert_ifname() function */
-/**
-* Description: Gets the E-Router Interface Name.
-* Parameters : 
-*    pName - Interface Name (e.g. ert0)
-* @return The status of the operation.
-* @retval STATUS_SUCCESS if successful.
-* @retval STATUS_FAILURE if any error is detected 
-* 
-* @execution Synchronous.
-* @sideeffect None.
-*
-* @note This function must not suspend and must not invoke any blocking system 
-* calls. It should probably just send a message to a driver event handler task. 
-*
-*/
-INT dhcpv4c_get_ert_ifname(CHAR *pName)
-{
-    if (NULL == pName) 
-    {    
-        return STATUS_FAILURE;
-    } 
-    else 
-    {
-        return STATUS_SUCCESS;
-        //return dhcp4c_get_ert_ifname(pName);
-    }
-}
-
-/* Dnsmasq.leases file is generated and have all information of client leases. We check for clients whether connected ,
- by checking dnsmaq.leases file  */
-
-static int check_client_connected()
-{
-   int connected_client=0;
-   FILE *fp;
-   char buf[256] = {0};
-   fp=popen("cat /nvram/dnsmasq.leases | awk '/10.0.0./ {print $3}' | wc -l","r");
-   if(fgets(buf,sizeof(buf),fp)!= NULL)
-      connected_client = atoi (buf);
-   return connected_client;
-}
-
-/* dhcpv4c_get_ert_fsm_state() function */
-/**
-* Description: Gets the E-Router DHCP State
-* Parameters : 
-*    pValue - State of the DHCP (RENEW/ACQUIRED etc.)
-* @return The status of the operation.
-* @retval STATUS_SUCCESS if successful.
-* @retval STATUS_FAILURE if any error is detected 
-* 
-* @execution Synchronous.
-* @sideeffect None.
-*
-* @note This function must not suspend and must not invoke any blocking system 
-* calls. It should probably just send a message to a driver event handler task. 
-*
-*/
-INT dhcpv4c_get_ert_fsm_state(INT *pValue)
-{
-    int cli_connected=0;
-    cli_connected = check_client_connected();
-    if(pValue==NULL || cli_connected == 0)
-    {
-       *pValue = 1;
-           return STATUS_FAILURE;
-    }
-    else
-    {
-       *pValue = 5; //5 indicates that status is bound. Client gets Ip addrs and changes its state to bound.
-        return STATUS_SUCCESS;
-       //return dhcp4c_get_ert_fsm_state(pValue);
-    }
-}
-
-/* dhcpv4c_get_ert_ip_addr() function */
-/**
-* Description: Gets the E-Router Interface IP Address
-* Parameters : 
-*    pValue - IP Address (of the Interface)
-* @return The status of the operation.
-* @retval STATUS_SUCCESS if successful.
-* @retval STATUS_FAILURE if any error is detected 
-* 
-* @execution Synchronous.
-* @sideeffect None.
-*
-* @note This function must not suspend and must not invoke any blocking system 
-* calls. It should probably just send a message to a driver event handler task. 
-*
-*/
-INT dhcpv4c_get_ert_ip_addr(UINT *pValue)
-{
-    int cli_connected = 0;
-    cli_connected = check_client_connected();
-    if (NULL == pValue || cli_connected == 0)
-    {
-        return STATUS_FAILURE;
-    }
-    else
-    {
-        FILE *fr;
-        char *ptemp=pValue;
-        char buf[256] = {0};
-        fr= popen("head -n1 /nvram/dnsmasq.leases | awk '/10.0.0./ {print $3}'","r");
-        fgets(buf,sizeof(buf),fr);
-        sscanf(buf,"%d.%d.%d.%d",ptemp,ptemp+1,ptemp+2,ptemp+3);
-        return STATUS_SUCCESS;
-        //return dhcp4c_get_ert_ip_addr(pValue);
-    }
-}
-
-/* dhcpv4c_get_ert_mask() function */
-/**
-* Description: Gets the E-Router Subnet Mask.
-* Parameters : 
-*    pValue - Subnet Mask (bitmask)
-* @return The status of the operation.
-* @retval STATUS_SUCCESS if successful.
-* @retval STATUS_FAILURE if any error is detected 
-* 
-* @execution Synchronous.
-* @sideeffect None.
-*
-* @note This function must not suspend and must not invoke any blocking system 
-* calls. It should probably just send a message to a driver event handler task. 
-*
-*/
-INT dhcpv4c_get_ert_mask(UINT *pValue)
-{
-    int cli_connected = 0;
-    cli_connected = check_client_connected();
-    if (NULL == pValue || cli_connected == 0)
-    {
-        return STATUS_FAILURE;
-    }
-    else
-    {
-        FILE *fr;
-        char *ptemp=pValue;
-        char buf[256] = {0};
-        fr= popen("cat /var/dnsmasq.conf | awk '/dhcp-range/ {print $1}' | cut -d',' -f3","r");
-        fgets(buf,sizeof(buf),fr);
-        sscanf(buf,"%d.%d.%d.%d",ptemp,ptemp+1,ptemp+2,ptemp+3);
-        return STATUS_SUCCESS;
-        //return dhcp4c_get_ert_mask(pValue);
-    }
-}
-
-/* dhcpv4c_get_ert_gw() function */
-/**
-* Description: Gets the E-Router Gateway IP Address
-* Parameters : 
-*    pValue - IP Address (of the Gateway)
-* @return The status of the operation.
-* @retval STATUS_SUCCESS if successful.
-* @retval STATUS_FAILURE if any error is detected 
-* 
-* @execution Synchronous.
-* @sideeffect None.
-*
-* @note This function must not suspend and must not invoke any blocking system 
-* calls. It should probably just send a message to a driver event handler task. 
-*
-*/
-INT dhcpv4c_get_ert_gw(UINT *pValue)
-{
-    int cli_connected = 0;
-    cli_connected = check_client_connected();
-    if(pValue==NULL || cli_connected == 0)
-    {
-       return(STATUS_FAILURE);
-    }
-    else
-    {
-        char buf[256] = {0};
-        FILE *fr;
-        char *ptemp=pValue;
-        fr= popen("syscfg get lan_ipaddr","r");
-        fgets(buf,sizeof(buf),fr);
-        sscanf(buf,"%d.%d.%d.%d",ptemp,ptemp+1,ptemp+2,ptemp+3);
-        return STATUS_SUCCESS;
-       //return dhcp4c_get_ert_gw(pValue);
-    }
-}
-
-/* dhcpv4c_get_ert_dns_svrs() function */
-/**
-* Description: Gets the E-Router List of DNS Servers
-* Parameters : 
-*    pList - List of IP Address (of DNS Servers)
-* @return The status of the operation.
-* @retval STATUS_SUCCESS if successful.
-* @retval STATUS_FAILURE if any error is detected 
-* 
-* @execution Synchronous.
-* @sideeffect None.
-*
-* @note This function must not suspend and must not invoke any blocking system 
-* calls. It should probably just send a message to a driver event handler task. 
-*
-*/
-INT dhcpv4c_get_ert_dns_svrs(dhcpv4c_ip_list_t *pList)
-{
-    if (NULL == pList) 
-    {    
-        return STATUS_FAILURE;
-    } 
-    else 
-    {
-        return STATUS_SUCCESS;
-        //return dhcp4c_get_ert_dns_svrs((ipv4AddrList_t*) pList);
-    }
-}
-
-/* dhcpv4c_get_ert_dhcp_svr() function */
-/**
-* Description: Gets the E-Router DHCP Server IP Address
-* Parameters : 
-*    pValue - IP Address (of DHCP Server)
-* @return The status of the operation.
-* @retval STATUS_SUCCESS if successful.
-* @retval STATUS_FAILURE if any error is detected 
-* 
-* @execution Synchronous.
-* @sideeffect None.
-*
-* @note This function must not suspend and must not invoke any blocking system 
-* calls. It should probably just send a message to a driver event handler task. 
-*
-*/
-INT dhcpv4c_get_ert_dhcp_svr(UINT *pValue)
-{
-    int cli_connected = 0;
-    cli_connected = check_client_connected();
-    if (NULL == pValue || cli_connected == 0)
-    {
-        return STATUS_FAILURE;
-    }
-    else
-    {
-        FILE *fr;
-        char buf[256] = {0};
-        char *ptemp=pValue;
-        fr= popen("syscfg get lan_ipaddr","r");
-        fgets(buf,sizeof(buf),fr);
-        sscanf(buf,"%d.%d.%d.%d",ptemp,ptemp+1,ptemp+2,ptemp+3);
-        return STATUS_SUCCESS;
-        //return dhcp4c_get_ert_dhcp_svr(pValue);
-    }
-}
-
-#endif
 /* dhcpv4c_get_ecm_lease_time() function */
 /**
 * Description: Gets the ECM Offered Lease Time.
