@@ -52,7 +52,7 @@ void *ethsw_thread_main(void *context __attribute__((unused)));
 #define  ETHSWITCHTOOL   "ethtool"
 #define  MIITOOL         "mii_mgr_cl45"
 #define  WANLINKUP       "0x796D"
-
+#define  MAX_LAN_PORT     4
 /**********************************************************************
                             MAIN ROUTINES
 **********************************************************************/
@@ -165,10 +165,16 @@ CcspHalEthSwGetPortStatus
     int link = 0;
     int speed = 0;
 
+    if(PortId == NULL || pLinkRate == NULL || pDuplexMode == NULL || pStatus == NULL)
+        return  RETURN_ERR;
+
+    if(PortId < 1 || PortId > MAX_LAN_PORT)
+        return  RETURN_ERR;
+
     sprintf(path, "/sys/class/net/lan%d/carrier",(PortId-1));
     link = is_interface_link(path);
 
-    if(!admin_status && link){
+    if(link){
         *pStatus  = CCSP_HAL_ETHSW_LINK_Up;
     }else{
         *pStatus   = CCSP_HAL_ETHSW_LINK_Down;
@@ -308,6 +314,11 @@ CcspHalEthSwGetPortCfg
     char duplex[6] = {0};
     int speed = 0;
 
+    if(PortId == NULL || pLinkRate == NULL || pDuplexMode == NULL)
+        return  RETURN_ERR;
+
+    if(PortId < 1 || PortId > MAX_LAN_PORT)
+        return  RETURN_ERR;
     sprintf(cmd, "%s lan%d | grep -i speed > /tmp/lan%d_speed", ETHSWITCHTOOL, (PortId-1), (PortId-1));
     system(cmd);
     sprintf(filepath, "/tmp/lan%d_speed",(PortId-1));
@@ -433,14 +444,19 @@ CcspHalEthSwSetPortCfg
     )
 {
     CcspHalEthSwTrace(("set port %d LinkRate to %d, DuplexMode to %d", PortId, LinkRate, DuplexMode));
+    
+    if(PortId < 1 || PortId > MAX_LAN_PORT)
+        return  RETURN_ERR;
 
     char cmd[128] = {0};
     char setduplex[6] = {0}; 
 
-    if(DuplexMode != 1)
+    if(DuplexMode == 2 || DuplexMode == 0)
         strcpy(setduplex,"full");
-    else
+    else if (DuplexMode == 1)
         strcpy(setduplex,"half");
+    else
+        return  RETURN_ERR;
 
     switch (LinkRate)
     {
@@ -506,7 +522,13 @@ CcspHalEthSwGetPortAdminStatus
         PCCSP_HAL_ETHSW_ADMIN_STATUS  pAdminStatus
     )
 {
- CcspHalEthSwTrace(("port id %d", PortId));
+    if(PortId == NULL || pAdminStatus == NULL)
+        return  RETURN_ERR;
+	
+    CcspHalEthSwTrace(("port id %d", PortId));
+ 
+    if(PortId < 1 || PortId > MAX_LAN_PORT)
+        return  RETURN_ERR;
 
  	int sockfd;
     struct ifreq ifr;
@@ -532,7 +554,10 @@ CcspHalEthSwGetPortAdminStatus
         *pAdminStatus   = CCSP_HAL_ETHSW_AdminUp;
     else
         *pAdminStatus   = CCSP_HAL_ETHSW_AdminDown;
-        
+    
+    if(admin_status)
+        *pAdminStatus   = CCSP_HAL_ETHSW_AdminDown;
+	
   return RETURN_OK;
 }
 
@@ -563,17 +588,13 @@ CcspHalEthSwSetPortAdminStatus
     )
 {
     CcspHalEthSwTrace(("set port %d AdminStatus to %d", PortId, AdminStatus));
-
+    if(AdminStatus < CCSP_HAL_ETHSW_AdminUp || AdminStatus > CCSP_HAL_ETHSW_AdminTest)
+        return  RETURN_ERR;
+    if(PortId < 1 || PortId > MAX_LAN_PORT)
+        return  RETURN_ERR;
+    
     char cmd1[50];
     char cmd2[50];
-    int port_num=0;
-    FILE *fp = NULL;
-
-    char port_id[150];
-    char *val = "/1-1.";
-    char *val1 = "/1-1.1.";
-    char *p = NULL;
-
     char *interface = NULL;
     char *path = NULL;
     interface = (char *)malloc(5);
@@ -584,27 +605,6 @@ CcspHalEthSwSetPortAdminStatus
 
     if(eth_if == 0 )
         return  RETURN_ERR;
-
-    fp= popen("ls -la /sys/class/net/ | awk '/eth1/{portId=$11}   END {print portId}'","r");
-    fgets(port_id,sizeof(port_id),fp);
-    if (strstr(port_id,val1)){
-        p = strstr(port_id,val1);
-        p = strtok(p,".");
-        p = strtok(NULL,".");
-        p = strtok(NULL,"/");
-        port_num = atoi(p);
-        if (port_num == 2)
-                port_num = port_num + 2;
-        else
-                port_num = port_num;
-    }
-    else{
-        p = strstr(port_id,val);
-        p = strtok(p,".");
-        p = strtok(NULL,"/");
-        port_num = atoi(p);
-        port_num = port_num - 1;
-    }
 
     strcpy(interface,"eth1");
 
@@ -618,7 +618,7 @@ CcspHalEthSwSetPortAdminStatus
         case CCSP_HAL_ETHSW_EthPort3:
         case CCSP_HAL_ETHSW_EthPort4:
         {
-            if(port_num==PortId)
+
             {
                  if(AdminStatus==0)
                  {
@@ -627,7 +627,7 @@ CcspHalEthSwSetPortAdminStatus
                  }
                  else
                  {
-                     system(cmd2);
+                     //system(cmd2);
                      admin_status=1;
                  }
              }
@@ -668,7 +668,10 @@ CcspHalEthSwSetAgingSpeed
     )
 {
     CcspHalEthSwTrace(("set port %d aging speed to %d", PortId, AgingSpeed));
-
+    if(AgingSpeed < 0 || AgingSpeed > 300)
+        return  RETURN_ERR;
+    if(PortId < 1)
+        return  RETURN_ERR;
     return  RETURN_OK;
 }
 
@@ -700,43 +703,45 @@ CcspHalEthSwLocatePortByMacAddress
 		INT * pPortId
     )
 {
+    if (pMacAddr == NULL)
+        return RETURN_ERR;
+
     CcspHalEthSwTrace
         ((
-            "%s -- search for MAC address %02u.%02u.%02u.%02u.%02u.%02u",
+            "%s -- search for MAC address %02x:%02x:%02x:%02x:%02x:%02x",
             __FUNCTION__,
             pMacAddr[0], pMacAddr[1], pMacAddr[2], 
             pMacAddr[3], pMacAddr[4], pMacAddr[5]
         ));
 
-    char cmd[128] = {0};
-    char buf[128] = {0};
-    char mac[18] = {0};
-    char foundmac[18] = {0};
-    char ifname[16] = {0};
-    int port = 0;
-    FILE *fp = NULL;
-    sprintf(cmd,"ifconfig | grep HWaddr > /tmp/lanPortScan");
-    system(cmd);
-    sprintf(foundmac,"%02X:%02X:%02X:%02X:%02X:%02X",pMacAddr[0], pMacAddr[1], pMacAddr[2], pMacAddr[3], pMacAddr[4], pMacAddr[5]);
-    fp = fopen("/tmp/lanPortScan", "r");
-    if(fp != NULL)
-    {
-        while(fgets(buf,sizeof(buf),fp) != NULL)
-        {
-            if (strncmp(buf, "lan",3))
-                continue;
-            sscanf(buf, "%s Link encap:Ethernet  HWaddr %s", ifname,mac);
-            printf("=======>ifname = %s, mac = %s<===============\n", ifname, mac);
-            if(!strcmp(mac,foundmac)){
-                sscanf(ifname,"lan%d",&port);
-                *pPortId = port+1 ;
-                fclose(fp);
-                return  RETURN_OK;   
-            }        
-        }             
-        fclose(fp);
-    }
-    return  RETURN_ERR;
+	char cmd[128] = {0};
+	char buf[128] = {0};
+	char foundmac[18] = {0};
+	int port = 0;
+	FILE *fp = NULL;
+
+	sprintf(foundmac,"%02x:%02x:%02x:%02x:%02x:%02x",pMacAddr[0], pMacAddr[1], pMacAddr[2], pMacAddr[3], pMacAddr[4], pMacAddr[5]);
+
+	snprintf(cmd,128, "bridge fdb show | grep %s | awk '$0 ~ /master/{print $3} '", foundmac);
+	
+	fp = popen(cmd, "r");
+	if(fp != NULL)
+	{
+		if(fgets(buf,sizeof(buf),fp) != NULL)
+		{
+			pclose(fp);
+			if (strncmp(buf, "lan",3))
+			{
+				return RETURN_ERR;
+			}else{	
+				sscanf(buf,"lan%d",&port);
+				*pPortId = port+1;
+				return RETURN_OK;
+			}
+		}             
+        pclose(fp);
+	}
+	return  RETURN_ERR;
 }
 
 //For Getting Current Interface Name from corresponding hostapd configuration
@@ -926,21 +931,36 @@ Sample:
 		for(count = 0;count < eth_count ; count++)
 		{
 			fgets(buf,sizeof(buf),fp);
-				if(MACADDRESS_SIZE  == sscanf(buf, "%02x:%02x:%02x:%02x:%02x:%02x",&arr[0],&arr[1],&arr[2],&arr[3],&arr[4],&arr[5]) )
+			if(MACADDRESS_SIZE  == sscanf(buf, "%02x:%02x:%02x:%02x:%02x:%02x",&arr[0],&arr[1],&arr[2],&arr[3],&arr[4],&arr[5]) )
+			{
+				for( int ethclientindex = 0; ethclientindex < 6; ++ethclientindex )
 				{
-					for( int ethclientindex = 0; ethclientindex < 6; ++ethclientindex )
-					{
-						mac[ethclientindex] = (unsigned char) arr[ethclientindex];
-					}
-					memcpy(temp[count].eth_devMacAddress,mac,(sizeof(unsigned char))*6);
-					fprintf(stderr,"MAC %d = %X:%X:%X:%X:%X:%X \n", count, temp[count].eth_devMacAddress[0],temp[count].eth_devMacAddress[1], temp[count].eth_devMacAddress[2], temp[count].eth_devMacAddress[3], temp[count].eth_devMacAddress[4], temp[count].eth_devMacAddress[5]);
+					mac[ethclientindex] = (unsigned char) arr[ethclientindex];
 				}
-			temp[count].eth_port=1;
-			temp[count].eth_vlanid=10;
-			temp[count].eth_devTxRate=100;
-			temp[count].eth_devRxRate=100;
-			temp[count].eth_Active=1;
+				memcpy(temp[count].eth_devMacAddress,mac,(sizeof(unsigned char))*6);
+				fprintf(stderr,"MAC %d = %X:%X:%X:%X:%X:%X \n", count, temp[count].eth_devMacAddress[0],temp[count].eth_devMacAddress[1], temp[count].eth_devMacAddress[2], temp[count].eth_devMacAddress[3], temp[count].eth_devMacAddress[4], temp[count].eth_devMacAddress[5]);
+			}
+			temp[count].eth_port= 0;
+			CcspHalEthSwLocatePortByMacAddress(temp[count].eth_devMacAddress, &temp[count].eth_port);
+			temp[count].eth_vlanid=-1;
+			FILE *fp2 = NULL;
+			char cmd[64] = {0};
+			char filepath[32] = {0};
+			char buffer[32] = {0};
 
+			sprintf(filepath, "/sys/class/net/lan%d/speed",(temp[count].eth_port-1));
+			fp2 = fopen(filepath, "r");
+			if(fp2 != NULL)
+			{
+				fgets(buffer,sizeof(buffer),fp2);
+				temp[count].eth_devTxRate = atoi (buffer);
+				temp[count].eth_Active=1;
+				fclose(fp2);
+			}else{
+				temp[count].eth_devTxRate= -1;
+				temp[count].eth_Active=0;
+			}
+			temp[count].eth_devRxRate = temp[count].eth_devTxRate;
 		}
 	}
 	fclose(fp);
@@ -968,6 +988,8 @@ INT CcspHalExtSw_getEthWanEnable(BOOLEAN *enable)
 	int sockfd;
     struct ifreq ifr;
 
+    if (enable == NULL)
+        return RETURN_ERR;
     if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
     {
         printf("====> open socket fail \n");
@@ -1004,6 +1026,9 @@ INT CcspHalExtSw_getEthWanEnable(BOOLEAN *enable)
 
 INT CcspHalExtSw_getEthWanPort(UINT *Port)
 {
+	if(Port == NULL)
+		return RETURN_ERR;
+	
 	*Port = 6;
 	return RETURN_OK;
 }
@@ -1047,7 +1072,8 @@ INT CcspHalExtSw_setEthWanEnable(BOOLEAN enable)
 
 INT CcspHalExtSw_setEthWanPort(UINT Port)
 {
-	Port = 6;
+	if(Port != 6)
+		return  RETURN_ERR;
 	return RETURN_OK;
 }
 
@@ -1103,7 +1129,6 @@ void *ethsw_thread_main(void *context __attribute__((unused)))
 	while(1)
 	{
 		currentLinkDeteced = GWP_GetEthWanLinkStatus();
-
 		if (currentLinkDeteced != previousLinkDetected)
 		{
 			if (currentLinkDeteced)
