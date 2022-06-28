@@ -42,16 +42,116 @@ INT platform_hal_SetWebAccessLevel(INT userIndex, INT ifIndex, ULONG value) { re
 
 INT platform_hal_PandMDBInit(void) { return RETURN_OK; }
 INT platform_hal_DocsisParamsDBInit(void) { return RETURN_OK; }
-INT platform_hal_GetModelName(CHAR* pValue) { strcpy(pValue, "Model Name"); return RETURN_OK; }
 INT platform_hal_GetSerialNumber(CHAR* pValue) { strcpy(pValue, "Serial Number"); return RETURN_OK; }
 INT platform_hal_GetHardwareVersion(CHAR* pValue) { strcpy(pValue, "Hardware Version"); return RETURN_OK; }
-INT platform_hal_GetSoftwareVersion(CHAR* pValue, ULONG maxSize) { strcpy(pValue, "Software Version"); return RETURN_OK; }
 INT platform_hal_GetBootloaderVersion(CHAR* pValue, ULONG maxSize) { strcpy(pValue, "Bootloader Version"); return RETURN_OK; }
-INT platform_hal_GetFirmwareName(CHAR* pValue, ULONG maxSize) { strcpy(pValue, "Firmware Name"); return RETURN_OK; }
 INT platform_hal_GetBaseMacAddress(CHAR *pValue) { strcpy(pValue, "BasMac"); return RETURN_OK; }
 INT platform_hal_GetHardware(CHAR *pValue) { strcpy(pValue, "Hard"); return RETURN_OK; }
 
+INT platform_hal_GetModelName(CHAR* pValue)
+{
+	FILE *fp = NULL;
+	char buf[64] = {0};
+	int count = 0;
+  
+	if (pValue == NULL)
+	{
+		return RETURN_ERR;
+	}
 
+	fp = popen("cat /proc/device-tree/model","r");
+	if(fp == NULL)
+	{
+		return RETURN_ERR;
+	}
+
+	if(fgets(buf,sizeof(buf) -1,fp) != NULL)
+	{
+		for(count=0;buf[count]!='\n';count++) {
+			pValue[count]=buf[count];
+			if (count == sizeof(buf)-1) break;
+		}
+		pValue[count]='\0';
+	}
+
+	pclose(fp);
+	
+	return RETURN_OK; 
+}
+
+INT platform_hal_GetSoftwareVersion(CHAR* pValue, ULONG maxSize)
+{
+	FILE *fp;
+	char buff[64]={0};
+  
+	if (pValue == NULL)
+	{
+		return RETURN_ERR;
+	}
+
+	if((fp = fopen("/version.txt", "r")) == NULL)
+	{
+		printf(("Error while opening the file version.txt \n"));
+		return RETURN_ERR;
+	}
+
+	while(fgets(buff, 64, fp) != NULL)
+	{
+		if(strstr(buff, "VERSION") != NULL && strstr(buff, "YOCTO_VERSION") == NULL)
+		{
+			int i = 0;
+			while((i < sizeof(buff)-8) && (buff[i+8] != '\n') && (buff[i+8] != '\r') && (buff[i+8] != '\0'))
+			{
+				pValue[i] = buff[i+8];
+				i++;
+			}
+			pValue[i] = '\0';
+			break;
+		}
+	}
+
+	if(fp)
+		fclose(fp);
+	
+	return RETURN_OK; 
+}
+
+INT platform_hal_GetFirmwareName(CHAR* pValue, ULONG maxSize)
+{
+	FILE *fp;
+	char buff[64]={0};
+  
+	if (pValue == NULL)
+	{
+		return RETURN_ERR;
+	}
+
+	if((fp = fopen("/version.txt", "r")) == NULL)
+	{
+		printf(("Error while opening the file version.txt \n"));
+		return RETURN_ERR;
+	}
+
+	while(fgets(buff, 64, fp) != NULL)
+	{
+		if(strstr(buff, "imagename") != NULL)
+		{
+			int i = 0;
+			while((i < sizeof(buff)-10) && (buff[i+10] != '\n') && (buff[i+10] != '\r') && (buff[i+10] != '\0'))
+			{
+				pValue[i] = buff[i+10];
+				i++;
+			}
+			pValue[i] = '\0';
+			break;
+		}
+	}
+
+	if(fp)
+		fclose(fp);
+	
+	return RETURN_OK; 
+}
 INT platform_hal_GetTotalMemorySize(ULONG *pulSize) 
 { 
     char buf[64] = {0};
@@ -268,6 +368,11 @@ char *get_current_wan_ifname()
 
 INT platform_hal_GetDhcpv6_Options ( dhcp_opt_list ** req_opt_list, dhcp_opt_list ** send_opt_list)
 {
+	if ((req_opt_list == NULL) || (send_opt_list == NULL))    
+	{
+		return RETURN_ERR;
+	}
+
 	return RETURN_OK;
 }
 
@@ -275,6 +380,11 @@ INT platform_hal_GetDhcpv6_Options ( dhcp_opt_list ** req_opt_list, dhcp_opt_lis
 
 INT platform_hal_GetDhcpv4_Options ( dhcp_opt_list ** req_opt_list, dhcp_opt_list ** send_opt_list)
 {
+	if ((req_opt_list == NULL) || (send_opt_list == NULL))    
+	{
+		return RETURN_ERR;
+	}
+
 	return RETURN_OK;
 }
 
