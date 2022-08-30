@@ -959,7 +959,7 @@ INT platform_hal_resetDscpCounts(WAN_INTERFACE interfaceType)
 	return RETURN_OK;
 }
 
-INT platform_hal_getDscpClientList(WAN_INTERFACE interfaceType , pDSCP_traffic_client_list_t pClientList)
+INT platform_hal_getDscpClientList(WAN_INTERFACE interfaceType , pDSCP_list_t pDSCP_List)
 {
 	return RETURN_OK;
 }
