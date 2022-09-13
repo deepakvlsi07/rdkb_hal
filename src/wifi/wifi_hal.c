@@ -10011,6 +10011,49 @@ INT wifi_getGuardInterval(INT radio_index, wifi_guard_interval_t *guard_interval
     return RETURN_OK;
 }
 
+INT wifi_setBSSColor(INT radio_index, UCHAR color)
+{
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    struct params params = {0};
+    char config_file[128] = {0};
+    char bss_color[4] ={0};
+
+    params.name = "he_bss_color";
+    snprintf(bss_color, sizeof(bss_color), "%hhu", color);
+    params.value = bss_color;
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radio_index);
+    wifi_hostapdWrite(config_file, &params, 1);
+    wifi_hostapdProcessUpdate(radio_index, &params, 1);
+    
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
+}
+
+INT wifi_getBSSColor(INT radio_index, UCHAR *color)
+{
+    char config_file[128] = {0};
+    char buf[64] = {0};
+    char temp_output[128] = {'\0'};
+
+    wifi_dbg_printf("\nFunc=%s\n", __func__);
+    if (NULL == color)
+        return RETURN_ERR;
+
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radio_index);
+    wifi_hostapdRead(config_file, "he_bss_color", buf, sizeof(buf));
+
+    if(strlen(buf) > 0) {
+        snprintf(temp_output, sizeof(temp_output), "%s", buf);
+    } else {
+        snprintf(temp_output, sizeof(temp_output), "1");   // default value
+    }
+
+    *color = (UCHAR)strtoul(temp_output, NULL, 10);
+    wifi_dbg_printf("\noutput_string=%s\n", color);
+
+    return RETURN_OK;
+}
+
 /* multi-psk support */
 INT wifi_getMultiPskClientKey(INT apIndex, mac_address_t mac, wifi_key_multi_psk_t *key)
 {
