@@ -1356,10 +1356,23 @@ INT wifi_getRadioMaxBitRate(INT radioIndex, CHAR *output_string)	//RDKB
 //The output_string is a max length 64 octet string that is allocated by the RDKB code.  Implementations must ensure that strings are not longer than this.
 INT wifi_getRadioSupportedFrequencyBands(INT radioIndex, CHAR *output_string)	//RDKB
 {
+    wifi_band band = band_invalid;
+
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     if (NULL == output_string)
         return RETURN_ERR;
-    snprintf(output_string, 64, (radioIndex == 0)?"2.4GHz":"5GHz");
+
+    band = wifi_index_to_band(radioIndex);
+
+    memset(output_string, 0, 10);
+    if (band == band_2_4)
+        strcpy(output_string, "2.4GHz");
+    else if (band == band_5)
+        strcpy(output_string, "5GHz");
+    else if (band == band_6)
+        strcpy(output_string, "6GHz");
+    else
+        return RETURN_ERR;
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
     return RETURN_OK;
@@ -1535,10 +1548,50 @@ INT wifi_getRadioOperatingFrequencyBand(INT radioIndex, CHAR *output_string) //T
 //The output_string is a max length 64 octet string that is allocated by the RDKB code.  Implementations must ensure that strings are not longer than this.
 INT wifi_getRadioSupportedStandards(INT radioIndex, CHAR *output_string) //Tr181
 {
+    char cmd[128]={0};
+    char buf[128]={0};
+    char temp_output[128] = {0};
+    wifi_band band;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     if (NULL == output_string) 
         return RETURN_ERR;
-    snprintf(output_string, 64, (radioIndex==0)?"b,g,n":"a,n,ac");
 
+    band = wifi_index_to_band(radioIndex);
+    if (band == band_2_4) {
+        strcat(temp_output, "b,g,");
+    } else if (band == band_5) {
+        strcat(temp_output, "a,");
+    }
+
+    // ht capabilities
+    snprintf(cmd, sizeof(cmd),  "iw phy%d info | grep '[^PHY|MAC|VHT].Capabilities' | head -n 1 | cut -d ':' -f2 | sed 's/^.//' | tr -d '\\n'", radioIndex);
+    _syscmd(cmd, buf, sizeof(buf));
+    if (strncmp(buf, "0x00", 4) != 0) {
+        strcat(temp_output, "n,");
+    }
+
+    // vht capabilities
+    if (band == band_5) {
+        snprintf(cmd, sizeof(cmd),  "iw phy%d info | grep 'VHT Capabilities' | cut -d '(' -f2 | cut -c1-10 | tr -d '\\n'", radioIndex);
+        _syscmd(cmd, buf, sizeof(buf));
+        if (strncmp(buf, "0x00000000", 10) != 0) {
+            strcat(temp_output, "ac,");
+        }
+    }
+
+    // he capabilities
+    snprintf(cmd, sizeof(cmd),  "iw phy%d info | grep 'HE MAC Capabilities' | head -n 2 | tail -n 1 | cut -d '(' -f2 | cut -c1-6 | tr -d '\\n'", radioIndex);
+    _syscmd(cmd, buf, sizeof(buf));
+    if (strncmp (buf, "0x0000", 6) != 0) {
+        strcat(temp_output, "ax,");
+    }
+
+    // Remove the last comma
+    if (strlen(temp_output) != 0)
+        temp_output[strlen(temp_output)-1] = '\0';
+    strncpy(output_string, temp_output, strlen(temp_output));
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
 
