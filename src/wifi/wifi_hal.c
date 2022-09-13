@@ -2471,25 +2471,23 @@ INT wifi_getRadioTransmitPowerSupported(INT radioIndex, CHAR *output_list) //Tr1
         return RETURN_OK;
 }
 
-//Get current Transmit Power, eg "75", "100"
+//Get current Transmit Power in dBm units.
 //The transmite power level is in units of full power for this radio.
 INT wifi_getRadioTransmitPower(INT radioIndex, ULONG *output_ulong)	//RDKB
 {
     char cmd[128]={0};
-    char buf[256]={0};
-    INT apIndex;
-    //save config and apply instantly
+    char buf[16]={0};
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-    if (NULL == output_ulong) 
+    if(output_ulong == NULL)
         return RETURN_ERR;
 
-    //zqiu:TODO:save config
-    apIndex = (radioIndex==0) ?0 :1;
-
-    snprintf(cmd, sizeof(cmd),  "iwlist %s%d txpower | grep Tx-Power | cut -d'=' -f2", AP_PREFIX, apIndex);
+    snprintf(cmd, sizeof(cmd),  "iw %s%d info | grep txpower | awk '{print $2}' | cut -d '.' -f1 | tr -d '\\n'", AP_PREFIX, radioIndex);
     _syscmd(cmd, buf, sizeof(buf));
-    *output_ulong = atol(buf);
 
+    *output_ulong = strtol(buf, NULL, 10);
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
 
@@ -2497,12 +2495,38 @@ INT wifi_getRadioTransmitPower(INT radioIndex, ULONG *output_ulong)	//RDKB
 //The transmite power level is in units of full power for this radio.
 INT wifi_setRadioTransmitPower(INT radioIndex, ULONG TransmitPower)	//RDKB
 {
+    char *support;
     char cmd[128]={0};
-    char buf[256]={0};
-    INT apIndex;
+    char buf[128]={0};
+    char txpower_str[64] = {0};
+    int txpower = 0;
+    int maximum_tx = 0;
 
-    snprintf(cmd, sizeof(cmd),  "iwconfig %s%d txpower %lu", AP_PREFIX, radioIndex, TransmitPower);
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    snprintf(cmd, sizeof(cmd),  "hostapd_cli -i %s%d status | grep max_txpower | cut -d '=' -f2 | tr -d '\n'", AP_PREFIX, radioIndex);
     _syscmd(cmd, buf, sizeof(buf));
+    maximum_tx = strtol(buf, NULL, 10);
+
+    // Get the Tx power supported list and check that is the input in the list
+    snprintf(txpower_str, sizeof(txpower_str), "%lu", TransmitPower);
+    wifi_getRadioTransmitPowerSupported(radioIndex, buf);
+    support = strtok(buf, ",");
+    while(true)
+    {
+        if(support == NULL) {   // input not in the list
+            wifi_dbg_printf("Input value is invalid.\n");
+            return RETURN_ERR;
+        }
+        if (strncmp(txpower_str, support, strlen(support)) == 0) {
+            break;
+        }
+        support = strtok(NULL, ",");
+    }
+    txpower = TransmitPower*maximum_tx/100;
+    snprintf(cmd, sizeof(cmd),  "iw phy phy%d set txpower fixed %d00", radioIndex, txpower);
+    _syscmd(cmd, buf, sizeof(buf));
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
     return RETURN_OK;
 }
@@ -9589,8 +9613,46 @@ INT wifi_switchBand(char *interface_name,INT radioIndex,char *freqBand)
 
 INT wifi_getRadioPercentageTransmitPower(INT apIndex, ULONG *txpwr_pcntg)
 {
-    //TO-Do Implement this
-    txpwr_pcntg = 0;
+    char cmd[128]={'\0'};
+    char buf[128]={'\0'};
+    char *support;
+    int maximum_tx = 0, current_tx = 0;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    if(txpwr_pcntg == NULL)
+        return RETURN_ERR;
+
+    // Get the maximum tx power of the device
+    snprintf(cmd, sizeof(cmd),  "hostapd_cli -i %s%d status | grep max_txpower | cut -d '=' -f2 | tr -d '\n'", AP_PREFIX, apIndex);
+    _syscmd(cmd, buf, sizeof(buf));
+    maximum_tx = strtol(buf, NULL, 10);
+
+    // Get the current tx power
+    memset(cmd, 0, sizeof(cmd));
+    memset(buf, 0, sizeof(buf));
+    snprintf(cmd, sizeof(cmd),  "iw %s%d info | grep txpower | awk '{print $2}' | cut -d '.' -f1 | tr -d '\\n'", AP_PREFIX, apIndex);
+    _syscmd(cmd, buf, sizeof(buf));
+    current_tx = strtol(buf, NULL, 10);
+
+    // Get the power supported list and find the current power percentage in supported list
+    memset(buf, 0, sizeof(buf));
+    wifi_getRadioTransmitPowerSupported(apIndex, buf);
+    support = strtok(buf, ",");
+    while(true)
+    {
+        if(support == NULL) {       // current power is not in supported list, this should not happen if the power is set by hal.
+            *txpwr_pcntg = 0;
+            wifi_dbg_printf("current power is not in supported list\n");
+            return RETURN_ERR;
+        }
+        int tmp = maximum_tx*strtol(support, NULL, 10)/100;
+        if (tmp == current_tx) {
+            *txpwr_pcntg = strtol(support, NULL, 10);
+            break;
+        }
+        support = strtok(NULL, ",");
+    }
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
 
