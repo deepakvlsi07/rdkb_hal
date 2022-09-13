@@ -4066,6 +4066,20 @@ INT wifi_getApAclDevices(INT apIndex, CHAR *macArray, UINT buf_size)
     return RETURN_OK;
 }
 
+INT wifi_getApDenyAclDevices(INT apIndex, CHAR *macArray, UINT buf_size)
+{
+    char cmd[MAX_CMD_SIZE]={'\0'};
+    int ret = 0;
+
+    sprintf(cmd, "hostapd_cli -i %s%d deny_acl SHOW | awk '{print $1}'", AP_PREFIX,apIndex);
+    ret = _syscmd(cmd,macArray,buf_size);
+    if (ret != 0)
+        return RETURN_ERR;
+
+    return RETURN_OK;
+}
+
+
 // Get the list of stations associated per AP
 INT wifi_getApDevicesAssociated(INT apIndex, CHAR *macArray, UINT buf_size)
 {
@@ -4122,10 +4136,20 @@ INT wifi_delApAclDevice(INT apIndex, CHAR *DeviceMacAddress)
 // outputs the number of devices in the filter list
 INT wifi_getApAclDeviceNum(INT apIndex, UINT *output_uint)
 {
-    if (NULL == output_uint)
+    char cmd[MAX_BUF_SIZE]={0};
+    char buf[MAX_CMD_SIZE]={0};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    if(output_uint == NULL)
         return RETURN_ERR;
-    *output_uint = 0;
-    return RETURN_ERR;
+
+    snprintf(cmd, sizeof(cmd), "cat %s%d | wc -l | tr -d '\\n'", ACL_PREFIX, apIndex);
+    _syscmd(cmd, buf, sizeof(buf));
+
+    *output_uint = atoi(buf);
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
 }
 
 INT apply_rules(INT apIndex, CHAR *client_mac,CHAR *action,CHAR *interface)
@@ -4157,7 +4181,7 @@ INT wifi_kickApAclAssociatedDevices(INT apIndex, BOOL enable)
     char aclArray[512] = {0}, *acl = NULL;
     char assocArray[512] = {0}, *asso = NULL;
 
-    wifi_getApAclDevices(apIndex, aclArray, sizeof(aclArray));
+    wifi_getApDenyAclDevices(apIndex, aclArray, sizeof(aclArray));
     wifi_getApDevicesAssociated(apIndex, assocArray, sizeof(assocArray));
 
     // if there are no devices connected there is nothing to do
@@ -4174,17 +4198,11 @@ INT wifi_kickApAclAssociatedDevices(INT apIndex, BOOL enable)
 
             acl = strtok(NULL, "\r\n");
         }
+		wifi_setApMacAddressControlMode(apIndex, 2);
     }
     else
     {
-        //kick off the MAC which is not in ACL array (allow list)
-        asso = strtok(assocArray, "\r\n");
-        while (asso != NULL) {
-            if (strlen(asso) >= 17 && !strcasestr(aclArray, asso))
-                wifi_kickApAssociatedDevice(apIndex, asso);
-
-            asso = strtok(NULL, "\r\n");
-        }
+		wifi_setApMacAddressControlMode(apIndex, 0);
     }
 
 #if 0
@@ -7669,15 +7687,14 @@ INT wifi_delApAclDevices(INT apIndex)
     if(_syscmd(cmd,buf,sizeof(buf)))
         return RETURN_ERR;
 #endif
-    char fname[100];
-    FILE *fp;
+    char cmd[MAX_CMD_SIZE]={0};
+    char buf[MAX_BUF_SIZE]={0};
 
-    snprintf(fname, sizeof(fname), "%s%d", ACL_PREFIX, apIndex);
-    fp = fopen(fname, "w");
-    if (!fp) {
-            return RETURN_ERR;
-    }
-    fclose(fp);
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    sprintf(cmd, "rm %s%d 2>&1 && touch %s%d", ACL_PREFIX, apIndex, ACL_PREFIX, apIndex);
+    if(_syscmd(cmd, buf, sizeof(buf)))
+        return RETURN_ERR;
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
     return RETURN_OK;
 }
