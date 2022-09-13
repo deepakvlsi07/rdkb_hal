@@ -97,6 +97,7 @@ Licensed under the ISC license
 
 #define MAX_BUF_SIZE 128
 #define MAX_CMD_SIZE 1024
+#define MAX_ASSOCIATED_STA_NUM 2007
 
 //Uncomment to enable debug logs
 //#define WIFI_DEBUG
@@ -4633,14 +4634,60 @@ INT wifi_getApMaxAssociatedDevices(INT apIndex, UINT *output_uint)
     //get the running status from driver
     if(!output_uint)
         return RETURN_ERR;
-    *output_uint = 5;
+
+    char output[16]={'\0'};
+    char config_file[MAX_BUF_SIZE] = {0};
+
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, apIndex);
+    wifi_hostapdRead(config_file, "max_num_sta", output, sizeof(output));
+    if (strlen(output) == 0) *output_uint = MAX_ASSOCIATED_STA_NUM;
+    else {
+        int device_num = atoi(output);
+        if (device_num > MAX_ASSOCIATED_STA_NUM || device_num < 0) {
+            wifi_dbg_printf("\n[%s]: get max_num_sta error: %d", __func__, device_num);
+            return RETURN_ERR;
+        }
+        else {
+            *output_uint = device_num;
+        }
+    }
+
     return RETURN_OK;
 }
 
 INT wifi_setApMaxAssociatedDevices(INT apIndex, UINT number)
 {
     //store to wifi config, apply instantly
-    return RETURN_ERR;
+    char str[MAX_BUF_SIZE]={'\0'};
+    char cmd[MAX_CMD_SIZE]={'\0'};
+    struct params params;
+    char config_file[MAX_BUF_SIZE] = {0};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    if (number > MAX_ASSOCIATED_STA_NUM || number < 0) {
+        WIFI_ENTRY_EXIT_DEBUG("%s: Invalid input\n",__func__);
+        return RETURN_ERR;
+    }
+    sprintf(str, "%d", number);
+    params.name = "max_num_sta";
+    params.value = str;
+
+    sprintf(config_file,"%s%d.conf",CONFIG_PREFIX, apIndex);
+    int ret = wifi_hostapdWrite(config_file, &params, 1);
+    if (ret) {
+        WIFI_ENTRY_EXIT_DEBUG("Inside %s: wifi_hostapdWrite() return %d\n"
+                ,__func__, ret);
+    }
+
+    ret = wifi_hostapdProcessUpdate(apIndex, &params, 1);
+    if (ret) {
+        WIFI_ENTRY_EXIT_DEBUG("Inside %s: wifi_hostapdProcessUpdate() return %d\n"
+                ,__func__, ret);
+    }
+    wifi_reloadAp(apIndex);
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
+    return RETURN_OK;
 }
 
 //The HighWatermarkThreshold value that is lesser than or equal to MaxAssociatedDevices. Setting this parameter does not actually limit the number of clients that can associate with this access point as that is controlled by MaxAssociatedDevices.	MaxAssociatedDevices or 50. The default value of this parameter should be equal to MaxAssociatedDevices. In case MaxAssociatedDevices is 0 (zero), the default value of this parameter should be 50. A value of 0 means that there is no specific limit and Watermark calculation algorithm should be turned off.
@@ -4649,13 +4696,17 @@ INT wifi_getApAssociatedDevicesHighWatermarkThreshold(INT apIndex, UINT *output_
     //get the current threshold
     if(!output_uint)
         return RETURN_ERR;
-    *output_uint = 50;
+    wifi_getApMaxAssociatedDevices(apIndex, output_uint);
+    if (*output_uint == 0)
+        *output_uint = 50;
     return RETURN_OK;
 }
 
 INT wifi_setApAssociatedDevicesHighWatermarkThreshold(INT apIndex, UINT Threshold)
 {
     //store the config, reset threshold, reset AssociatedDevicesHighWatermarkThresholdReached, reset AssociatedDevicesHighWatermarkDate to current time
+    if (!wifi_setApMaxAssociatedDevices(apIndex, Threshold))
+        return RETURN_OK;
     return RETURN_ERR;
 }
 
