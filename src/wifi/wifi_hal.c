@@ -78,6 +78,7 @@ Licensed under the ISC license
 
 #define DRIVER_2GHZ "ath9k"
 #define DRIVER_5GHZ "ath10k_pci"
+#define BRIDGE_NAME "brlan0"
 
 /*
    MAX_APS - Number of all AP available in system
@@ -4004,16 +4005,52 @@ INT wifi_setRadio11nGreenfieldEnable(INT radioIndex, BOOL enable)
 //Get radio IGMP snooping enable setting
 INT wifi_getRadioIGMPSnoopingEnable(INT radioIndex, BOOL *output_bool)
 {
-    if (NULL == output_bool)
+    char cmd[128]={0};
+    char buf[4]={0};
+    bool bridge = FALSE, mac80211 = FALSE;
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    if(output_bool == NULL)
         return RETURN_ERR;
-    *output_bool = TRUE;
+
+    *output_bool = FALSE;
+
+    snprintf(cmd, sizeof(cmd),  "cat /sys/devices/virtual/net/%s/bridge/multicast_snooping", BRIDGE_NAME);
+    _syscmd(cmd, buf, sizeof(buf));
+    if (strncmp(buf, "1", 1) == 0)
+        bridge = TRUE;
+
+    snprintf(cmd, sizeof(cmd),  "cat /sys/devices/virtual/net/%s/brif/%s%d/multicast_to_unicast", BRIDGE_NAME, AP_PREFIX, radioIndex);
+    _syscmd(cmd, buf, sizeof(buf));
+    if (strncmp(buf, "1", 1) == 0)
+        mac80211 = TRUE;
+
+    if (bridge && mac80211)
+        *output_bool = TRUE;
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
 
 //Set radio IGMP snooping enable setting
 INT wifi_setRadioIGMPSnoopingEnable(INT radioIndex, BOOL enable)
 {
-    return RETURN_ERR;
+    char cmd[128]={0};
+    char buf[4]={0};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    // bridge
+    snprintf(cmd, sizeof(cmd),  "echo %d > /sys/devices/virtual/net/%s/bridge/multicast_snooping", enable, BRIDGE_NAME);
+    _syscmd(cmd, buf, sizeof(buf));
+
+    // mac80211
+    for (int i = 0; i < NUMBER_OF_RADIOS; i++) {
+        snprintf(cmd, sizeof(cmd),  "echo %d > /sys/devices/virtual/net/%s/brif/%s%d/multicast_to_unicast", enable, BRIDGE_NAME, AP_PREFIX, i);
+        _syscmd(cmd, buf, sizeof(buf));
+    }
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
 }
 
 //Get the Reset count of radio
