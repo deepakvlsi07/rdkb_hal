@@ -4571,6 +4571,7 @@ INT wifi_setApSsidAdvertisementEnable(INT apIndex, BOOL enable)
     wifi_hostapdWrite(config_file, &list, 1);
     wifi_hostapdProcessUpdate(apIndex, &list, 1);
     //TODO: call hostapd_cli for dynamic_config_control
+    wifi_reloadAp(apIndex);
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
     return RETURN_OK;
