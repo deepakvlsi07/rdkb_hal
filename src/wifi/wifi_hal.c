@@ -613,14 +613,62 @@ static int readBandWidth(int radioIndex,char *bw_value)
     return RETURN_OK;
 }
 
+// Input must be "1Mbps"; "5.5Mbps"; "6Mbps"; "2Mbps"; "11Mbps"; "12Mbps"; "24Mbps"
 INT wifi_setApBeaconRate(INT radioIndex,CHAR *beaconRate)
 {
-    return 0;
+    struct params params={'\0'};
+    char config_file[MAX_BUF_SIZE] = {0};
+    char buf[MAX_BUF_SIZE] = {'\0'};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    if (strlen (beaconRate) < 5)
+        return RETURN_ERR;
+    // Copy the numeric value
+    strncpy(buf, beaconRate, strlen(beaconRate) - 4);
+    buf[strlen(beaconRate) - 4] = '\0';
+
+    params.name = "beacon_rate";
+    // hostapd config unit is 100 kbps. To convert Mbps to 100kbps, the value need to multiply 10.
+    if (strncmp(buf, "5.5", 3) == 0) {
+        snprintf(buf, sizeof(buf), "55");
+        params.value = buf;
+    } else {
+        strcat(buf, "0");
+        params.value = buf;
+    }
+
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radioIndex);
+    wifi_hostapdWrite(config_file, &params, 1);
+    wifi_hostapdProcessUpdate(radioIndex, &params, 1);
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
+    return RETURN_OK;
 }
 
 INT wifi_getApBeaconRate(INT radioIndex, CHAR *beaconRate)
 {
-    return 0;
+    char config_file[MAX_BUF_SIZE] = {'\0'};
+    char temp_output[MAX_BUF_SIZE] = {'\0'};
+    char buf[MAX_BUF_SIZE] = {'\0'};
+    float rate = 0;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    if (NULL == beaconRate)
+        return RETURN_ERR;
+
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radioIndex);
+    wifi_hostapdRead(config_file, "beacon_rate", buf, sizeof(buf));
+    // Hostapd unit is 100kbps. To convert to 100kbps to Mbps, the value need to divide 10.
+    if(strlen(buf) > 0) {
+        rate = atof(buf)/10;
+        snprintf(temp_output, sizeof(temp_output), "%.1fMbps", rate);
+    } else {
+        snprintf(temp_output, sizeof(temp_output), "1Mbps");   // default value
+    }
+    strncpy(beaconRate, temp_output, sizeof(temp_output));
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
+    return RETURN_OK;
 }
 
 INT wifi_setLED(INT radioIndex, BOOL enable)
@@ -1880,7 +1928,26 @@ INT wifi_setBandSteeringApGroup(char *ApGroup)
 
 INT wifi_setApDTIMInterval(INT apIndex, INT dtimInterval)
 {
-   return RETURN_OK;
+    struct params params={0};
+    char config_file[MAX_BUF_SIZE] = {'\0'};
+    char buf[MAX_BUF_SIZE] = {'\0'};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    if (dtimInterval < 1 || dtimInterval > 255) {
+        return RETURN_ERR;
+        WIFI_ENTRY_EXIT_DEBUG("Invalid dtimInterval: %d\n", dtimInterval);
+    }
+    
+    params.name = "dtim_period";
+    snprintf(buf, sizeof(buf), "%d", dtimInterval);
+    params.value = buf;
+
+    sprintf(config_file,"%s%d.conf", CONFIG_PREFIX, apIndex);
+    wifi_hostapdWrite(config_file, &params, 1);
+    wifi_hostapdProcessUpdate(apIndex, &params, 1);
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
 }
 
 //Check if the driver support the Dfs
@@ -2344,16 +2411,38 @@ INT wifi_setRadioCarrierSenseThresholdInUse(INT radioIndex, INT threshold)	//P3
 //Time interval between transmitting beacons (expressed in milliseconds). This parameter is based ondot11BeaconPeriod from [802.11-2012].
 INT wifi_getRadioBeaconPeriod(INT radioIndex, UINT *output)
 {
-    if (NULL == output)
-        return RETURN_ERR;
-    *output = 100;
+    char cmd[MAX_BUF_SIZE]={'\0'};
+    char buf[MAX_CMD_SIZE]={'\0'};
 
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    if(output == NULL)
+        return RETURN_ERR;
+
+    snprintf(cmd, sizeof(cmd),  "hostapd_cli -i %s%d status | grep beacon_int | cut -d '=' -f2 | tr -d '\n'", AP_PREFIX, radioIndex);
+    _syscmd(cmd, buf, sizeof(buf));
+    *output = atoi(buf);
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
  
 INT wifi_setRadioBeaconPeriod(INT radioIndex, UINT BeaconPeriod)
 {
-    return RETURN_ERR;
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    struct params params={'\0'};
+    char buf[MAX_BUF_SIZE] = {'\0'};
+    char config_file[MAX_BUF_SIZE] = {'\0'};
+
+    params.name = "beacon_int";
+    snprintf(buf, sizeof(buf), "%u", BeaconPeriod);
+    params.value = buf;
+
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radioIndex);
+    wifi_hostapdWrite(config_file, &params, 1);
+    
+    wifi_hostapdProcessUpdate(radioIndex, &params, 1);
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
 }
 
 //Comma-separated list of strings. The set of data rates, in Mbps, that have to be supported by all stations that desire to join this BSS. The stations have to be able to receive and transmit at each of the data rates listed inBasicDataTransmitRates. For example, a value of "1,2", indicates that stations support 1 Mbps and 2 Mbps. Most control packets use a data rate in BasicDataTransmitRates.
@@ -3825,8 +3914,21 @@ INT wifi_setApBeaconType(INT apIndex, CHAR *beaconTypeString)
 // sets the beacon interval on the hardware for this AP
 INT wifi_setApBeaconInterval(INT apIndex, INT beaconInterval)
 {
-    //save config and apply instantly
-    return RETURN_ERR;
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    struct params params={'\0'};
+    char buf[MAX_BUF_SIZE] = {'\0'};
+    char config_file[MAX_BUF_SIZE] = {'\0'};
+
+    params.name = "beacon_int";
+    snprintf(buf, sizeof(buf), "%u", beaconInterval);
+    params.value = buf;
+
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, apIndex);
+    wifi_hostapdWrite(config_file, &params, 1);
+    
+    wifi_hostapdProcessUpdate(apIndex, &params, 1);
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
 }
 
 INT wifi_setDTIMInterval(INT apIndex, INT dtimInterval)
