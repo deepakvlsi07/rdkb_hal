@@ -4583,7 +4583,17 @@ INT wifi_getApUAPSDCapability(INT apIndex, BOOL *output)
     //get the running status from driver
     if(!output)
         return RETURN_ERR;
-    *output=TRUE;
+
+    char config_file[MAX_BUF_SIZE] = {0};
+    char buf[16] = {0};
+
+    sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,apIndex);
+    wifi_hostapdRead(config_file, "uapsd_advertisement_enabled", buf, sizeof(buf));
+    if (strncmp("1",buf,1) == 0)
+        *output = TRUE;
+    else
+        *output = FALSE;
+
     return RETURN_OK;
 }
 
@@ -4593,7 +4603,17 @@ INT wifi_getApWmmEnable(INT apIndex, BOOL *output)
     //get the running status from driver
     if(!output)
         return RETURN_ERR;
-    *output=TRUE;
+
+    char config_file[MAX_BUF_SIZE] = {0};
+    char buf[16] = {0};
+
+    sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,apIndex);
+    wifi_hostapdRead(config_file, "wmm_enabled", buf, sizeof(buf));
+    if (strncmp("1",buf,1) == 0)
+        *output = TRUE;
+    else
+        *output = FALSE;
+
     return RETURN_OK;
 }
 
@@ -4601,7 +4621,20 @@ INT wifi_getApWmmEnable(INT apIndex, BOOL *output)
 INT wifi_setApWmmEnable(INT apIndex, BOOL enable)
 {
     //Save config and apply instantly.
-    return RETURN_ERR;
+    char config_file[MAX_BUF_SIZE] = {0};
+    struct params list;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    list.name = "wmm_enabled";
+    list.value = enable?"1":"0";
+
+    sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,apIndex);
+    wifi_hostapdWrite(config_file, &list, 1);
+    wifi_hostapdProcessUpdate(apIndex, &list, 1);
+    wifi_reloadAp(apIndex);
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
+    return RETURN_OK;
 }
 
 //Whether U-APSD support is currently enabled. When enabled, this is indicated in beacon frames. Note: U-APSD can only be enabled if WMM is also enabled.
@@ -4618,7 +4651,20 @@ INT wifi_getApWmmUapsdEnable(INT apIndex, BOOL *output)
 INT wifi_setApWmmUapsdEnable(INT apIndex, BOOL enable)
 {
     //save config and apply instantly.
-    return RETURN_ERR;
+    char config_file[MAX_BUF_SIZE] = {0};
+    struct params list;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    list.name = "uapsd_advertisement_enabled";
+    list.value = enable?"1":"0";
+
+    sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,apIndex);
+    wifi_hostapdWrite(config_file, &list, 1);
+    wifi_hostapdProcessUpdate(apIndex, &list, 1);
+    wifi_reloadAp(apIndex);
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
+    return RETURN_OK;
 }
 
 // Sets the WMM ACK polity on the hardware. AckPolicy false means do not acknowledge, true means acknowledge
