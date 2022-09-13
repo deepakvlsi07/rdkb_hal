@@ -657,6 +657,22 @@ static int readBandWidth(int radioIndex,char *bw_value)
     return RETURN_OK;
 }
 
+INT wifi_getMaxRadioNumber(INT *max_radio_num)
+{
+    char cmd[64] = {0};
+    char buf[4] = {0};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    snprintf(cmd, sizeof(cmd), "iw list | grep Wiphy | wc -l");
+    _syscmd(cmd, buf, sizeof(buf));
+    *max_radio_num = strtoul(buf, NULL, 10);
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
+    return RETURN_OK;
+}
+
 // Input must be "1Mbps"; "5.5Mbps"; "6Mbps"; "2Mbps"; "11Mbps"; "12Mbps"; "24Mbps"
 INT wifi_setApBeaconRate(INT radioIndex,CHAR *beaconRate)
 {
