@@ -3848,8 +3848,22 @@ INT wifi_setRadioCtsProtectionEnable(INT apIndex, BOOL enable)
 // enables OBSS Coexistence - fall back to 20MHz if necessary for the radio used by this ap
 INT wifi_setRadioObssCoexistenceEnable(INT apIndex, BOOL enable)
 {
-    //save config and Apply instantly
-    return RETURN_ERR;
+    char config_file[64] = {'\0'};
+    char buf[64] = {'\0'};
+    struct params list;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    list.name = "ht_coex";
+    snprintf(buf, sizeof(buf), "%d", enable);
+    list.value = buf;
+
+    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, apIndex);
+    wifi_hostapdWrite(config_file, &list, 1);
+    wifi_hostapdProcessUpdate(apIndex, &list, 1);
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
+    return RETURN_OK;
 }
 
 //P3 // sets the fragmentation threshold in bytes for the radio used by this ap
