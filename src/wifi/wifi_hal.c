@@ -1053,18 +1053,17 @@ INT wifi_setRadioEnable(INT radioIndex, BOOL enable)
             snprintf(cmd, sizeof(cmd), "iw %s%d del", AP_PREFIX, apIndex);
             _syscmd(cmd, buf, sizeof(buf));
         }
-        snprintf(cmd, sizeof(cmd), "rmmod %s", radioIndex? DRIVER_5GHZ :DRIVER_2GHZ);
+        snprintf(cmd, sizeof(cmd), "ifconfig %s%d down 2>&1", RADIO_PREFIX, radioIndex);
         _syscmd(cmd, buf, sizeof(buf));
         if(strlen(buf))
-            fprintf(stderr, "Could not remove driver module");
+            fprintf(stderr, "Could not shut down the radio interface: %s%d", RADIO_PREFIX, radioIndex);
     }
     else
     {
-        //Inserting driver for Wifi Radio
-        snprintf(cmd, sizeof(cmd), "modprobe %s", radioIndex? DRIVER_5GHZ :DRIVER_2GHZ);
+        snprintf(cmd, sizeof(cmd), "ifconfig %s%d up 2>&1", RADIO_PREFIX, radioIndex);
         _syscmd(cmd, buf, sizeof(buf));
         if(strlen(buf))
-            fprintf(stderr, "FATAL: Could not insert driver module");
+            fprintf(stderr, "Could not up the radio interface: %s%d", RADIO_PREFIX, radioIndex);
         sleep(1);
         if(radioIndex == 1)//If "wlan0" interface created for 5GHz radio, then need to rename to wlan1
         {
