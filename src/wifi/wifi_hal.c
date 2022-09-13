@@ -2251,7 +2251,7 @@ INT wifi_getRadioIEEE80211hSupported(INT radioIndex, BOOL *Supported)  //Tr181
 {
     if (NULL == Supported) 
         return RETURN_ERR;
-    *Supported = FALSE;
+    *Supported = TRUE;
 
     return RETURN_OK;
 }
@@ -2259,17 +2259,46 @@ INT wifi_getRadioIEEE80211hSupported(INT radioIndex, BOOL *Supported)  //Tr181
 //Get 80211h feature enable
 INT wifi_getRadioIEEE80211hEnabled(INT radioIndex, BOOL *enable) //Tr181
 {
-    if (NULL == enable)
-        return RETURN_ERR;
-    *enable = FALSE;
+    char buf[64]={'\0'};
+    char config_file[64] = {'\0'};
 
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    if(enable == NULL)
+        return RETURN_ERR;
+
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radioIndex);
+    wifi_hostapdRead(config_file, "ieee80211h", buf, sizeof(buf));
+
+    if (strncmp(buf, "1", 1) == 0)
+        *enable = TRUE;
+    else
+        *enable = FALSE;
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
 
 //Set 80211h feature enable
 INT wifi_setRadioIEEE80211hEnabled(INT radioIndex, BOOL enable)  //Tr181
 {
-    return RETURN_ERR;
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    struct params params={'\0'};
+    char config_file[MAX_BUF_SIZE] = {0};
+
+    params.name = "ieee80211h";
+
+    if (enable) {
+        params.value = "1";
+    } else {
+        params.value = "0";
+    }
+
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radioIndex);
+    wifi_hostapdWrite(config_file, &params, 1);
+    
+    wifi_hostapdProcessUpdate(radioIndex, &params, 1);
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
 }
 
 //Indicates the Carrier Sense ranges supported by the radio. It is measured in dBm. Refer section A.2.3.2 of CableLabs Wi-Fi MGMT Specification.
