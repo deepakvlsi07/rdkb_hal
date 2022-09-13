@@ -9754,3 +9754,25 @@ INT wifi_getApAssociatedDevice(INT ap_index, CHAR *output_buf, INT output_buf_si
     return RETURN_OK;
 }
 #endif
+
+INT wifi_getProxyArp(INT apIndex, BOOL *enable)
+{
+    char output[16]={'\0'};
+    char config_file[MAX_BUF_SIZE] = {0};
+
+    if (!enable)
+        return RETURN_ERR;
+
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, apIndex);
+    wifi_hostapdRead(config_file, "proxy_arp", output, sizeof(output));
+
+    if (strlen(output) == 0)
+        *enable = FALSE;
+    else if (strncmp(output, "1", 1) == 0)
+        *enable = TRUE;
+    else
+        *enable = FALSE;
+
+    wifi_dbg_printf("\n[%s]: proxy_arp is : %s", __func__, output);
+    return RETURN_OK;
+}
