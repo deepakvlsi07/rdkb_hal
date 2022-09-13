@@ -1024,13 +1024,18 @@ INT wifi_getRadioEnable(INT radioIndex, BOOL *output_bool)      //RDKB
 
     snprintf(interface_path, sizeof(interface_path), "/sys/class/net/%s%d/address", RADIO_PREFIX, radioIndex);
     fp = fopen(interface_path, "r");
-    if(fp)
+    if(!fp)
     {
-        *output_bool = TRUE;
-        fclose(fp);
+		return RETURN_ERR;
     }
     //TODO: check if hostapd with config is running
+	char buf[MAX_BUF_SIZE] = {0}, cmd[MAX_CMD_SIZE] = {0};
+	sprintf(cmd, "hostapd_cli -i %s%d status | grep state | cut -d '=' -f2", AP_PREFIX, radioIndex);
+	_syscmd(cmd, buf, sizeof(buf));
 
+	if(strncmp(buf, "ENABLED", 7) == 0 || strncmp(buf, "ACS", 3) == 0 || strncmp(buf, "HT_SCAN", 7) == 0 || strncmp(buf, "DFS", 3) == 0)
+		*output_bool = TRUE;
+	fclose(fp);
     return RETURN_OK;
 }
 
