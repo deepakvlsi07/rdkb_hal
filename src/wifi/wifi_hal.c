@@ -162,6 +162,15 @@ typedef enum
     band_5 = 1,
 } wifi_band;
 
+typedef enum {
+    WIFI_MODE_A = 0x01,
+    WIFI_MODE_B = 0x02,
+    WIFI_MODE_G = 0x04,
+    WIFI_MODE_N = 0x08,
+    WIFI_MODE_AC = 0x10,
+    WIFI_MODE_AX = 0x20,
+} wifi_ieee80211_Mode;
+
 #ifdef WIFI_HAL_VERSION_3
 
 // Return number of elements in array
@@ -1521,7 +1530,63 @@ INT wifi_getRadioStandard(INT radioIndex, CHAR *output_string, BOOL *gOnly, BOOL
 #endif
 }
 
-//Set the radio operating mode, and pure mode flag. 
+INT wifi_getRadioMode(INT radioIndex, CHAR *output_string, UINT *pureMode)
+{
+    char cmd[128] = {0};
+    char buf[64] = {0};
+    char config_file[64] = {0};
+    wifi_band band;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    if(NULL == output_string || NULL == pureMode)
+        return RETURN_ERR;
+
+    // grep all of the ieee80211 protocol config set to 1
+    snprintf(config_file, sizeof(cmd), "%s%d.conf", CONFIG_PREFIX, radioIndex);
+    snprintf(cmd, sizeof(cmd), "cat %s | grep -E \"ieee.*=1\" | cut -d '=' -f1 | tr -d 'ieee80211'", config_file);
+    _syscmd(cmd, buf, sizeof(buf));
+
+    band = wifi_index_to_band(radioIndex);
+    // puremode is a bit map
+    *pureMode = 0;
+    if (band == band_2_4) {
+        strcat(output_string, "b,g");
+        *pureMode |= WIFI_MODE_B | WIFI_MODE_G;
+        if (strstr(buf, "n") != NULL) {
+            strcat(output_string, ",n");
+            *pureMode |= WIFI_MODE_N;
+        }
+        if (strstr(buf, "ax") != NULL) {
+            strcat(output_string, ",ax");
+            *pureMode |= WIFI_MODE_AX;
+        }
+    } else if (band == band_5) {
+        strcat(output_string, "a");
+        *pureMode |= WIFI_MODE_A;
+        if (strstr(buf, "n") != NULL) {
+            strcat(output_string, ",n");
+            *pureMode |= WIFI_MODE_N;
+        }
+        if (strstr(buf, "ac") != NULL) {
+            strcat(output_string, ",ac");
+            *pureMode |= WIFI_MODE_AC;
+        }
+        if (strstr(buf, "ax") != NULL) {
+            strcat(output_string, ",ax");
+            *pureMode |= WIFI_MODE_AX;
+        }
+    } else if (band == band_6) {
+        if (strstr(buf, "ax") != NULL) {
+            strcat(output_string, "ax");
+            *pureMode |= WIFI_MODE_AX;
+        }
+    }
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
+}
+
+// Set the radio operating mode, and pure mode flag.
 INT wifi_setRadioChannelMode(INT radioIndex, CHAR *channelMode, BOOL gOnlyFlag, BOOL nOnlyFlag, BOOL acOnlyFlag)	//RDKB
 {
     WIFI_ENTRY_EXIT_DEBUG("Inside %s_%s_%d_%d:%d\n",__func__,channelMode,nOnlyFlag,gOnlyFlag,__LINE__);  
@@ -1611,6 +1676,59 @@ INT wifi_setRadioChannelMode(INT radioIndex, CHAR *channelMode, BOOL gOnlyFlag, 
     {
         return RETURN_ERR;
     }
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
+    return RETURN_OK;
+}
+
+// Set the radio operating mode, and pure mode flag.
+INT wifi_setRadioMode(INT radioIndex, CHAR *channelMode, UINT pureMode)
+{
+    int num_hostapd_support_mode = 3;   // n, ac, ax
+    struct params list[num_hostapd_support_mode];
+    char config_file[64] = {0};
+    char bandwidth[16] = {0};
+    int mode_check_bit = 1 << 3;    // n mode
+    wifi_ieee80211_Mode mode = (wifi_ieee80211_Mode)pureMode;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s_%d:%d\n", __func__, channelMode, pureMode, __LINE__);
+    // Set radio mode
+    list[0].name = "ieee80211n";
+    list[1].name = "ieee80211ac";
+    list[2].name = "ieee80211ax";
+    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
+
+    // check the bit map from n to ax, and set hostapd config
+    if (mode & WIFI_MODE_N)
+        list[0].value = "1";
+    else
+        list[0].value = "0";
+    if (mode & WIFI_MODE_AC)
+        list[1].value = "1";
+    else
+        list[1].value = "0";
+    if (mode & WIFI_MODE_AX)
+        list[2].value = "1";
+    else
+        list[2].value = "0";
+    wifi_hostapdWrite(config_file, list, num_hostapd_support_mode);
+
+    if (channelMode == NULL || strlen(channelMode) == 0)
+        return RETURN_OK;
+    // Set bandwidth
+    if (strstr(channelMode, "40") != NULL)
+        strcpy(bandwidth, "40MHz");
+    else if (strstr(channelMode, "80") != NULL)
+        strcpy(bandwidth, "80MHz");
+    else if (strstr(channelMode, "160") != NULL)
+        strcpy(bandwidth, "160MHz");
+    else    // 11A, 11B, 11G....
+        strcpy(bandwidth, "20MHz");
+
+    writeBandWidth(radioIndex, bandwidth);
+    wifi_setRadioOperatingChannelBandwidth(radioIndex, bandwidth);
+
+    wifi_reloadAp(radioIndex);
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
     return RETURN_OK;
