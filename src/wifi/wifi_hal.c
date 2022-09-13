@@ -7433,53 +7433,59 @@ INT wifi_getSSIDTrafficStats2(INT ssidIndex,wifi_ssidTrafficStats2_t *output_str
 #endif
 
     FILE *fp = NULL;
-    char HConf_file[MAX_BUF_SIZE] = {'\0'};
+    char HConf_file[128] = {'\0'};
     char interface_name[50] = {0};
-    char pipeCmd[MAX_CMD_SIZE] = {0};
-    char str[MAX_BUF_SIZE] = {0};
+    char pipeCmd[128] = {0};
+    char str[256] = {0};
     wifi_ssidTrafficStats2_t *out = output_struct;
 
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
     if (!output_struct)
         return RETURN_ERR;
 
-    if (ssidIndex >= 4)
+    memset(out, 0, sizeof(wifi_ssidTrafficStats2_t));
+    sprintf(HConf_file, "%s%d.conf", CONFIG_PREFIX, ssidIndex);
+    GetInterfaceName(interface_name, HConf_file);
+    sprintf(pipeCmd, "cat /proc/net/dev | grep %s", interface_name);
+
+    fp = popen(pipeCmd, "r");
+    if (fp == NULL) {
+        fprintf(stderr, "%s: popen failed\n", __func__);
         return RETURN_ERR;
+    }
+    fgets(str, sizeof(str), fp);
 
-    sprintf(HConf_file,"%s%d%s","/nvram/hostapd",ssidIndex,".conf");
-    GetInterfaceName(interface_name,HConf_file);
-    sprintf(pipeCmd,"%s%s%s","cat /proc/net/dev | grep ",interface_name," |  tr -s ' '  | cut -d  ' ' -f11 | tr -d '\n'");
-    fp = popen(pipeCmd, "r");
-    fgets(str, MAX_BUF_SIZE,fp);
-    out->ssid_BytesSent = atol(str);
+    if (strlen(str) == 0)   // interface not exist
+        return RETURN_OK;
+
+    sscanf(str, "%*[^:]: %lu %lu %lu %lu %* %* %* %* %lu %lu %lu %lu", &out->ssid_BytesReceived, &out->ssid_PacketsReceived, &out->ssid_ErrorsReceived, \
+    &out->ssid_DiscardedPacketsReceived, &out->ssid_BytesSent, &out->ssid_PacketsSent, &out->ssid_ErrorsSent, &out->ssid_DiscardedPacketsSent);
     pclose(fp);
 
-    sprintf(pipeCmd,"%s%s%s","cat /proc/net/dev | grep ",interface_name," |  tr -s ' '  | cut -d  ' ' -f3 | tr -d '\n'");
+    memset(str, 0, sizeof(str));
+    sprintf(pipeCmd, "tail -n1 /proc/net/netstat");
     fp = popen(pipeCmd, "r");
-    fgets(str, MAX_BUF_SIZE,fp);
-    out->ssid_BytesReceived = atol(str);
+    if (fp == NULL) {
+        fprintf(stderr, "%s: popen failed\n", __func__);
+        return RETURN_ERR;
+    }
+    fgets(str, sizeof(str), fp);
+
+    sscanf(str, "%*[^:]: %* %* %lu %lu %lu %lu", &out->ssid_MulticastPacketsReceived, &out->ssid_MulticastPacketsSent, &out->ssid_BroadcastPacketsRecevied, \
+    &out->ssid_BroadcastPacketsSent);
     pclose(fp);
 
-    sprintf(pipeCmd,"%s%s%s","cat /proc/net/dev | grep ",interface_name," |  tr -s ' '  | cut -d  ' ' -f12 | tr -d '\n'");
-    fp = popen(pipeCmd, "r");
-    fgets(str, MAX_BUF_SIZE,fp);
-    out->ssid_PacketsSent = atol(str);
-    pclose(fp);
+    out->ssid_UnicastPacketsSent = out->ssid_PacketsSent - out->ssid_MulticastPacketsSent - out->ssid_BroadcastPacketsSent - out->ssid_DiscardedPacketsSent;
+    out->ssid_UnicastPacketsReceived = out->ssid_PacketsReceived - out->ssid_MulticastPacketsReceived - out->ssid_BroadcastPacketsRecevied - out->ssid_DiscardedPacketsReceived;
 
-    sprintf(pipeCmd,"%s%s%s","cat /proc/net/dev | grep ",interface_name," |  tr -s ' '  | cut -d  ' ' -f4 | tr -d '\n'");
-    fp = popen(pipeCmd, "r");
-    fgets(str, MAX_BUF_SIZE,fp);
-    out->ssid_PacketsReceived = atol(str);
-    pclose(fp);
-    /*
-       //TODO:
-       out->ssid_UnicastPacketsSent        = uni->ims_tx_data_packets;
-       out->ssid_UnicastPacketsReceived    = uni->ims_rx_data_packets;
-       out->ssid_MulticastPacketsSent      = multi->ims_tx_data_packets - multi->ims_tx_bcast_data_packets;
-       out->ssid_MulticastPacketsReceived  = multi->ims_rx_data_packets - multi->ims_rx_bcast_data_packets;
-       out->ssid_BroadcastPacketsSent      = multi->ims_tx_bcast_data_packets;
-       out->ssid_BroadcastPacketsRecevied  = multi->ims_rx_bcast_data_packets; 
-    */
+    // Not supported
+    output_struct->ssid_RetransCount = 0;
+    output_struct->ssid_FailedRetransCount = 0;
+    output_struct->ssid_RetryCount = 0;
+    output_struct->ssid_MultipleRetryCount = 0;
+    output_struct->ssid_ACKFailureCount = 0;
+    output_struct->ssid_AggregatedPacketCount = 0;
+
     return RETURN_OK;
 }
 
