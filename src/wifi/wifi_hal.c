@@ -2185,18 +2185,23 @@ INT wifi_setRadioDfsRefreshPeriod(INT radioIndex, ULONG seconds) //Tr181
 //The output_string is a max length 64 octet string that is allocated by the RDKB code.  Implementations must ensure that strings are not longer than this.
 INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) //Tr181
 {
+    char cmd[128] = {0}, buf[64] = {0};
+    char interface_name[64] = {0};
+    int ret = 0, len=0;
+    BOOL radio_enable = FALSE;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
     if (NULL == output_string)
         return RETURN_ERR;
 
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    char cmd[1024] = {0}, buf[64] = {0};
-    int ret = 0, len=0;
+    if (wifi_getRadioEnable(radioIndex, &radio_enable) == RETURN_ERR)
+        return RETURN_ERR;
 
-    snprintf(cmd, sizeof(cmd),
-        "ls -1 /sys/class/net/%s%d/device/ieee80211/phy*/device/net/ | "
-        "xargs -I {} iw dev {} info | grep width | head -n1 | "
-        "cut -d ' ' -f6", RADIO_PREFIX, radioIndex);
+    if (radio_enable != TRUE)
+        return RETURN_OK;
 
+    snprintf(cmd, sizeof(cmd),"iw dev %s%d info | grep 'width' | cut -d  ' ' -f6", AP_PREFIX, radioIndex);
     ret = _syscmd(cmd, buf, sizeof(buf));
     len = strlen(buf);
     if((ret != 0) || (len == 0))
@@ -5191,7 +5196,7 @@ INT wifi_getApEnable(INT apIndex, BOOL *output_bool)
 
     if((apIndex >= 0) && (apIndex < MAX_APS))//Handling 6 APs
     {
-        sprintf(cmd, "%s%s%d%s", "ifconfig ", AP_PREFIX, apIndex, " | grep UP");
+        sprintf(cmd, "ifconfig %s%d 2> /dev/null | grep UP", AP_PREFIX, apIndex);
         *output_bool = _syscmd(cmd,buf,sizeof(buf))?0:1;
     }
 
