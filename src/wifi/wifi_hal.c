@@ -75,6 +75,7 @@ Licensed under the ISC license
 #define VAP_STATUS_FILE "/tmp/vap-status"
 #define ESSID_FILE "/tmp/essid"
 #define GUARD_INTERVAL_FILE "/tmp/guard-interval"
+#define CHANNEL_STATS_FILE "/tmp/channel_stats"
 
 #define DRIVER_2GHZ "ath9k"
 #define DRIVER_5GHZ "ath10k_pci"
@@ -1066,6 +1067,82 @@ INT wifi_setRadioCountryCode(INT radioIndex, CHAR *CountryCode)
     wifi_reloadAp(radioIndex);
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
+    return RETURN_OK;
+}
+
+INT wifi_getRadioChannelStats2(INT radioIndex, wifi_channelStats2_t *outputChannelStats2)
+{
+    char channel_util_file[64] = {0};
+    char cmd[128] =  {0};
+    char buf[128] = {0};
+    char line[128] = {0};
+  	char *param = NULL, *value = NULL;
+    int read = 0;
+    unsigned int ActiveTime = 0, BusyTime = 0, TransmitTime = 0;
+    unsigned int preActiveTime = 0, preBusyTime = 0, preTransmitTime = 0;
+    size_t len = 0;
+    FILE *f = NULL;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    snprintf(cmd, sizeof(cmd), "iw %s%d scan | grep signal | awk '{print $2}' | sort -n | tail -n1", AP_PREFIX, radioIndex);
+    _syscmd(cmd, buf, sizeof(buf));
+    outputChannelStats2->ch_Max80211Rssi = strtol(buf, NULL, 10);
+
+    memset(cmd, 0, sizeof(cmd));
+    memset(buf, 0, sizeof(buf));
+    snprintf(cmd, sizeof(cmd), "iw %s%d survey dump | grep 'in use' -A6", AP_PREFIX, radioIndex);
+    if ((f = popen(cmd, "r")) == NULL) {
+        wifi_dbg_printf("%s: popen %s error\n", __func__, cmd);
+        return RETURN_ERR;
+    }
+
+    read = getline(&line, &len, f);
+    while (read != -1) {
+        param = strtok(line, ":\t");
+        value = strtok(NULL, " ");
+        if(strstr(param, "frequency") != NULL) {
+            outputChannelStats2->ch_Frequency = strtol(value, NULL, 10);
+        }
+        if(strstr(param, "noise") != NULL) {
+            outputChannelStats2->ch_NoiseFloor = strtol(value, NULL, 10);
+            outputChannelStats2->ch_Non80211Noise = strtol(value, NULL, 10);
+        }
+        if(strstr(param, "channel active time") != NULL) {
+            ActiveTime = strtol(value, NULL, 10);
+        }
+        if(strstr(param, "channel busy time") != NULL) {
+            BusyTime = strtol(value, NULL, 10);
+        }
+        if(strstr(param, "channel transmit time") != NULL) {
+            TransmitTime = strtol(value, NULL, 10);
+        }
+        read = getline(&line, &len, f);
+    }
+    pclose(f);
+
+    // The file should store the last active, busy and transmit time
+    snprintf(channel_util_file, sizeof(channel_util_file), "%s%d.txt", CHANNEL_STATS_FILE, radioIndex);
+    f = fopen(channel_util_file, "r");
+    if (f != NULL) {
+        read = getline(&line, &len, f);
+        preActiveTime = strtol(line, NULL, 10);
+        read = getline(&line, &len, f);
+        preBusyTime = strtol(line, NULL, 10);
+        read = getline(&line, &len, f);
+        preTransmitTime = strtol(line, NULL, 10);
+        fclose(f);
+    }
+
+    outputChannelStats2->ch_ObssUtil = (BusyTime - preBusyTime)*100/(ActiveTime - preActiveTime);
+    outputChannelStats2->ch_SelfBssUtil = (TransmitTime - preTransmitTime)*100/(ActiveTime - preActiveTime);
+
+    f = fopen(channel_util_file, "w");
+    if (f != NULL) {
+        fprintf(f, "%u\n%u\n%u\n", ActiveTime, BusyTime, TransmitTime);
+        fclose(f);
+    }
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
 
