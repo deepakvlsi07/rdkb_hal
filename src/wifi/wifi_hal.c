@@ -76,6 +76,7 @@ Licensed under the ISC license
 #define ESSID_FILE "/tmp/essid"
 #define GUARD_INTERVAL_FILE "/tmp/guard-interval"
 #define CHANNEL_STATS_FILE "/tmp/channel_stats"
+#define DFS_ENABLE_FILE "/nvram/dfs_enable.txt"
 
 #define DRIVER_2GHZ "ath9k"
 #define DRIVER_5GHZ "ath10k_pci"
@@ -2230,7 +2231,7 @@ INT wifi_getRadioDfsSupport(INT radioIndex, BOOL *output_bool) //Tr181
 {
     if (NULL == output_bool) 
         return RETURN_ERR;
-    *output_bool=FALSE;
+    *output_bool=TRUE;
     return RETURN_OK;
 }
 
@@ -2272,17 +2273,64 @@ INT wifi_setRadioDCSScanTime(INT radioIndex, INT interval_seconds, INT dwell_mil
 //Get the Dfs enable status
 INT wifi_getRadioDfsEnable(INT radioIndex, BOOL *output_bool)	//Tr181
 {
+    char buf[16] = {0};
+    FILE *f = NULL;
+    wifi_band band;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    *output_bool = TRUE;        // default
     if (NULL == output_bool) 
         return RETURN_ERR;
-    *output_bool = FALSE;
 
+    band = wifi_index_to_band(radioIndex);
+    if (band != band_5)
+        return RETURN_OK;
+
+    f = fopen(DFS_ENABLE_FILE, "r");
+    if (f != NULL) {
+        fgets(buf, 2, f);
+        if (strncmp(buf, "0", 0) == 0)
+            *output_bool = FALSE;
+        fclose(f);
+    }
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
 
 //Set the Dfs enable status
 INT wifi_setRadioDfsEnable(INT radioIndex, BOOL enable)	//Tr181
 {
-    return RETURN_ERR;
+    char buf[128] = {0};
+    char config_file[128] = {0};
+    FILE *f = NULL;
+    struct params params={0};
+    wifi_band band;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    band = wifi_index_to_band(radioIndex);
+    if (band != band_5)
+        return RETURN_OK;
+
+    f = fopen(DFS_ENABLE_FILE, "w");
+    if (f == NULL)
+        return RETURN_ERR;
+    fprintf(f, "%d", enable);
+    fclose(f);
+
+    params.name = "acs_exclude_dfs";
+    sprintf(buf, "%d", enable?"1":"0");
+    params.value = buf;
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radioIndex);
+    wifi_hostapdWrite(config_file, &params, 1);
+    wifi_hostapdProcessUpdate(radioIndex, &params, 1);
+
+    wifi_setRadioIEEE80211hEnabled(radioIndex, enable);
+
+    wifi_reloadAp(radioIndex);
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 }
 
 //Check if the driver support the AutoChannelRefreshPeriod
