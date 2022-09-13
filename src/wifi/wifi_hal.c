@@ -69,6 +69,7 @@ Licensed under the ISC license
 #define IF_NAME_SIZE 50
 #define CONFIG_PREFIX "/nvram/hostapd"
 #define ACL_PREFIX "/tmp/hostapd-acl"
+#define DENY_PREFIX "/tmp/hostapd-deny"
 //#define ACL_PREFIX "/tmp/wifi_acl_list" //RDKB convention
 #define SOCK_PREFIX "/var/run/hostapd/wifi"
 #define VAP_STATUS_FILE "/tmp/vap-status"
@@ -4306,17 +4307,41 @@ INT wifi_setApMacAddressControlMode(INT apIndex, INT filterMode)
     struct params list[2];
     char buf[MAX_BUF_SIZE] = {0};
     char config_file[MAX_BUF_SIZE] = {0}, acl_file[MAX_BUF_SIZE] = {0};
+    char deny_file[MAX_BUF_SIZE] = {0};
 
     list[0].name = "macaddr_acl";
-    sprintf(buf, "%d", filterMode);
-    list[0].value = buf ;
 
-    if (filterMode == 1 || filterMode == 2) {//TODO: check for filterMode(2)
+    if (filterMode == 0) {
+        sprintf(buf, "%d", 0);
+        list[0].value = buf;
+
+        char cmd[128], rtn[128];
+        snprintf(cmd, sizeof(cmd), "hostapd_cli -i %s%d deny_acl CLEAR", AP_PREFIX, apIndex);
+        _syscmd(cmd, rtn, sizeof(rtn));
+        memset(cmd,0,sizeof(cmd));
+        // Delete deny_mac_file in hostapd configuration
+        snprintf(cmd, sizeof(cmd), "sed -i '/deny_mac_file=/d' %s%d.conf ", CONFIG_PREFIX, apIndex);
+        _syscmd(cmd, rtn, sizeof(rtn));
+    }
+    else if (filterMode == 1) {
+        sprintf(buf, "%d", filterMode);
+        list[0].value = buf;
         sprintf(acl_file,"%s%d",ACL_PREFIX,apIndex);
         list[1].name = "accept_mac_file";
         list[1].value = acl_file;
         items = 2;
+    } else if (filterMode == 2) {
+        //TODO: deny_mac_file
+        sprintf(buf, "%d", 0);
+        list[0].value = buf;
+        list[1].name = "deny_mac_file";
+        sprintf(deny_file,"%s%d", DENY_PREFIX,apIndex);
+        list[1].value = deny_file;
+        items = 2;
+    } else {
+        return RETURN_ERR;
     }
+
     sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,apIndex);
     wifi_hostapdWrite(config_file, list, items);
 
@@ -7032,7 +7057,24 @@ INT wifi_getApMacAddressControlMode(INT apIndex, INT *output_filterMode)
     //_syscmd(cmd, buf, sizeof(buf));
     sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, apIndex);
     wifi_hostapdRead(config_file, "macaddr_acl", buf, sizeof(buf));
-    *output_filterMode = atoi(buf);
+    if(strlen(buf) == 0) {
+        *output_filterMode = 0;
+    }
+    else {
+        int macaddr_acl_mode = strtol(buf, NULL, 10);
+        if (macaddr_acl_mode == 1) {
+            *output_filterMode = 1;
+        } else if (macaddr_acl_mode == 0) {
+            wifi_hostapdRead(config_file, "deny_mac_file", buf, sizeof(buf));
+            if (strlen(buf) == 0) {
+                *output_filterMode = 0;
+            } else {
+                *output_filterMode = 2;
+            }
+        } else {
+            return RETURN_ERR;
+        }
+    }
 
     return RETURN_OK;
 }
