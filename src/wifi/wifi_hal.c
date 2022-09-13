@@ -4824,8 +4824,30 @@ INT wifi_disableApEncryption(INT apIndex)
 // mode mapping as: 1: open, 2: shared, 4:auto
 INT wifi_setApAuthMode(INT apIndex, INT mode)
 {
-    //Apply instantly
-    return RETURN_ERR;
+    struct params params={0};
+    char config_file[64] = {0};
+    int ret;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
+
+    wifi_dbg_printf("\n%s algo_mode=%d", __func__, mode);
+    params.name = "auth_algs";
+
+    if (mode & 1 && mode & 2)
+        params.value = "3";
+    else if (mode & 2)
+        params.value = "2";
+    else if (mode & 1)
+        params.value = "1";
+    else
+        params.value = "0";
+
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, apIndex);
+    wifi_hostapdWrite(config_file, &params, 1);
+    wifi_hostapdProcessUpdate(apIndex, &params, 1);
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n", __func__, __LINE__);
+
+    return RETURN_OK;
 }
 
 // sets an enviornment variable for the authMode. Valid strings are "None", "EAPAuthentication" or "SharedAuthentication"
