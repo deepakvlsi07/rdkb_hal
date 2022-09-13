@@ -11403,3 +11403,83 @@ INT wifi_getRadioStatsEnable(INT radioIndex, BOOL *output_enable)
     *output_enable=TRUE;
     return RETURN_OK;
 }
+
+INT wifi_getTWTsessions(INT ap_index, UINT maxNumberSessions, wifi_twt_sessions_t *twtSessions, UINT *numSessionReturned)
+{
+    char cmd[128] = {0};
+    char buf[128] = {0};
+    char line[128] = {0};
+    size_t len = 0;
+    ssize_t read = 0;
+    FILE *f = NULL;
+    int index = 0;
+    int exp = 0;
+    int mantissa = 0;
+    int duration = 0;
+    int radio_index = 0;
+    int max_radio_num = 0;
+    uint twt_wake_interval = 0;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    wifi_getMaxRadioNumber(&max_radio_num);
+    radio_index = ap_index % max_radio_num;
+    sprintf(cmd, "cat /sys/kernel/debug/ieee80211/phy%d/mt76/twt_stats | wc -l", radio_index);
+    _syscmd(cmd, buf, sizeof(buf));
+    *numSessionReturned = strtol(buf, NULL, 10) - 1;
+    if (*numSessionReturned > maxNumberSessions)
+        *numSessionReturned = maxNumberSessions;
+    else if (*numSessionReturned < 1) {
+        *numSessionReturned = 0;
+        return RETURN_OK;
+    }
+
+    sprintf(cmd, "cat /sys/kernel/debug/ieee80211/phy%d/mt76/twt_stats | tail -n %d | tr '|' ' ' | tr -s ' '", radio_index, *numSessionReturned);
+    if ((f = popen(cmd, "r")) == NULL) {
+        wifi_dbg_printf("%s: popen %s error\n", __func__, cmd);
+        return RETURN_ERR;
+    }
+
+    // the format of each line is "[wcid] [id] [flags] [exp] [mantissa] [duration] [tsf]"
+    while((read = fgets(line, sizeof(line), f)) != NULL) {
+        char *tmp = NULL;
+        strcpy(buf, line);
+        tmp = strtok(buf, " ");
+        twtSessions[index].numDevicesInSession = strtol(tmp, NULL, 10);
+        tmp = strtok(NULL, " ");
+        twtSessions[index].twtParameters.operation.flowID = strtol(tmp, NULL, 10);
+        tmp = strtok(NULL, " ");
+        if (strstr(tmp, "t")) {
+            twtSessions[index].twtParameters.operation.trigger_enabled = TRUE;
+        }
+        if (strstr(tmp, "a")) {
+            twtSessions[index].twtParameters.operation.announced = TRUE;
+        }
+        tmp = strtok(NULL, " ");
+        exp = strtol(tmp, NULL, 10);
+        tmp = strtok(NULL, " ");
+        mantissa = strtol(tmp, NULL, 10);
+        tmp = strtok(NULL, " ");
+        duration = strtol(tmp, NULL, 10);
+
+        // only implicit supported
+        twtSessions[index].twtParameters.operation.implicit = TRUE;
+        // only individual agreement supported
+        twtSessions[index].twtParameters.agreement = wifi_twt_agreement_type_individual;
+
+        // wakeInterval_uSec is a unsigned integer, but the maximum TWT wake interval could be 2^15 (mantissa) * 2^32 = 2^47.
+        twt_wake_interval = mantissa * (1 << exp);
+        if (twt_wake_interval/mantissa != (1 << exp)) {
+            // Overflow handling
+            twtSessions[index].twtParameters.params.individual.wakeInterval_uSec = -1;   // max unsigned int
+        } else {
+            twtSessions[index].twtParameters.params.individual.wakeInterval_uSec = twt_wake_interval;
+        }
+        twtSessions[index].twtParameters.params.individual.minWakeDuration_uSec = duration * 256;
+        index++;
+    }
+
+    pclose(f);
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
+}
