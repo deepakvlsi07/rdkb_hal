@@ -5271,7 +5271,7 @@ INT wifi_getApWpsConfigurationState(INT apIndex, CHAR *output_string)
     snprintf(cmd, sizeof(cmd), "hostapd_cli -i %s%d get_config | grep wps_state | cut -d'=' -f2", AP_PREFIX, apIndex);
     _syscmd(cmd, buf, sizeof(buf));
 
-    if(!strcmp(buf, "configured"))
+    if(!strncmp(buf, "configured", 10))
         snprintf(output_string, 32, "Configured");
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
