@@ -725,15 +725,17 @@ INT wifi_factoryResetRadios()
 */
 INT wifi_factoryResetRadio(int radioIndex) 	//RDKB
 {
+    system("systemctl stop hostapd.service");
+
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     if(radioIndex == 0)
-        system("cp /etc/hostapd-2G.conf /nvram/hostapd0.conf");
+        system("rm /nvram/hostapd0.conf");
     else if(radioIndex == 1)
-        system("cp /etc/hostapd-5G.conf /nvram/hostapd1.conf");
+        system("rm /nvram/hostapd1.conf");
     else
          return RETURN_ERR;
 
-    system("systemctl restart hostapd.service");
+    system("systemctl start hostapd.service");
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
