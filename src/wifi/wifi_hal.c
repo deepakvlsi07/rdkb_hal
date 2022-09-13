@@ -3621,17 +3621,22 @@ INT wifi_setRadioObssCoexistenceEnable(INT apIndex, BOOL enable)
 //P3 // sets the fragmentation threshold in bytes for the radio used by this ap
 INT wifi_setRadioFragmentationThreshold(INT apIndex, UINT threshold)
 {
-    char cmd[64];
-    char buf[512];
-    //save config and apply instantly
+    char config_file[MAX_BUF_SIZE] = {'\0'};
+    char buf[MAX_BUF_SIZE] = {'\0'};
+    struct params list;
 
-    //zqiu:TODO: save config
-    if (threshold > 0)  {
-        snprintf(cmd, sizeof(cmd),  "iwconfig %s%d frag %d", AP_PREFIX, apIndex, threshold);
-    } else {
-        snprintf(cmd, sizeof(cmd),  "iwconfig %s%d frag off", AP_PREFIX, apIndex );
-    }
-    _syscmd(cmd,buf, sizeof(buf));
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    if (threshold < 256 || threshold > 2346 )
+        return RETURN_ERR;
+    list.name = "fragm_threshold";
+    snprintf(buf, sizeof(buf), "%d", threshold);
+    list.value = buf;
+
+    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, apIndex);
+    wifi_hostapdWrite(config_file, &list, 1);
+    wifi_hostapdProcessUpdate(apIndex, &list, 1);
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
     return RETURN_OK;
 }
