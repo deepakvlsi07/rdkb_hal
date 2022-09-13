@@ -9840,3 +9840,11 @@ INT wifi_getProxyArp(INT apIndex, BOOL *enable)
     wifi_dbg_printf("\n[%s]: proxy_arp is : %s", __func__, output);
     return RETURN_OK;
 }
+
+INT wifi_getRadioStatsEnable(INT radioIndex, BOOL *output_enable)
+{
+    if (NULL == output_enable || !(radioIndex==0 || radioIndex==1))
+        return RETURN_ERR;
+    *output_enable=TRUE;
+    return RETURN_OK;
+}
