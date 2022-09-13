@@ -9907,20 +9907,50 @@ INT wifi_getRadioPercentageTransmitPower(INT apIndex, ULONG *txpwr_pcntg)
 
 INT wifi_setZeroDFSState(UINT radioIndex, BOOL enable, BOOL precac)
 {
-     //Zero-wait DFS not supported
-     return RETURN_ERR;
+    // TODO precac feature.
+    struct params params = {0};
+    char config_file[128] = {0};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    params.name = "enable_background_radar";
+    params.value = enable?"1":"0";
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radioIndex);
+    wifi_hostapdWrite(config_file, &params, 1);
+    wifi_hostapdProcessUpdate(radioIndex, &params, 1);
+
+    /* TODO precac feature */
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
 }
 
 INT wifi_getZeroDFSState(UINT radioIndex, BOOL *enable, BOOL *precac)
 {
-     //Zero-wait DFS not supported
-     return RETURN_ERR;
+    char config_file[128] = {0};
+    char buf[64] = {0};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    if (NULL == enable || NULL == precac)
+        return RETURN_ERR;
+
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radioIndex);
+    wifi_hostapdRead(config_file, "enable_background_radar", buf, sizeof(buf));
+    if (strncmp(enable, "1", 1) == 0)
+        *enable = true;
+    else
+        *enable = false;
+
+    /* TODO precac feature */
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
 }
 
 INT wifi_isZeroDFSSupported(UINT radioIndex, BOOL *supported)
 {
-     *supported = false;
-     return RETURN_OK;
+    *supported = TRUE;
+    return RETURN_OK;
 }
 
 INT wifi_setGuardInterval(INT radio_index, wifi_guard_interval_t guard_interval)
