@@ -870,6 +870,10 @@ INT wifi_init()                            //RDKB
 INT wifi_reset()
 {
     //TODO: resets the wifi subsystem, deletes all APs
+    system("systemctl stop hostapd.service");
+    sleep(2);
+    system("systemctl start hostapd.service");
+    sleep(5);
     return RETURN_OK;
 }
 
@@ -895,6 +899,8 @@ INT wifi_reset()
 INT wifi_down()
 {
     //TODO: turns off transmit power for the entire Wifi subsystem, for all radios
+    system("systemctl stop hostapd.service");
+    sleep(2);
     return RETURN_OK;
 }
 
