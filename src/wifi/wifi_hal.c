@@ -34,7 +34,7 @@ Copyright (c) 2007        Mike Kershaw
 Copyright (c) 2008-2009        Luis R. Rodriguez
 Licensed under the ISC license
 */
-
+#define MTK_IMPL
 #define HAL_NETLINK_IMPL
 #define _GNU_SOURCE /* needed for strcasestr */
 
@@ -1623,6 +1623,12 @@ INT wifi_getRadioChannelsInUse(INT radioIndex, CHAR *output_string)	//RDKB
 //Get the running channel number 
 INT wifi_getRadioChannel(INT radioIndex,ULONG *output_ulong)	//RDKB
 {
+#ifdef MTK_IMPL
+    if(!wifi_getApChannel(radioIndex, output_ulong))
+        return RETURN_OK;
+    else
+        return RETURN_ERR;
+#else
     char cmd[1024] = {0}, buf[5] = {0};
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
@@ -1643,6 +1649,7 @@ INT wifi_getRadioChannel(INT radioIndex,ULONG *output_ulong)	//RDKB
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
+#endif
 }
 
 
