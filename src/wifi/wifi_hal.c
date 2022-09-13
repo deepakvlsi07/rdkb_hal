@@ -160,6 +160,7 @@ typedef enum
     band_invalid = -1,
     band_2_4 = 0,
     band_5 = 1,
+    band_6 = 2,
 } wifi_band;
 
 typedef enum {
@@ -428,6 +429,28 @@ static int _syscmd(char *cmd, char *retBuf, int retBufSize)
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
     return cmd_ret >> 8;
+}
+
+wifi_band wifi_index_to_band(int apIndex)
+{
+    char cmd[128] = {0};
+    char buf[64] = {0};
+    int freq = 0;
+    wifi_band band = band_invalid;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    snprintf(cmd, sizeof(cmd), "hostapd_cli -i %s%d status | grep 'freq=' | cut -d '=' -f2 | tr -d '\n'", AP_PREFIX, apIndex);
+    _syscmd(cmd, buf, sizeof(buf));
+    freq = strtol(buf, NULL, 10);
+    if (freq > 2401 && freq < 2495)
+        band = band_2_4;
+    else if (freq > 5160 && freq < 5915)
+        band = band_5;
+    else if (freq > 5955 && freq < 7125)
+        band = band_6;
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return band;
 }
 
 static int wifi_hostapdRead(char *conf_file, char *param, char *output, int output_size)
