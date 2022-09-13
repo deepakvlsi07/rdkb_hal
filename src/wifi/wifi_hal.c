@@ -6263,10 +6263,56 @@ INT wifi_getApSecurityWpaRekeyInterval(INT apIndex, INT *output_int)
 //To-do
 INT wifi_getApSecurityMFPConfig(INT apIndex, CHAR *output_string)
 {
+    char output[16]={'\0'};
+    char config_file[MAX_BUF_SIZE] = {0};
+
+    if (!output_string)
+        return RETURN_ERR;
+
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, apIndex);
+    wifi_hostapdRead(config_file, "ieee80211w", output, sizeof(output));
+
+    if (strlen(output) == 0)
+        snprintf(output_string, 64, "Disabled");
+    else if (strncmp(output, "0", 1) == 0)
+        snprintf(output_string, 64, "Disabled");
+    else if (strncmp(output, "1", 1) == 0)
+        snprintf(output_string, 64, "Optional");
+    else if (strncmp(output, "2", 1) == 0)
+        snprintf(output_string, 64, "Required");
+    else {
+        wifi_dbg_printf("\n[%s]: Unexpected ieee80211w=%s", __func__, output);
+        return RETURN_ERR;
+    }
+
+    wifi_dbg_printf("\n[%s]: ieee80211w is : %s", __func__, output);
     return RETURN_OK;
 }
 INT wifi_setApSecurityMFPConfig(INT apIndex, CHAR *MfpConfig)
 {
+    char str[MAX_BUF_SIZE]={'\0'};
+    char cmd[MAX_CMD_SIZE]={'\0'};
+    struct params params;
+    char config_file[MAX_BUF_SIZE] = {0};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    if(NULL == MfpConfig || strlen(MfpConfig) >= 32 )
+        return RETURN_ERR;
+
+    params.name = "ieee80211w";
+    if (strncmp(MfpConfig, "Disabled", strlen("Disabled")) == 0)
+        params.value = "0";
+    else if (strncmp(MfpConfig, "Optional", strlen("Optional")) == 0)
+        params.value = "1";
+    else if (strncmp(MfpConfig, "Required", strlen("Required")) == 0)
+        params.value = "2";
+    else{
+        wifi_dbg_printf("%s: invalid MfpConfig. Input has to be Disabled, Optional or Required \n", __func__);
+        return RETURN_ERR;
+    }
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, apIndex);
+    wifi_hostapdWrite(config_file, &params, 1);
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n", __func__, __LINE__);
     return RETURN_OK;
 }
 INT wifi_getRadioAutoChannelEnable(INT radioIndex, BOOL *output_bool)
