@@ -78,6 +78,7 @@ Licensed under the ISC license
 #define CHANNEL_STATS_FILE "/tmp/channel_stats"
 #define DFS_ENABLE_FILE "/nvram/dfs_enable.txt"
 #define VLAN_FILE "/nvram/hostapd.vlan"
+#define PSK_FILE "/tmp/hostapd"
 
 #define DRIVER_2GHZ "ath9k"
 #define DRIVER_5GHZ "ath10k_pci"
@@ -5952,8 +5953,71 @@ INT wifi_setApSecurityKeyPassphrase(INT apIndex, CHAR *passPhrase)
 //When set to true, this AccessPoint instance's WiFi security settings are reset to their factory default values. The affected settings include ModeEnabled, WEPKey, PreSharedKey and KeyPassphrase.
 INT wifi_setApSecurityReset(INT apIndex)
 {
-    //apply instantly
-    return RETURN_ERR;
+    char original_config_file[64] = {0};
+    char current_config_file[64] = {0};
+    char buf[64] = {0};
+    char cmd[64] = {0};
+    char wpa[4] = {0};
+    char wpa_psk[64] = {0};
+    char wpa_passphrase[64] = {0};
+    char wpa_psk_file[128] = {0};
+    char wpa_key_mgmt[64] = {0};
+    char wpa_pairwise[32] = {0};
+    wifi_band band;
+    struct params list[6];
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    band = wifi_index_to_band(apIndex);
+    if (band == band_2_4)
+        sprintf(original_config_file, "/etc/hostapd-2G.conf");
+    else if (band = band_5)
+        sprintf(original_config_file, "/etc/hostapd-5G.conf");
+    else if (band = band_6)
+        sprintf(original_config_file, "/etc/hostapd-6G.conf");
+    else
+        return RETURN_ERR;
+
+    wifi_hostapdRead(original_config_file, "wpa", wpa, sizeof(wpa));
+    list[0].name = "wpa";
+    list[0].value = wpa;
+    
+    wifi_hostapdRead(original_config_file, "wpa_psk", wpa_psk, sizeof(wpa_psk));
+    list[1].name = "wpa_psk";
+    list[1].value = wpa_psk;
+
+    wifi_hostapdRead(original_config_file, "wpa_passphrase", wpa_passphrase, sizeof(wpa_passphrase));
+    list[2].name = "wpa_passphrase";
+    list[2].value = wpa_passphrase;
+
+    wifi_hostapdRead(original_config_file, "wpa_psk_file", wpa_psk_file, sizeof(wpa_psk_file));
+
+    if (strlen(wpa_psk_file) == 0)
+        strcpy(wpa_psk_file, PSK_FILE);
+
+    if (access(wpa_psk_file, F_OK) != 0) {
+        sprintf(cmd, "touch %s", wpa_psk_file);
+        _syscmd(cmd, buf, sizeof(buf));
+    }
+    list[3].name = "wpa_psk_file";
+    list[3].value = wpa_psk_file;
+
+    wifi_hostapdRead(original_config_file, "wpa_key_mgmt", wpa_key_mgmt, sizeof(wpa_key_mgmt));
+    list[4].name = "wpa_key_mgmt";
+    list[4].value = wpa_key_mgmt;
+
+    wifi_hostapdRead(original_config_file, "wpa_pairwise", wpa_pairwise, sizeof(wpa_pairwise));
+    list[5].name = "wpa_pairwise";
+    list[5].value = wpa_pairwise;
+
+    sprintf(current_config_file, "%s%d.conf", CONFIG_PREFIX, apIndex);
+    wifi_hostapdWrite(current_config_file, list, 6);
+
+    wifi_setApEnable(apIndex, FALSE);
+    wifi_setApEnable(apIndex, TRUE);
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
 }
 
 //The IP Address and port number of the RADIUS server used for WLAN security. RadiusServerIPAddr is only applicable when ModeEnabled is an Enterprise type (i.e. WPA-Enterprise, WPA2-Enterprise or WPA-WPA2-Enterprise).
