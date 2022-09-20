@@ -77,6 +77,7 @@ Licensed under the ISC license
 #define GUARD_INTERVAL_FILE "/tmp/guard-interval"
 #define CHANNEL_STATS_FILE "/tmp/channel_stats"
 #define DFS_ENABLE_FILE "/nvram/dfs_enable.txt"
+#define VLAN_FILE "/nvram/hostapd.vlan"
 
 #define DRIVER_2GHZ "ath9k"
 #define DRIVER_5GHZ "ath10k_pci"
@@ -5273,12 +5274,64 @@ INT wifi_setApBridgeInfo(INT apIndex, CHAR *bridgeName, CHAR *IP, CHAR *subnet)
 // reset the vlan configuration for this ap
 INT wifi_resetApVlanCfg(INT apIndex)
 {
-    //TODO: remove existing vlan for this ap
+    char original_config_file[64] = {0};
+    char current_config_file[64] = {0};
+    char buf[64] = {0};
+    char cmd[64] = {0};
+    char vlan_file[64] = {0};
+    char vlan_tagged_interface[16] = {0};
+    char vlan_bridge[16] = {0};
+    char vlan_naming[16] = {0};
+    struct params list[4] = {0};
+    wifi_band band;
 
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    band = wifi_index_to_band(apIndex);
+    if (band == band_2_4)
+        sprintf(original_config_file, "/etc/hostapd-2G.conf");
+    else if (band = band_5)
+        sprintf(original_config_file, "/etc/hostapd-5G.conf");
+    else if (band = band_6)
+        sprintf(original_config_file, "/etc/hostapd-6G.conf");
+
+    wifi_hostapdRead(original_config_file, "vlan_file", vlan_file, sizeof(vlan_file));
+
+    if (strlen(vlan_file) == 0)
+        strcpy(vlan_file, VLAN_FILE);
+
+    // The file should exist or this vap would not work.
+    if (access(vlan_file, F_OK) != 0) {
+        sprintf(cmd, "touch %s", vlan_file);
+        _syscmd(cmd, buf, sizeof(buf));
+    }
+    list[0].name = "vlan_file";
+    list[0].value = vlan_file;
+
+    wifi_hostapdRead(original_config_file, "vlan_tagged_interface", vlan_tagged_interface, sizeof(vlan_tagged_interface));
+    list[1].name = "vlan_tagged_interface";
+    list[1].value = vlan_tagged_interface;
+
+    wifi_hostapdRead(original_config_file, "vlan_bridge", vlan_bridge, sizeof(vlan_bridge));
+    list[2].name = "vlan_bridge";
+    list[2].value = vlan_bridge;
+
+    wifi_hostapdRead(original_config_file, "vlan_naming", vlan_naming, sizeof(vlan_naming));
+    list[3].name = "vlan_naming";
+    list[3].value = vlan_naming;
+
+    sprintf(current_config_file, "%s%d.conf", CONFIG_PREFIX, apIndex);
+    wifi_hostapdWrite(current_config_file, list, 4);
     //Reapply vlan settings
-    wifi_pushBridgeInfo(apIndex);
+    // wifi_pushBridgeInfo(apIndex);
 
-    return RETURN_ERR;
+    // restart this ap
+    wifi_setApEnable(apIndex, FALSE);
+    wifi_setApEnable(apIndex, TRUE);
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
+    return RETURN_OK;
 }
 
 // creates configuration variables needed for WPA/WPS.  These variables are implementation dependent and in some implementations these variables are used by hostapd when it is started.  Specific variables that are needed are dependent on the hostapd implementation. These variables are set by WPA/WPS security functions in this wifi HAL.  If not needed for a particular implementation this function may simply return no error.
