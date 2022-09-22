@@ -1089,34 +1089,115 @@ INT wifi_getRadioIfName(INT radioIndex, CHAR *output_string) //Tr181
 //The output_string is a max length 64 octet string that is allocated by the RDKB code.  Implementations must ensure that strings are not longer than this.
 INT wifi_getRadioMaxBitRate(INT radioIndex, CHAR *output_string) //RDKB
 {
-    char cmd[1024] =  {0};
-    char buf[1024] = {0};
-    char HConf_file[MAX_BUF_SIZE] = {'\0'};
-    char interface_name[50] = {0};
+    // The formula to coculate bit rate is "Subcarriers * Modulation * Coding rate * Spatial stream / (Data interval + Guard interval)"
+    // For max bit rate, we should always choose the best MCS
+    char mode[64] = {0};
+    char channel_bandwidth_str[16] = {0};
+    char *tmp = NULL;
+    UINT mode_map = 0;
+    UINT num_subcarrier = 0;
+    UINT code_bits = 0;
+    float code_rate = 0;    // use max code rate
+    int NSS = 0;
+    UINT Symbol_duration = 0;
+    UINT GI_duration = 0; 
+    wifi_band band = band_invalid;
+    wifi_guard_interval_t gi = wifi_guard_interval_auto;
+    BOOL enable = FALSE;
+    float bit_rate = 0;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     if (NULL == output_string)
         return RETURN_ERR;
 
-    sprintf(HConf_file,"%s%d%s","/nvram/hostapd",radioIndex,".conf");
-    GetInterfaceName(interface_name,HConf_file);
-
-    sprintf(cmd, "iwconfig %s | grep 'Bit Rate' | tr -s ' ' | cut -d ':' -f2 | cut -d ' ' -f1,2", interface_name);
-    _syscmd(cmd, buf, sizeof(buf));
-
-    if(strlen(buf) > 0)
-        snprintf(output_string, 64, "%s", buf);
-    else
-    {
-        wifi_getRadioOperatingChannelBandwidth(radioIndex,buf);
-        if((strcmp(buf,"20MHz") == 0) && (radioIndex == 0))
-            strcpy(output_string,"144 Mb/s");
-        else if((strcmp(buf,"20MHz") == 0) && (radioIndex == 1))
-            strcpy(output_string,"54 Mb/s");
-        else if((strcmp(buf,"40MHz") == 0) && (radioIndex == 1))
-            strcpy(output_string,"300 Mb/s");
-        //TODO: CHECK VALID VALUE
+    wifi_getRadioEnable(radioIndex, &enable);
+    if (enable == FALSE) {
+        snprintf(output_string, 64, "0 Mb/s");
+        return RETURN_OK;
     }
+
+    if (wifi_getRadioMode(radioIndex, mode, &mode_map) == RETURN_ERR) {
+        fprintf(stderr, "%s: wifi_getRadioMode return error.\n", __func__);
+        return RETURN_ERR;
+    }
+
+    if (wifi_getGuardInterval(radioIndex, &gi) == RETURN_ERR) {
+        fprintf(stderr, "%s: wifi_getGuardInterval return error.\n", __func__);
+        return RETURN_ERR;
+    }
+
+    if (gi == wifi_guard_interval_3200)
+        GI_duration = 32;
+    else if (gi == wifi_guard_interval_1600)
+        GI_duration = 16;
+    else if (gi == wifi_guard_interval_800)
+        GI_duration = 8;
+    else    // auto, 400
+        GI_duration = 4;
+
+    if (wifi_getRadioOperatingChannelBandwidth(radioIndex, channel_bandwidth_str) != RETURN_OK) {
+        fprintf(stderr, "%s: wifi_getRadioOperatingChannelBandwidth return error\n", __func__);
+        return RETURN_ERR;
+    }
+
+    if (strstr(channel_bandwidth_str, "80+80") != NULL)
+        strcpy(channel_bandwidth_str, "160");
+
+    if (mode_map & WIFI_MODE_AX) {
+        if (strstr(channel_bandwidth_str, "160") != NULL)
+            num_subcarrier = 1960;
+        else if (strstr(channel_bandwidth_str, "80") != NULL)
+            num_subcarrier = 980;
+        else if (strstr(channel_bandwidth_str, "40") != NULL)
+            num_subcarrier = 468;
+        else if (strstr(channel_bandwidth_str, "20") != NULL)
+            num_subcarrier = 234;
+        code_bits = 10;
+        code_rate = (float)5/6;
+        Symbol_duration = 128;
+    } else if (mode_map & WIFI_MODE_AC) {
+        if (strstr(channel_bandwidth_str, "160") != NULL)
+            num_subcarrier = 468;
+        else if (strstr(channel_bandwidth_str, "80") != NULL)
+            num_subcarrier = 234;
+        else if (strstr(channel_bandwidth_str, "40") != NULL)
+            num_subcarrier = 108;
+        else if (strstr(channel_bandwidth_str, "20") != NULL)
+            num_subcarrier = 52;
+        code_bits = 8;
+        code_rate = (float)5/6;
+        Symbol_duration = 32;
+    } else if (mode_map & WIFI_MODE_N) {
+        if (strstr(channel_bandwidth_str, "160") != NULL)
+            num_subcarrier = 468;
+        else if (strstr(channel_bandwidth_str, "80") != NULL)
+            num_subcarrier = 234;
+        else if (strstr(channel_bandwidth_str, "40") != NULL)
+            num_subcarrier = 108;
+        else if (strstr(channel_bandwidth_str, "20") != NULL)
+            num_subcarrier = 52;
+        code_bits = 6;
+        code_rate = (float)3/4;
+        Symbol_duration = 32;
+    } else if ((mode_map & WIFI_MODE_G || mode_map & WIFI_MODE_B) || mode_map & WIFI_MODE_A) {
+        // mode b must run with mode g, so we output mode g bitrate in 2.4 G.
+        snprintf(output_string, 64, "65 Mb/s");
+        return RETURN_OK;
+    } else {
+        snprintf(output_string, 64, "0 Mb/s");
+        return RETURN_OK;
+    }
+
+    // Spatial streams
+    if (wifi_getRadioTxChainMask(radioIndex, &NSS) != RETURN_OK) {
+        fprintf(stderr, "%s: wifi_getRadioTxChainMask return error\n", __func__);
+        return RETURN_ERR;
+    }
+
+    // multiple 10 is to align duration unit (0.1 us)
+    bit_rate = (num_subcarrier * code_bits * code_rate * NSS) / (Symbol_duration + GI_duration) * 10;
+    snprintf(output_string, 64, "%.1f Mb/s", bit_rate);
+
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
     return RETURN_OK;
