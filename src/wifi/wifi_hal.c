@@ -79,6 +79,7 @@ Licensed under the ISC license
 #define DFS_ENABLE_FILE "/nvram/dfs_enable.txt"
 #define VLAN_FILE "/nvram/hostapd.vlan"
 #define PSK_FILE "/tmp/hostapd"
+#define CHAIN_MASK_FILE "/tmp/chain_mask"
 
 #define DRIVER_2GHZ "ath9k"
 #define DRIVER_5GHZ "ath10k_pci"
@@ -4317,29 +4318,84 @@ INT wifi_setRadioAMSDUEnable(INT radioIndex, BOOL amsduEnable)
 //P2  // outputs the number of Tx streams
 INT wifi_getRadioTxChainMask(INT radioIndex, INT *output_int)
 {
-    return RETURN_ERR;
+    char buf[8] = {0};
+    char cmd[128] = {0};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    sprintf(cmd, "cat %s%d.txt 2> /dev/null", CHAIN_MASK_FILE, radioIndex);
+    _syscmd(cmd, buf, sizeof(buf));
+
+    // if there is no record, output the max number of spatial streams
+    if (strlen(buf) == 0) {
+        sprintf(cmd, "iw phy%d info | grep 'TX MCS and NSS set' -A8 | head -n8 | grep 'streams: MCS' | wc -l", radioIndex);
+        _syscmd(cmd, buf, sizeof(buf));
+    }
+
+    *output_int = (INT)strtol(buf, NULL, 10);
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
+    return RETURN_OK;
 }
 
 //P2  // sets the number of Tx streams to an enviornment variable
 INT wifi_setRadioTxChainMask(INT radioIndex, INT numStreams)
 {
-    //save to wifi config, wait for wifi reset or wifi_pushTxChainMask to apply
-    return RETURN_ERR;
+    char cmd[128] = {0};
+    char buf[128] = {0};
+    char chain_mask_file[128] = {0};
+    FILE *f = NULL;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    if (numStreams == 0) {
+        fprintf(stderr, "The mask did not support 0 (auto).\n", numStreams);
+        return RETURN_ERR;
+    }
+    wifi_setRadioEnable(radioIndex, FALSE);
+    sprintf(cmd, "iw phy%d set antenna 0x%x 2>&1", radioIndex, numStreams);
+    _syscmd(cmd, buf, sizeof(buf));
+
+    if (strlen(buf) > 0) {
+        fprintf(stderr, "%s: cmd %s error, output: %s\n", __func__, cmd, buf);
+        return RETURN_ERR;
+    }
+    wifi_setRadioEnable(radioIndex, TRUE);
+
+    sprintf(chain_mask_file, "%s%d.txt", CHAIN_MASK_FILE, radioIndex);
+    f = fopen(chain_mask_file, "w");
+    if (f == NULL) {
+        fprintf(stderr, "%s: fopen failed.\n", __func__);
+        return RETURN_ERR;
+    }
+    fprintf(f, "%d", numStreams);
+    fclose(f);
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
 }
 
 //P2  // outputs the number of Rx streams
 INT wifi_getRadioRxChainMask(INT radioIndex, INT *output_int)
 {
-    if (NULL == output_int)
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    if (wifi_getRadioTxChainMask(radioIndex, output_int) == RETURN_ERR) {
+        fprintf(stderr, "%s: wifi_getRadioTxChainMask return error.\n", __func__);
         return RETURN_ERR;
-    *output_int = 1;
+    }
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
 
 //P2  // sets the number of Rx streams to an enviornment variable
 INT wifi_setRadioRxChainMask(INT radioIndex, INT numStreams)
 {
-    //save to wifi config, wait for wifi reset or wifi_pushRxChainMask to apply
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    if (wifi_setRadioTxChainMask(radioIndex, numStreams) == RETURN_ERR) {
+        fprintf(stderr, "%s: wifi_setRadioTxChainMask return error.\n", __func__);
+        return RETURN_ERR;
+    }
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_ERR;
 }
 
