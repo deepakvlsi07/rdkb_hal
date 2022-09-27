@@ -197,6 +197,7 @@ typedef struct {
 wifi_secur_list *       wifi_get_item_by_key(wifi_secur_list *list, int list_sz, int key);
 wifi_secur_list *       wifi_get_item_by_str(wifi_secur_list *list, int list_sz, const char *str);
 char *                  wifi_get_str_by_key(wifi_secur_list *list, int list_sz, int key);
+static int ieee80211_channel_to_frequency(int channel, int *freqMHz);
 
 static wifi_secur_list map_security[] =
 {
@@ -3510,19 +3511,18 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
     char buf[128]={0};
     char file_name[32] = {0};
     char filter_SSID[32] = {0};
+    char line[256] = {0};
+    char *ret = NULL;
     int freq=0;
     FILE *f = NULL;
     size_t len=0;
-    ssize_t read = 0;
-    char *line =NULL;
-    // int noise_arr[channels_num] = {0};
     int channels_num = 0;
     int vht_channel_width = 0;
     bool get_nosie_ret = false;
     bool filter_enable = false;
     bool filter_BSS = false;     // The flag determine whether the BSS information need to be filterd.
 
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s: %d\n", __func__, __LINE__);
 
     snprintf(file_name, sizeof(file_name), "%s%d.txt", ESSID_FILE, radioIndex);
     f = fopen(file_name, "r");
@@ -3535,20 +3535,20 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
 
     snprintf(cmd, sizeof(cmd), "iw phy phy%d channels | grep * | grep -v disable | wc -l", radioIndex);
     _syscmd(cmd, buf, sizeof(buf));
-    channels_num = atoi(buf);
+    channels_num = strtol(buf, NULL, 10);
 
     struct channels_noise *channels_noise_arr = calloc(channels_num, sizeof(struct channels_noise));
     get_nosie_ret = get_noise(radioIndex, channels_noise_arr, channels_num);
 
     sprintf(cmd, "iw dev %s%d scan | grep '%s%d\\|SSID\\|freq\\|beacon interval\\|capabilities\\|signal\\|Supported rates\\|DTIM\\| \
-    // WPA\\|RSN\\|Group cipher\\|HT operation\\|secondary channel offset\\|channel width\\|HE160' | grep -v -e '*.*BSS'", AP_PREFIX, radioIndex, AP_PREFIX, radioIndex);
+    // WPA\\|RSN\\|Group cipher\\|HT operation\\|secondary channel offset\\|channel width\\|HE.*GHz' | grep -v -e '*.*BSS'", AP_PREFIX, radioIndex, AP_PREFIX, radioIndex);
     fprintf(stderr, "cmd: %s\n", cmd);
     if ((f = popen(cmd, "r")) == NULL) {
         wifi_dbg_printf("%s: popen %s error\n", __func__, cmd);
         return RETURN_ERR;
     }
-    line = malloc(sizeof(char) * 256);
-    while ((read = getline(&line, &len, f)) != -1) {
+    ret = fgets(line, sizeof(line), f);
+    while (ret != NULL) {
         if(strstr(line, "BSS") != NULL) {    // new neighbor info
             // The SSID field is not in the first field. So, we should store whole BSS informations and the filter flag. 
             // And we will determine whether we need the previous BSS infomation when parsing the next BSS field or end of while loop.
@@ -3635,7 +3635,7 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
             strcat(scan_array[index].ap_SupportedStandards, ",n");
             strcpy(scan_array[index].ap_OperatingStandards, "n");
         } else if (strstr(line, "VHT operation") != NULL) {
-            read = getline(&line, &len, f);
+            ret = fgets(line, sizeof(line), f);
             sscanf(line,"		 * channel width: %d", &vht_channel_width);
             if(vht_channel_width == 1) {
                 snprintf(scan_array[index].ap_OperatingChannelBandwidth, sizeof(scan_array[index].ap_OperatingChannelBandwidth), "11AC_VHT80");
@@ -3645,7 +3645,7 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
             if (strstr(line, "BSS") != NULL)   // prevent to get the next neighbor information
                 continue;
         } else if (strstr(line, "HT operation") != NULL) {
-            read = getline(&line, &len, f);
+            ret = fgets(line, sizeof(line), f);
             sscanf(line,"		 * secondary channel offset: %s", &buf);
             if (!strcmp(buf, "above")) {
                 //40Mhz +
@@ -3661,22 +3661,24 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
             if (strstr(line, "BSS") != NULL)   // prevent to get the next neighbor information
                 continue;
         } else if (strstr(line, "HE capabilities") != NULL) {
-            strncat(scan_array[index].ap_SupportedStandards, ",ax", strlen(",ax"));
-            strncpy(scan_array[index].ap_OperatingStandards, "ax", strlen("ax"));
-        } else if (strstr(line, "HE PHY Capabilities") != NULL) {
+            strcat(scan_array[index].ap_SupportedStandards, ",ax");
+            strcpy(scan_array[index].ap_OperatingStandards, "ax");
+            ret = fgets(line, sizeof(line), f);
             if (strncmp(scan_array[index].ap_OperatingFrequencyBand, "2.4GHz", strlen("2.4GHz")) == 0) {
                 if (strstr(line, "HE40/2.4GHz") != NULL)
-                    strncpy(scan_array[index].ap_OperatingChannelBandwidth, "11AXHE40PLUS", strlen("11AXHE40PLUS"));
+                    strcpy(scan_array[index].ap_OperatingChannelBandwidth, "11AXHE40PLUS");
                 else
-                    strncpy(scan_array[index].ap_OperatingChannelBandwidth, "11AXHE20", strlen("11AXHE20"));
+                    strcpy(scan_array[index].ap_OperatingChannelBandwidth, "11AXHE20");
             } else if (strncmp(scan_array[index].ap_OperatingFrequencyBand, "5GHz", strlen("5GHz")) == 0) {
-                strncpy(scan_array[index].ap_OperatingChannelBandwidth, "11AXHE80", strlen("11AXHE80"));    // AP must always support
-                read = getline(&line, &len, f);
+                if (strstr(line, "HE80/5GHz") != NULL) {
+                    strcpy(scan_array[index].ap_OperatingChannelBandwidth, "11AXHE80");
+                    ret = fgets(line, sizeof(line), f);
+                } else
+                    continue;
                 if (strstr(line, "HE160/5GHz") != NULL)
-                    strncpy(scan_array[index].ap_OperatingChannelBandwidth, "11AXHE160", strlen("11AXHE160"));
+                    strcpy(scan_array[index].ap_OperatingChannelBandwidth, "11AXHE160");
             }
-            if (strstr(line, "BSS") != NULL)   // prevent to get the next neighbor information
-                continue;
+            continue;
         } else if (strstr(line, "WPA") != NULL) {
             strcpy(scan_array[index].ap_SecurityModeEnabled, "WPA");
         } else if (strstr(line, "RSN") != NULL) {
@@ -3687,6 +3689,7 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
                 strcpy(scan_array[index].ap_EncryptionMode, "AES");
             }
         }
+        ret = fgets(line, sizeof(line), f);
     }
 
     if (!filter_BSS) {
@@ -3696,7 +3699,6 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
         *output_array_size = index;
     }
     *neighbor_ap_array = scan_array;
-    free(line);
     pclose(f);
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
@@ -7905,112 +7907,205 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
 
 INT wifi_getNeighboringWiFiStatus(INT radio_index, wifi_neighbor_ap2_t **neighbor_ap_array, UINT *output_array_size)
 {
-    char cmd[1024] =  {0};
-    char buf[1024] = {0};
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    int index = -1;
     wifi_neighbor_ap2_t *scan_array = NULL;
-    int scan_count=0;
-    int i =0;
+    char cmd[256]={0};
+    char buf[128]={0};
+    char file_name[32] = {0};
+    char filter_SSID[32] = {0};
+    char line[256] = {0};
+    char *ret = NULL;
     int freq=0;
-    size_t len=0;
     FILE *f = NULL;
-    ssize_t read = 0;
-    char *line =NULL;
-    char radio_ifname[64];
-    char secondary_chan[64];
+    size_t len=0;
+    int channels_num = 0;
     int vht_channel_width = 0;
+    bool get_nosie_ret = false;
+    bool filter_enable = false;
+    bool filter_BSS = false;     // The flag determine whether the BSS information need to be filterd.
 
-    if(wifi_getRadioIfName(radio_index,radio_ifname)!=RETURN_OK)
-        return RETURN_ERR;
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s: %d\n", __func__, __LINE__);
 
-    /* sched_start is not supported on open source ath9k ath10k firmware
-     * Using active scan as a workaround */
-    sprintf(cmd,"iw dev %s scan |grep '^BSS\\|SSID:\\|freq:\\|signal:\\|HT operation:\\|secondary channel offset:\\|* channel width:'", radio_ifname);
-    if((f = popen(cmd, "r")) == NULL) {
+    snprintf(file_name, sizeof(file_name), "%s%d.txt", ESSID_FILE, radio_index);
+    f = fopen(file_name, "r");
+    if (f != NULL) {
+        fgets(filter_SSID, sizeof(file_name), f);
+        if (strlen(filter_SSID) != 0)
+            filter_enable = true;
+        fclose(f);
+    }
+
+    snprintf(cmd, sizeof(cmd), "iw phy phy%d channels | grep * | grep -v disable | wc -l", radio_index);
+    _syscmd(cmd, buf, sizeof(buf));
+    channels_num = strtol(buf, NULL, 10);
+
+    struct channels_noise *channels_noise_arr = calloc(channels_num, sizeof(struct channels_noise));
+    get_nosie_ret = get_noise(radio_index, channels_noise_arr, channels_num);
+
+    sprintf(cmd, "iw dev %s%d scan dump | grep '%s%d\\|SSID\\|freq\\|beacon interval\\|capabilities\\|signal\\|Supported rates\\|DTIM\\| \
+    // WPA\\|RSN\\|Group cipher\\|HT operation\\|secondary channel offset\\|channel width\\|HE.*GHz' | grep -v -e '*.*BSS'", AP_PREFIX, radio_index, AP_PREFIX, radio_index);
+    fprintf(stderr, "cmd: %s\n", cmd);
+    if ((f = popen(cmd, "r")) == NULL) {
         wifi_dbg_printf("%s: popen %s error\n", __func__, cmd);
         return RETURN_ERR;
     }
-    read = getline(&line, &len, f);
-    while (read  != -1) {
-        if(strncmp(line,"BSS",3) == 0) {
-            i = scan_count;
-            scan_count++;
-            scan_array = realloc(scan_array,sizeof(wifi_neighbor_ap2_t)*scan_count);
-            memset(&(scan_array[i]),0, sizeof(wifi_neighbor_ap2_t));
-            sscanf(line,"BSS %17s", scan_array[i].ap_BSSID);
+    ret = fgets(line, sizeof(line), f);
+    while (ret != NULL) {
+        if(strstr(line, "BSS") != NULL) {    // new neighbor info
+            // The SSID field is not in the first field. So, we should store whole BSS informations and the filter flag. 
+            // And we will determine whether we need the previous BSS infomation when parsing the next BSS field or end of while loop.
+            // If we don't want the BSS info, we don't realloc more space, and just clean the previous BSS.
 
-            read = getline(&line, &len, f);
+            if (!filter_BSS) {
+                index++;
+                wifi_neighbor_ap2_t *tmp;
+                tmp = realloc(scan_array, sizeof(wifi_neighbor_ap2_t)*(index+1));
+                if (tmp == NULL) {              // no more memory to use
+                    index--;
+                    wifi_dbg_printf("%s: realloc failed\n", __func__);
+                    break;
+                }
+                scan_array = tmp;
+            }
+            memset(&(scan_array[index]), 0, sizeof(wifi_neighbor_ap2_t));
+
+            filter_BSS = false;
+            sscanf(line, "BSS %17s", scan_array[index].ap_BSSID);
+            strncpy(scan_array[index].ap_Mode, "Infrastructure", strlen("Infrastructure"));
+            strncpy(scan_array[index].ap_SecurityModeEnabled, "None", strlen("None"));
+            strncpy(scan_array[index].ap_EncryptionMode, "None", strlen("None"));
+        } else if (strstr(line, "freq") != NULL) {
             sscanf(line,"	freq: %d", &freq);
-            scan_array[i].ap_Channel = ieee80211_frequency_to_channel(freq);
+            scan_array[index].ap_Channel = ieee80211_frequency_to_channel(freq);
 
-            read = getline(&line, &len, f);
-            sscanf(line,"	signal: %d", &(scan_array[i].ap_SignalStrength));
-
-            read = getline(&line, &len, f);
-            sscanf(line,"	SSID: %s", scan_array[i].ap_SSID);
-            wifi_dbg_printf("%s:Discovered BSS %s, %d, %d , %s\n", __func__, scan_array[i].ap_BSSID, scan_array[i].ap_Channel,scan_array[i].ap_SignalStrength, scan_array[i].ap_SSID);
-            read = getline(&line, &len, f);
-            if(strncmp(line,"BSS",3)==0) {
-                // No HT and no VHT => 20Mhz
-                snprintf(scan_array[i].ap_OperatingChannelBandwidth, sizeof(scan_array[i].ap_OperatingChannelBandwidth), "11%s", radio_index%1 ? "A": "G");
-                wifi_dbg_printf("%s: ap_OperatingChannelBandwidth = '%s'\n", __func__, scan_array[i].ap_OperatingChannelBandwidth);
-                continue;
+            if (freq >= 2412 && freq <= 2484) {
+                strncpy(scan_array[index].ap_OperatingFrequencyBand, "2.4GHz", strlen("2.4GHz"));
+                strncpy(scan_array[index].ap_SupportedStandards, "b,g", strlen("b,g"));
+                strncpy(scan_array[index].ap_OperatingStandards, "g", strlen("g"));
             }
-            if(strncmp(line,"	HT operation:",14)!= 0) {
-                    wifi_dbg_printf("HT output parsing error (%s)\n", line);
-                    goto output_error;
+            else if (freq >= 5160 && freq <= 5805) {
+                strncpy(scan_array[index].ap_OperatingFrequencyBand, "5GHz", strlen("5GHz"));
+                strncpy(scan_array[index].ap_SupportedStandards, "a", strlen("a"));
+                strncpy(scan_array[index].ap_OperatingStandards, "a", strlen("a"));
             }
 
-            read = getline(&line, &len, f);
-            sscanf(line,"		 * secondary channel offset: %s", &secondary_chan);
-
-            if(!strcmp(secondary_chan, "no")) {
-                //20Mhz
-                snprintf(scan_array[i].ap_OperatingChannelBandwidth, sizeof(scan_array[i].ap_OperatingChannelBandwidth), "11N%s_HT20", radio_index%1 ? "A": "G");
+            scan_array[index].ap_Noise = 0;
+            if (get_nosie_ret) {
+                for (int i = 0; i < channels_num; i++) {
+                    if (scan_array[index].ap_Channel == channels_noise_arr[i].channel) {
+                        scan_array[index].ap_Noise = channels_noise_arr[i].noise;
+                        break;
+                    }
+                }
             }
-
-            if(!strcmp(secondary_chan, "above")) {
-                //40Mhz +
-                snprintf(scan_array[i].ap_OperatingChannelBandwidth, sizeof(scan_array[i].ap_OperatingChannelBandwidth), "11N%s_HT40PLUS", radio_index%1 ? "A": "G");
+        } else if (strstr(line, "beacon interval") != NULL) {
+            sscanf(line,"	beacon interval: %d TUs", &(scan_array[index].ap_BeaconPeriod));
+        } else if (strstr(line, "signal") != NULL) {
+            sscanf(line,"	signal: %d", &(scan_array[index].ap_SignalStrength));
+        } else if (strstr(line,"SSID") != NULL) {
+            sscanf(line,"	SSID: %s", scan_array[index].ap_SSID);
+            if (filter_enable && strcmp(scan_array[index].ap_SSID, filter_SSID) != 0) {
+                filter_BSS = true;
             }
+        } else if (strstr(line, "Supported rates") != NULL) {
+            char SRate[80] = {0}, *tmp = NULL;
+            memset(buf, 0, sizeof(buf));
+            strcpy(SRate, line);
+            tmp = strtok(SRate, ":");
+            tmp = strtok(NULL, ":");
+            strcpy(buf, tmp);
+            memset(SRate, 0, sizeof(SRate));
 
-            if(!strcmp(secondary_chan, "below")) {
-                //40Mhz -
-                snprintf(scan_array[i].ap_OperatingChannelBandwidth, sizeof(scan_array[i].ap_OperatingChannelBandwidth), "11N%s_HT40MINUS", radio_index%1 ? "A": "G");
+            tmp = strtok(buf, " \n");
+            while (tmp != NULL) {
+                strcat(SRate, tmp);
+                if (SRate[strlen(SRate) - 1] == '*') {
+                    SRate[strlen(SRate) - 1] = '\0';
+                }
+                strcat(SRate, ",");
+
+                tmp = strtok(NULL, " \n");
             }
-
-
-            read = getline(&line, &len, f);
-            if(strncmp(line,"	VHT operation:",15) !=0) {
-                wifi_dbg_printf("%s: ap_OperatingChannelBandwidth = '%s'\n", __func__, scan_array[i].ap_OperatingChannelBandwidth);
-                // No VHT
-                continue;
-            }
-            read = getline(&line, &len, f);
+            SRate[strlen(SRate) - 1] = '\0';
+            strcpy(scan_array[index].ap_SupportedDataTransferRates, SRate);
+        } else if (strstr(line, "DTIM") != NULL) {
+            sscanf(line,"DTIM Period %d", scan_array[index].ap_DTIMPeriod, buf);
+        } else if (strstr(line, "VHT capabilities") != NULL) {
+            strcat(scan_array[index].ap_SupportedStandards, ",ac");
+            strcpy(scan_array[index].ap_OperatingStandards, "ac");
+        } else if (strstr(line, "HT capabilities") != NULL) {
+            strcat(scan_array[index].ap_SupportedStandards, ",n");
+            strcpy(scan_array[index].ap_OperatingStandards, "n");
+        } else if (strstr(line, "VHT operation") != NULL) {
+            ret = fgets(line, sizeof(line), f);
             sscanf(line,"		 * channel width: %d", &vht_channel_width);
             if(vht_channel_width == 1) {
-                snprintf(scan_array[i].ap_OperatingChannelBandwidth, sizeof(scan_array[i].ap_OperatingChannelBandwidth), "11AC_VHT80");
+                snprintf(scan_array[index].ap_OperatingChannelBandwidth, sizeof(scan_array[index].ap_OperatingChannelBandwidth), "11AC_VHT80");
             } else {
-                snprintf(scan_array[i].ap_OperatingChannelBandwidth, sizeof(scan_array[i].ap_OperatingChannelBandwidth), "11AC_VHT40");
+                snprintf(scan_array[index].ap_OperatingChannelBandwidth, sizeof(scan_array[index].ap_OperatingChannelBandwidth), "11AC_VHT40");
             }
-
+            if (strstr(line, "BSS") != NULL)   // prevent to get the next neighbor information
+                continue;
+        } else if (strstr(line, "HT operation") != NULL) {
+            ret = fgets(line, sizeof(line), f);
+            sscanf(line,"		 * secondary channel offset: %s", &buf);
+            if (!strcmp(buf, "above")) {
+                //40Mhz +
+                snprintf(scan_array[index].ap_OperatingChannelBandwidth, sizeof(scan_array[index].ap_OperatingChannelBandwidth), "11N%s_HT40PLUS", radio_index%1 ? "A": "G");
+            }
+            else if (!strcmp(buf, "below")) {
+                //40Mhz -
+                snprintf(scan_array[index].ap_OperatingChannelBandwidth, sizeof(scan_array[index].ap_OperatingChannelBandwidth), "11N%s_HT40MINUS", radio_index%1 ? "A": "G");
+            } else {
+                //20Mhz
+                snprintf(scan_array[index].ap_OperatingChannelBandwidth, sizeof(scan_array[index].ap_OperatingChannelBandwidth), "11N%s_HT20", radio_index%1 ? "A": "G");
+            }
+            if (strstr(line, "BSS") != NULL)   // prevent to get the next neighbor information
+                continue;
+        } else if (strstr(line, "HE capabilities") != NULL) {
+            strcat(scan_array[index].ap_SupportedStandards, ",ax");
+            strcpy(scan_array[index].ap_OperatingStandards, "ax");
+            ret = fgets(line, sizeof(line), f);
+            if (strncmp(scan_array[index].ap_OperatingFrequencyBand, "2.4GHz", strlen("2.4GHz")) == 0) {
+                if (strstr(line, "HE40/2.4GHz") != NULL)
+                    strcpy(scan_array[index].ap_OperatingChannelBandwidth, "11AXHE40PLUS");
+                else
+                    strcpy(scan_array[index].ap_OperatingChannelBandwidth, "11AXHE20");
+            } else if (strncmp(scan_array[index].ap_OperatingFrequencyBand, "5GHz", strlen("5GHz")) == 0) {
+                if (strstr(line, "HE80/5GHz") != NULL) {
+                    strcpy(scan_array[index].ap_OperatingChannelBandwidth, "11AXHE80");
+                    ret = fgets(line, sizeof(line), f);
+                } else
+                    continue;
+                if (strstr(line, "HE160/5GHz") != NULL)
+                    strcpy(scan_array[index].ap_OperatingChannelBandwidth, "11AXHE160");
+            }
+            continue;
+        } else if (strstr(line, "WPA") != NULL) {
+            strcpy(scan_array[index].ap_SecurityModeEnabled, "WPA");
+        } else if (strstr(line, "RSN") != NULL) {
+            strcpy(scan_array[index].ap_SecurityModeEnabled, "RSN");
+        } else if (strstr(line, "Group cipher") != NULL) {
+            sscanf(line, "		 * Group cipher: %s", scan_array[index].ap_EncryptionMode);
+            if (strncmp(scan_array[index].ap_EncryptionMode, "CCMP", strlen("CCMP")) == 0) {
+                strcpy(scan_array[index].ap_EncryptionMode, "AES");
+            }
         }
-        wifi_dbg_printf("%s: ap_OperatingChannelBandwidth = '%s'\n", __func__, scan_array[i].ap_OperatingChannelBandwidth);
-        read = getline(&line, &len, f);
+        ret = fgets(line, sizeof(line), f);
     }
-    wifi_dbg_printf("%s:Counted BSS: %d\n",__func__, scan_count);
-    *output_array_size = scan_count;
-    *neighbor_ap_array = scan_array;
-    free(line);
-    pclose(f);
-    return RETURN_OK;
 
-output_error:
+    if (!filter_BSS) {
+        *output_array_size = index + 1;
+    } else {
+        memset(&(scan_array[index]), 0, sizeof(wifi_neighbor_ap2_t));
+        *output_array_size = index;
+    }
+    *neighbor_ap_array = scan_array;
     pclose(f);
-    free(line);
-    free(scan_array);
-    return RETURN_ERR;
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
 }
+
 INT wifi_getApAssociatedDeviceStats(
         INT apIndex,
         mac_address_t *clientMacAddress,
@@ -8688,7 +8783,25 @@ INT wifi_getApAssociatedDeviceTidStatsResult(INT radioIndex,  mac_address_t *cli
 
 INT wifi_startNeighborScan(INT apIndex, wifi_neighborScanMode_t scan_mode, INT dwell_time, UINT chan_num, UINT *chan_list)
 {
-    // TODO Implement me!
+    char cmd[128]={0};
+    char buf[128]={0};
+    int freq = 0;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    // full mode is used to scan all channels.
+    // multiple channels is ambiguous, iw can not set multiple frequencies in one time.
+    if (scan_mode != WIFI_RADIO_SCAN_MODE_FULL)
+        ieee80211_channel_to_frequency(chan_list[0], &freq);
+
+    if (freq)
+        snprintf(cmd, sizeof(cmd), "iw dev %s%d scan trigger duration %d freq %d", AP_PREFIX, apIndex, dwell_time, freq);
+    else
+        snprintf(cmd, sizeof(cmd), "iw dev %s%d scan trigger duration %d", AP_PREFIX, apIndex, dwell_time);
+
+    _syscmd(cmd, buf, sizeof(buf));
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
     return RETURN_OK;
 }
 
