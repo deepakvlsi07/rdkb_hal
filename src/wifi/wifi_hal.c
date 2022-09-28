@@ -80,6 +80,7 @@ Licensed under the ISC license
 #define VLAN_FILE "/nvram/hostapd.vlan"
 #define PSK_FILE "/tmp/hostapd"
 #define CHAIN_MASK_FILE "/tmp/chain_mask"
+#define AMSDU_FILE "/tmp/AMSDU"
 
 #define DRIVER_2GHZ "ath9k"
 #define DRIVER_5GHZ "ath10k_pci"
@@ -4305,14 +4306,46 @@ INT wifi_setRadioSTBCEnable(INT radioIndex, BOOL STBC_Enable)
 // outputs A-MSDU enable status, 0 == not enabled, 1 == enabled
 INT wifi_getRadioAMSDUEnable(INT radioIndex, BOOL *output_bool)
 {
-    return RETURN_ERR;
+    char AMSDU_file_path[64] = {0};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    if(output_bool == NULL)
+        return RETURN_ERR;
+
+    sprintf(AMSDU_file_path, "%s%d.txt", AMSDU_FILE, radioIndex);
+
+    if (access(AMSDU_file_path, F_OK) == 0)
+        *output_bool = TRUE;
+    else
+        *output_bool = FALSE;
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
 }
 
 // enables A-MSDU in the hardware, 0 == not enabled, 1 == enabled
 INT wifi_setRadioAMSDUEnable(INT radioIndex, BOOL amsduEnable)
 {
-    //Apply instantly
-    return RETURN_ERR;
+    char cmd[64]={0};
+    char buf[64]={0};
+    char AMSDU_file_path[64] = {0};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    sprintf(cmd, "mt76-vendor %s%d set ap_wireless amsdu=%d", AP_PREFIX, radioIndex, amsduEnable);
+    _syscmd(cmd, buf, sizeof(buf));
+
+    sprintf(AMSDU_file_path, "%s%d.txt", AMSDU_FILE, radioIndex);
+    memset(cmd, 0, sizeof(cmd));
+    if (amsduEnable == TRUE)
+        sprintf(cmd, "touch %s", AMSDU_file_path);
+    else
+        sprintf(cmd, "rm %s 2> /dev/null", AMSDU_file_path);
+    _syscmd(cmd, buf, sizeof(buf));
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
 }
 
 //P2  // outputs the number of Tx streams
