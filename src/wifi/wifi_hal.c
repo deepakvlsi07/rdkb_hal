@@ -3264,74 +3264,33 @@ INT wifi_getRadioTrafficStats2(INT radioIndex, wifi_radioTrafficStats2_t *output
     return RETURN_OK;
 #endif
 
-    CHAR private_interface_name[MAX_BUF_SIZE] = {0}, public_interface_name[MAX_BUF_SIZE] = {0};
-    CHAR private_interface_status[MAX_BUF_SIZE] = {0}, public_interface_status[MAX_BUF_SIZE] = {0};
-    char buf[MAX_BUF_SIZE] = {0};
-    char cmd[MAX_CMD_SIZE] = {0};
-    wifi_radioTrafficStats2_t private_radioTrafficStats = {0}, public_radioTrafficStats = {0};
+    CHAR interface_name[64] = {0};
+    CHAR config_path[64] = {0};
+    BOOL iface_status = FALSE;
+    wifi_radioTrafficStats2_t radioTrafficStats = {0};
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
     if (NULL == output_struct)
         return RETURN_ERR;
 
-    if (radioIndex == 0) //2.4GHz ?
-    {
+    sprintf(config_path, "%s%d.conf", CONFIG_PREFIX, radioIndex);
+    GetInterfaceName(interface_name, config_path);
 
-        GetInterfaceName(private_interface_name, "/nvram/hostapd0.conf");
+    wifi_getApEnable(radioIndex, &iface_status);
 
-        GetIfacestatus(private_interface_name, private_interface_status);
+    if (iface_status == TRUE)
+        wifi_halGetIfStats(interface_name, &radioTrafficStats);
+    else
+        wifi_halGetIfStatsNull(&radioTrafficStats);     // just set some transmission statistic value to 0
 
-        sprintf(cmd, "%s", "cat /nvram/hostapd0.conf | grep bss=");
-        File_Reading(cmd, buf);
-
-        if (buf[0] == '#')
-        {
-            GetInterfaceName(public_interface_name, "/nvram/hostapd4.conf");
-        }
-        else
-        {
-            GetInterfaceName_virtualInterfaceName_2G(public_interface_name);
-        }
-
-        GetIfacestatus(public_interface_name, public_interface_status);
-
-        if (strcmp(private_interface_status, "1") == 0)
-            wifi_halGetIfStats(private_interface_name, &private_radioTrafficStats);
-        else
-            wifi_halGetIfStatsNull(&private_radioTrafficStats);
-
-        if (strcmp(public_interface_status, "1") == 0)
-            wifi_halGetIfStats(public_interface_name, &public_radioTrafficStats);
-        else
-            wifi_halGetIfStatsNull(&public_radioTrafficStats);
-    }
-    else if (radioIndex == 1) //5GHz ?
-    {
-        GetInterfaceName(private_interface_name, "/nvram/hostapd1.conf");
-        GetIfacestatus(private_interface_name, private_interface_status);
-
-        GetInterfaceName(public_interface_name, "/nvram/hostapd5.conf");
-        GetIfacestatus(public_interface_name, public_interface_status);
-
-        if (strcmp(private_interface_status, "1") == 0)
-            wifi_halGetIfStats(private_interface_name, &private_radioTrafficStats);
-        else
-            wifi_halGetIfStatsNull(&private_radioTrafficStats);
-
-        if (strcmp(public_interface_status, "1") == 0)
-            wifi_halGetIfStats(public_interface_name, &public_radioTrafficStats);
-        else
-            wifi_halGetIfStatsNull(&public_radioTrafficStats);
-    }
-
-    output_struct->radio_BytesSent = private_radioTrafficStats.radio_BytesSent + public_radioTrafficStats.radio_BytesSent;
-    output_struct->radio_BytesReceived = private_radioTrafficStats.radio_BytesReceived + public_radioTrafficStats.radio_BytesReceived;
-    output_struct->radio_PacketsSent = private_radioTrafficStats.radio_PacketsSent + public_radioTrafficStats.radio_PacketsSent;
-    output_struct->radio_PacketsReceived = private_radioTrafficStats.radio_PacketsReceived + public_radioTrafficStats.radio_PacketsReceived;
-    output_struct->radio_ErrorsSent = private_radioTrafficStats.radio_ErrorsSent + public_radioTrafficStats.radio_ErrorsSent;
-    output_struct->radio_ErrorsReceived = private_radioTrafficStats.radio_ErrorsReceived + public_radioTrafficStats.radio_ErrorsReceived;
-    output_struct->radio_DiscardPacketsSent = private_radioTrafficStats.radio_DiscardPacketsSent + public_radioTrafficStats.radio_DiscardPacketsSent;
-    output_struct->radio_DiscardPacketsReceived = private_radioTrafficStats.radio_DiscardPacketsReceived + public_radioTrafficStats.radio_DiscardPacketsReceived;
+    output_struct->radio_BytesSent = radioTrafficStats.radio_BytesSent;
+    output_struct->radio_BytesReceived = radioTrafficStats.radio_BytesReceived;
+    output_struct->radio_PacketsSent = radioTrafficStats.radio_PacketsSent;
+    output_struct->radio_PacketsReceived = radioTrafficStats.radio_PacketsReceived;
+    output_struct->radio_ErrorsSent = radioTrafficStats.radio_ErrorsSent;
+    output_struct->radio_ErrorsReceived = radioTrafficStats.radio_ErrorsReceived;
+    output_struct->radio_DiscardPacketsSent = radioTrafficStats.radio_DiscardPacketsSent;
+    output_struct->radio_DiscardPacketsReceived = radioTrafficStats.radio_DiscardPacketsReceived;
 
     output_struct->radio_PLCPErrorCount = 0;				  //The number of packets that were received with a detected Physical Layer Convergence Protocol (PLCP) header error.
     output_struct->radio_FCSErrorCount = 0;					  //The number of packets that were received with a detected FCS error. This parameter is based on dot11FCSErrorCount from [Annex C/802.11-2012].
