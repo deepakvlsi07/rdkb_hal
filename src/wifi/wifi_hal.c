@@ -4962,6 +4962,10 @@ INT wifi_setApBasicAuthenticationMode(INT apIndex, CHAR *authMode)
         params.value = "WPA-PSK";
     else if(strcmp(authMode,"EAPAuthentication") == 0)
         params.value = "WPA-EAP";
+    else if (strcmp(authMode, "SAEAuthentication") == 0)
+        params.value = "SAE";
+    else if (strcmp(authMode, "EAP_192-bit_Authentication") == 0)
+        params.value = "WPA-EAP-SUITE-B-192";
     else if(strcmp(authMode,"None") == 0) //Donot change in case the authMode is None
         return RETURN_OK;			  //This is taken careof in beaconType
 
@@ -5887,29 +5891,50 @@ INT wifi_getApSecurityModesSupported(INT apIndex, CHAR *output)
     if(!output || apIndex>=MAX_APS)
         return RETURN_ERR;
     //snprintf(output, 128, "None,WPA-Personal,WPA2-Personal,WPA-WPA2-Personal,WPA-Enterprise,WPA2-Enterprise,WPA-WPA2-Enterprise");
-    snprintf(output, 128, "None,WPA2-Personal");
+    snprintf(output, 128, "None,WPA2-Personal,WPA-WPA2-Personal,WPA2-Enterprise,WPA-WPA2-Enterprise,WPA3-Personal,WPA3-Enterprise");
     return RETURN_OK;
 }		
 
 //The value MUST be a member of the list reported by the ModesSupported parameter. Indicates which security mode is enabled.
 INT wifi_getApSecurityModeEnabled(INT apIndex, CHAR *output)
 {
-    char config_file[MAX_BUF_SIZE] = {0};
-    char buf[32] = {0};
+    char config_file[128] = {0};
+    char wpa[16] = {0};
+    char key_mgmt[64] = {0};
+    char buf[16] = {0};
     if (!output)
         return RETURN_ERR;
 
     sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, apIndex);
-    wifi_hostapdRead(config_file, "wpa", buf, sizeof(buf));
+    wifi_hostapdRead(config_file, "wpa", wpa, sizeof(wpa));
 
-    strcpy(output,"None");//Copying "None" to output string for default case
-    if((strcmp(buf, "3")==0))
-        snprintf(output, 32, "WPA-WPA2-Personal");
-    else if((strcmp(buf, "2")==0))
-        snprintf(output, 32, "WPA2-Personal");
-    else if((strcmp(buf, "1")==0))
-        snprintf(output, 32, "WPA-Personal");
-    //TODO: need to handle enterprise authmode
+    strcpy(output, "None");//Copying "None" to output string for default case
+    wifi_hostapdRead(config_file, "wpa_key_mgmt", key_mgmt, sizeof(key_mgmt));
+    if (strstr(key_mgmt, "WPA-PSK")) {
+        if (strcmp(wpa, "1"))
+            snprintf(output, 32, "WPA-Personal");
+        else if (strcmp(wpa, "2"))
+            snprintf(output, 32, "WPA2-Personal");
+        else if (strcmp(wpa, "3"))
+            snprintf(output, 32, "WPA-WPA2-Personal");
+
+    } else if (strstr(key_mgmt, "WPA-EAP")) {
+        if (strcmp(wpa, "1"))
+            snprintf(output, 32, "WPA-Enterprise");
+        else if (strcmp(wpa, "2"))
+            snprintf(output, 32, "WPA2-Enterprise");
+        else if (strcmp(wpa, "3"))
+            snprintf(output, 32, "WPA-WPA2-Enterprise");
+    } else if (strstr(key_mgmt, "SAE")) {
+        wifi_hostapdRead(config_file, "transition_disable", buf, sizeof(buf));
+        int disable = strtol(buf, NULL, 16);
+        if (disable & 0x1)
+            snprintf(output, 32, "WPA3-Personal");
+        else
+            snprintf(output, 32, "WPA3-Transition");
+    } else if (strstr(key_mgmt, "WPA-EAP-SUITE-B-192")) {
+        snprintf(output, 32, "WPA3-Enterprise");
+    }
 
     //save the beaconTypeString to wifi config and hostapd config file. Wait for wifi reset or hostapd restart to apply
     return RETURN_OK;
@@ -5952,7 +5977,6 @@ INT wifi_setApSecurityModeEnabled(INT apIndex, CHAR *encMode)
     if(!encMode)
         return RETURN_ERR;
 
-    printf("%s: apIndex %d, encMode %s\n",__func__, apIndex, encMode);
     if (strcmp(encMode, "None")==0)
     {
         strcpy(securityType,"None");
@@ -5987,6 +6011,16 @@ INT wifi_setApSecurityModeEnabled(INT apIndex, CHAR *encMode)
     {
         strcpy(securityType,"11i");
         strcpy(authMode,"EAPAuthentication");
+    }
+    else if (strcmp(encMode, "WPA3-Personal") == 0)
+    {
+        strcpy(securityType,"11i");
+        strcpy(authMode,"SAEAuthentication");
+    }
+    else if (strcmp(encMode, "WPA3-Enterprise") == 0)
+    {
+        strcpy(securityType,"11i");
+        strcpy(authMode,"EAP_192-bit_Authentication");
     }
     else
     {
@@ -11654,13 +11688,197 @@ INT wifi_getHalCapability(wifi_hal_capability_t *cap)
 
 INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
 {
-    //TODO
+    char buf[128] = {0};
+    char config_file[128] = {0};
+    char password[64] = {0};
+    char mfp[32] = {0};
+    char wpa_mode[32] = {0};
+    struct params params = {0};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    multiple_set = TRUE;
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, ap_index);
+    if (security->mode == wifi_security_mode_none) {
+        strcpy(wpa_mode, "None");
+    } else if (security->mode == wifi_security_mode_wpa_personal)
+        strcpy(wpa_mode, "WPA-Personal");
+    else if (security->mode == wifi_security_mode_wpa2_personal)
+        strcpy(wpa_mode, "WPA2-Personal");
+    else if (security->mode == wifi_security_mode_wpa_wpa2_personal)
+        strcpy(wpa_mode, "WPA-WPA2-Personal");
+    else if (security->mode == wifi_security_mode_wpa_enterprise)
+        strcpy(wpa_mode, "WPA-Enterprise");
+    else if (security->mode == wifi_security_mode_wpa2_enterprise)
+        strcpy(wpa_mode, "WPA2-Enterprise");
+    else if (security->mode == wifi_security_mode_wpa_wpa2_enterprise)
+        strcpy(wpa_mode, "WPA-WPA2-Enterprise");
+    else if (security->mode == wifi_security_mode_wpa3_personal || security->mode == wifi_security_mode_wpa3_transition)
+        strcpy(wpa_mode, "WPA3-Personal");
+    else if (security->mode == wifi_security_mode_wpa3_enterprise)
+        strcpy(wpa_mode, "WPA3-Enterprise");
+
+    wifi_setApSecurityModeEnabled(ap_index, wpa_mode);
+
+    strncpy(password, security->u.key.key, 63);
+    password[63] = '\0';
+    wifi_setApSecurityKeyPassphrase(ap_index, password);
+
+    if (security->mode != wifi_security_mode_none) {
+        memset(&params, 0, sizeof(params));
+        params.name = "wpa_pairwise";
+        if (security->encr == wifi_encryption_tkip)
+            params.value = "TKIP";
+        else if (security->encr == wifi_encryption_aes)
+            params.value = "CCMP";
+        else if (security->encr == wifi_encryption_aes_tkip)
+            params.value = "TKIP CCMP";
+        wifi_hostapdWrite(config_file, &params, 1);
+    }
+
+    if (security->mfp == wifi_mfp_cfg_disabled)
+        strcpy(mfp, "Disable");
+    else if (security->mfp == wifi_mfp_cfg_optional)
+        strcpy(mfp, "Optional");
+    else if (security->mfp == wifi_mfp_cfg_required)
+        strcpy(mfp, "Required");
+    wifi_setApSecurityMFPConfig(ap_index, mfp);
+
+    memset(&params, 0, sizeof(params));
+    params.name = "transition_disable";
+    if (security->wpa3_transition_disable == TRUE)
+        params.value = "0x01";
+    else
+        params.value = "0x00";
+    wifi_hostapdWrite(config_file, &params, 1);
+
+    memset(&params, 0, sizeof(params));
+    params.name = "wpa_group_rekey";
+    snprintf(buf, sizeof(buf), "%d", security->rekey_interval);
+    params.value = buf;
+    wifi_hostapdWrite(config_file, &params, 1);
+
+    memset(&params, 0, sizeof(params));
+    params.name = "wpa_strict_rekey";
+    params.value = security->strict_rekey?"1":"0";
+    wifi_hostapdWrite(config_file, &params, 1);
+
+    memset(&params, 0, sizeof(params));
+    params.name = "wpa_pairwise_update_count";
+    snprintf(buf, sizeof(buf), "%u", security->eapol_key_retries);
+    params.value = buf;
+    wifi_hostapdWrite(config_file, &params, 1);
+
+    memset(&params, 0, sizeof(params));
+    params.name = "disable_pmksa_caching";
+    params.value = security->disable_pmksa_caching?"1":"0";
+    wifi_hostapdWrite(config_file, &params, 1);
+
+    wifi_setApEnable(ap_index, FALSE);
+    wifi_setApEnable(ap_index, TRUE);
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
     return RETURN_OK;
 }
 
 INT wifi_getApSecurity(INT ap_index, wifi_vap_security_t *security)
 {
-    //TODO
+    char buf[128] = {0};
+    char config_file[128] = {0};
+    int disable = 0;
+    // struct params params = {0};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, ap_index);
+    wifi_getApSecurityModeEnabled(ap_index, buf);   // Get wpa config
+    security->mode = wifi_security_mode_none;
+    if (strlen(buf) != 0) {
+        if (strcmp(buf, "WPA-Personal"))
+            security->mode = wifi_security_mode_wpa_personal;
+        else if (strcmp(buf, "WPA2-Personal"))
+            security->mode = wifi_security_mode_wpa2_personal;
+        else if (strcmp(buf, "WPA-WPA2-Personal"))
+            security->mode = wifi_security_mode_wpa_wpa2_personal;
+        else if (strcmp(buf, "WPA-Enterprise"))
+            security->mode = wifi_security_mode_wpa_enterprise;
+        else if (strcmp(buf, "WPA2-Enterprise"))
+            security->mode = wifi_security_mode_wpa2_enterprise;
+        else if (strcmp(buf, "WPA-WPA2-Enterprise"))
+            security->mode = wifi_security_mode_wpa_wpa2_enterprise;
+        else if (strcmp(buf, "WPA3-Personal"))
+            security->mode = wifi_security_mode_wpa3_personal;
+        else if (strcmp(buf, "WPA3-Transition"))
+            security->mode = wifi_security_mode_wpa3_transition;
+        else if (strcmp(buf, "WPA3-Enterprise"))
+            security->mode = wifi_security_mode_wpa3_enterprise;
+    }
+
+    wifi_hostapdRead(config_file,"wpa_pairwise",buf,sizeof(buf));
+    if (security->mode == wifi_security_mode_none)
+        security->encr = wifi_encryption_none;
+    else {
+        if (strcmp(buf, "TKIP") == 0)
+            security->encr = wifi_encryption_tkip;
+        else if (strcmp(buf, "CCMP") == 0)
+            security->encr = wifi_encryption_aes;
+        else
+            security->encr = wifi_encryption_aes_tkip;
+    }
+
+    memset(buf, 0, sizeof(buf));
+    wifi_getApSecurityMFPConfig(ap_index, buf);
+    if (strcmp(buf, "Disabled") == 0)
+        security->mfp = wifi_mfp_cfg_disabled;
+    else if (strcmp(buf, "Optional") == 0)
+        security->mfp = wifi_mfp_cfg_optional;
+    else if (strcmp(buf, "Required") == 0)
+        security->mfp = wifi_mfp_cfg_required;
+
+    memset(buf, 0, sizeof(buf));
+    security->wpa3_transition_disable = FALSE;
+    wifi_hostapdRead(config_file, "transition_disable", buf, sizeof(buf));
+    disable = strtol(buf, NULL, 16);
+    if (disable != 0)
+        security->wpa3_transition_disable = TRUE;
+
+    memset(buf, 0, sizeof(buf));
+    wifi_hostapdRead(config_file, "wpa_group_rekey", buf, sizeof(buf));
+    if (strlen(buf) == 0)
+        security->rekey_interval = 86400;
+    else
+        security->rekey_interval = strtol(buf, NULL, 10);
+
+    memset(buf, 0, sizeof(buf));
+    wifi_hostapdRead(config_file, "wpa_strict_rekey", buf, sizeof(buf));
+    if (strlen(buf) == 0)
+        security->strict_rekey = 1;
+    else
+        security->strict_rekey = strtol(buf, NULL, 10);
+
+    memset(buf, 0, sizeof(buf));
+    wifi_hostapdRead(config_file, "wpa_pairwise_update_count", buf, sizeof(buf));
+    if (strlen(buf) == 0)
+        security->eapol_key_retries = 4;
+    else
+        security->eapol_key_retries = strtol(buf, NULL, 10);
+
+    memset(buf, 0, sizeof(buf));
+    wifi_hostapdRead(config_file, "disable_pmksa_caching", buf, sizeof(buf));
+    if (strlen(buf) == 0)
+        security->disable_pmksa_caching = FALSE;
+    else
+        security->disable_pmksa_caching = strtol(buf, NULL, 10)?TRUE:FALSE;
+
+    /* TODO
+    eapol_key_timeout, eap_identity_req_timeout, eap_identity_req_retries, eap_req_timeout, eap_req_retries
+    */
+    security->eapol_key_timeout = 1000; // Unit is ms. The default value in protocol.
+    security->eap_identity_req_timeout = 0;
+    security->eap_identity_req_retries = 0;
+    security->eap_req_timeout = 0;
+    security->eap_req_retries = 0;
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
 
