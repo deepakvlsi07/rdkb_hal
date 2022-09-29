@@ -11887,7 +11887,33 @@ INT wifi_getApSecurity(INT ap_index, wifi_vap_security_t *security)
 #ifdef WIFI_HAL_VERSION_3_PHASE2
 INT wifi_getApAssociatedDevice(INT ap_index, mac_address_t *output_deviceMacAddressArray, UINT maxNumDevices, UINT *output_numDevices)
 {
-     return RETURN_OK;
+    char cmd[128] = {0};
+    char buf[128] = {0};
+    char *mac_addr = NULL;
+    BOOL status = FALSE;
+    size_t len = 0;
+
+    if(ap_index > MAX_APS)
+        return RETURN_ERR;
+
+    *output_numDevices = 0;
+    wifi_getApEnable(ap_index, &status);
+    if (status == FALSE)
+        return RETURN_OK;
+
+    sprintf(cmd, "hostapd_cli -i %s%d list_sta", AP_PREFIX, ap_index);
+    _syscmd(cmd, buf, sizeof(buf));
+
+    mac_addr = strtok(buf, "\n");
+    for (int i = 0; i < maxNumDevices && mac_addr != NULL; i++) {
+        *output_numDevices = i + 1;
+        fprintf(stderr, "mac_addr: %s\n", mac_addr);
+        addr_ptr = output_deviceMacAddressArray[i];
+        mac_addr_aton(addr_ptr, mac_addr);
+        mac_addr = strtok(NULL, "\n");
+    }
+
+    return RETURN_OK;
 }
 #else
 INT wifi_getApAssociatedDevice(INT ap_index, CHAR *output_buf, INT output_buf_size)
