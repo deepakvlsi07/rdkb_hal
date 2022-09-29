@@ -77,6 +77,10 @@ Licensed under the ISC license
 #define GUARD_INTERVAL_FILE "/tmp/guard-interval"
 #define CHANNEL_STATS_FILE "/tmp/channel_stats"
 #define DFS_ENABLE_FILE "/nvram/dfs_enable.txt"
+#define VLAN_FILE "/nvram/hostapd.vlan"
+#define PSK_FILE "/tmp/hostapd"
+#define CHAIN_MASK_FILE "/tmp/chain_mask"
+#define AMSDU_FILE "/tmp/AMSDU"
 
 #define DRIVER_2GHZ "ath9k"
 #define DRIVER_5GHZ "ath10k_pci"
@@ -4348,42 +4352,129 @@ INT wifi_setRadioSTBCEnable(INT radioIndex, BOOL STBC_Enable)
 // outputs A-MSDU enable status, 0 == not enabled, 1 == enabled
 INT wifi_getRadioAMSDUEnable(INT radioIndex, BOOL *output_bool)
 {
-    return RETURN_ERR;
+    char AMSDU_file_path[64] = {0};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    if(output_bool == NULL)
+        return RETURN_ERR;
+
+    sprintf(AMSDU_file_path, "%s%d.txt", AMSDU_FILE, radioIndex);
+
+    if (access(AMSDU_file_path, F_OK) == 0)
+        *output_bool = TRUE;
+    else
+        *output_bool = FALSE;
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
 }
 
 // enables A-MSDU in the hardware, 0 == not enabled, 1 == enabled
 INT wifi_setRadioAMSDUEnable(INT radioIndex, BOOL amsduEnable)
 {
-    //Apply instantly
-    return RETURN_ERR;
+    char cmd[64]={0};
+    char buf[64]={0};
+    char AMSDU_file_path[64] = {0};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    sprintf(cmd, "mt76-vendor %s%d set ap_wireless amsdu=%d", AP_PREFIX, radioIndex, amsduEnable);
+    _syscmd(cmd, buf, sizeof(buf));
+
+    sprintf(AMSDU_file_path, "%s%d.txt", AMSDU_FILE, radioIndex);
+    memset(cmd, 0, sizeof(cmd));
+    if (amsduEnable == TRUE)
+        sprintf(cmd, "touch %s", AMSDU_file_path);
+    else
+        sprintf(cmd, "rm %s 2> /dev/null", AMSDU_file_path);
+    _syscmd(cmd, buf, sizeof(buf));
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
 }
 
 //P2  // outputs the number of Tx streams
 INT wifi_getRadioTxChainMask(INT radioIndex, INT *output_int)
 {
-    return RETURN_ERR;
+    char buf[8] = {0};
+    char cmd[128] = {0};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    sprintf(cmd, "cat %s%d.txt 2> /dev/null", CHAIN_MASK_FILE, radioIndex);
+    _syscmd(cmd, buf, sizeof(buf));
+
+    // if there is no record, output the max number of spatial streams
+    if (strlen(buf) == 0) {
+        sprintf(cmd, "iw phy%d info | grep 'TX MCS and NSS set' -A8 | head -n8 | grep 'streams: MCS' | wc -l", radioIndex);
+        _syscmd(cmd, buf, sizeof(buf));
+    }
+
+    *output_int = (INT)strtol(buf, NULL, 10);
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
+    return RETURN_OK;
 }
 
 //P2  // sets the number of Tx streams to an enviornment variable
 INT wifi_setRadioTxChainMask(INT radioIndex, INT numStreams)
 {
-    //save to wifi config, wait for wifi reset or wifi_pushTxChainMask to apply
-    return RETURN_ERR;
+    char cmd[128] = {0};
+    char buf[128] = {0};
+    char chain_mask_file[128] = {0};
+    FILE *f = NULL;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    if (numStreams == 0) {
+        fprintf(stderr, "The mask did not support 0 (auto).\n", numStreams);
+        return RETURN_ERR;
+    }
+    wifi_setRadioEnable(radioIndex, FALSE);
+    sprintf(cmd, "iw phy%d set antenna 0x%x 2>&1", radioIndex, numStreams);
+    _syscmd(cmd, buf, sizeof(buf));
+
+    if (strlen(buf) > 0) {
+        fprintf(stderr, "%s: cmd %s error, output: %s\n", __func__, cmd, buf);
+        return RETURN_ERR;
+    }
+    wifi_setRadioEnable(radioIndex, TRUE);
+
+    sprintf(chain_mask_file, "%s%d.txt", CHAIN_MASK_FILE, radioIndex);
+    f = fopen(chain_mask_file, "w");
+    if (f == NULL) {
+        fprintf(stderr, "%s: fopen failed.\n", __func__);
+        return RETURN_ERR;
+    }
+    fprintf(f, "%d", numStreams);
+    fclose(f);
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
 }
 
 //P2  // outputs the number of Rx streams
 INT wifi_getRadioRxChainMask(INT radioIndex, INT *output_int)
 {
-    if (NULL == output_int)
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    if (wifi_getRadioTxChainMask(radioIndex, output_int) == RETURN_ERR) {
+        fprintf(stderr, "%s: wifi_getRadioTxChainMask return error.\n", __func__);
         return RETURN_ERR;
-    *output_int = 1;
+    }
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
 
 //P2  // sets the number of Rx streams to an enviornment variable
 INT wifi_setRadioRxChainMask(INT radioIndex, INT numStreams)
 {
-    //save to wifi config, wait for wifi reset or wifi_pushRxChainMask to apply
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    if (wifi_setRadioTxChainMask(radioIndex, numStreams) == RETURN_ERR) {
+        fprintf(stderr, "%s: wifi_setRadioTxChainMask return error.\n", __func__);
+        return RETURN_ERR;
+    }
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_ERR;
 }
 
@@ -5341,12 +5432,64 @@ INT wifi_setApBridgeInfo(INT apIndex, CHAR *bridgeName, CHAR *IP, CHAR *subnet)
 // reset the vlan configuration for this ap
 INT wifi_resetApVlanCfg(INT apIndex)
 {
-    //TODO: remove existing vlan for this ap
+    char original_config_file[64] = {0};
+    char current_config_file[64] = {0};
+    char buf[64] = {0};
+    char cmd[64] = {0};
+    char vlan_file[64] = {0};
+    char vlan_tagged_interface[16] = {0};
+    char vlan_bridge[16] = {0};
+    char vlan_naming[16] = {0};
+    struct params list[4] = {0};
+    wifi_band band;
 
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    band = wifi_index_to_band(apIndex);
+    if (band == band_2_4)
+        sprintf(original_config_file, "/etc/hostapd-2G.conf");
+    else if (band = band_5)
+        sprintf(original_config_file, "/etc/hostapd-5G.conf");
+    else if (band = band_6)
+        sprintf(original_config_file, "/etc/hostapd-6G.conf");
+
+    wifi_hostapdRead(original_config_file, "vlan_file", vlan_file, sizeof(vlan_file));
+
+    if (strlen(vlan_file) == 0)
+        strcpy(vlan_file, VLAN_FILE);
+
+    // The file should exist or this vap would not work.
+    if (access(vlan_file, F_OK) != 0) {
+        sprintf(cmd, "touch %s", vlan_file);
+        _syscmd(cmd, buf, sizeof(buf));
+    }
+    list[0].name = "vlan_file";
+    list[0].value = vlan_file;
+
+    wifi_hostapdRead(original_config_file, "vlan_tagged_interface", vlan_tagged_interface, sizeof(vlan_tagged_interface));
+    list[1].name = "vlan_tagged_interface";
+    list[1].value = vlan_tagged_interface;
+
+    wifi_hostapdRead(original_config_file, "vlan_bridge", vlan_bridge, sizeof(vlan_bridge));
+    list[2].name = "vlan_bridge";
+    list[2].value = vlan_bridge;
+
+    wifi_hostapdRead(original_config_file, "vlan_naming", vlan_naming, sizeof(vlan_naming));
+    list[3].name = "vlan_naming";
+    list[3].value = vlan_naming;
+
+    sprintf(current_config_file, "%s%d.conf", CONFIG_PREFIX, apIndex);
+    wifi_hostapdWrite(current_config_file, list, 4);
     //Reapply vlan settings
-    wifi_pushBridgeInfo(apIndex);
+    // wifi_pushBridgeInfo(apIndex);
 
-    return RETURN_ERR;
+    // restart this ap
+    wifi_setApEnable(apIndex, FALSE);
+    wifi_setApEnable(apIndex, TRUE);
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
+    return RETURN_OK;
 }
 
 // creates configuration variables needed for WPA/WPS.  These variables are implementation dependent and in some implementations these variables are used by hostapd when it is started.  Specific variables that are needed are dependent on the hostapd implementation. These variables are set by WPA/WPS security functions in this wifi HAL.  If not needed for a particular implementation this function may simply return no error.
@@ -5967,8 +6110,71 @@ INT wifi_setApSecurityKeyPassphrase(INT apIndex, CHAR *passPhrase)
 //When set to true, this AccessPoint instance's WiFi security settings are reset to their factory default values. The affected settings include ModeEnabled, WEPKey, PreSharedKey and KeyPassphrase.
 INT wifi_setApSecurityReset(INT apIndex)
 {
-    //apply instantly
-    return RETURN_ERR;
+    char original_config_file[64] = {0};
+    char current_config_file[64] = {0};
+    char buf[64] = {0};
+    char cmd[64] = {0};
+    char wpa[4] = {0};
+    char wpa_psk[64] = {0};
+    char wpa_passphrase[64] = {0};
+    char wpa_psk_file[128] = {0};
+    char wpa_key_mgmt[64] = {0};
+    char wpa_pairwise[32] = {0};
+    wifi_band band;
+    struct params list[6];
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    band = wifi_index_to_band(apIndex);
+    if (band == band_2_4)
+        sprintf(original_config_file, "/etc/hostapd-2G.conf");
+    else if (band = band_5)
+        sprintf(original_config_file, "/etc/hostapd-5G.conf");
+    else if (band = band_6)
+        sprintf(original_config_file, "/etc/hostapd-6G.conf");
+    else
+        return RETURN_ERR;
+
+    wifi_hostapdRead(original_config_file, "wpa", wpa, sizeof(wpa));
+    list[0].name = "wpa";
+    list[0].value = wpa;
+    
+    wifi_hostapdRead(original_config_file, "wpa_psk", wpa_psk, sizeof(wpa_psk));
+    list[1].name = "wpa_psk";
+    list[1].value = wpa_psk;
+
+    wifi_hostapdRead(original_config_file, "wpa_passphrase", wpa_passphrase, sizeof(wpa_passphrase));
+    list[2].name = "wpa_passphrase";
+    list[2].value = wpa_passphrase;
+
+    wifi_hostapdRead(original_config_file, "wpa_psk_file", wpa_psk_file, sizeof(wpa_psk_file));
+
+    if (strlen(wpa_psk_file) == 0)
+        strcpy(wpa_psk_file, PSK_FILE);
+
+    if (access(wpa_psk_file, F_OK) != 0) {
+        sprintf(cmd, "touch %s", wpa_psk_file);
+        _syscmd(cmd, buf, sizeof(buf));
+    }
+    list[3].name = "wpa_psk_file";
+    list[3].value = wpa_psk_file;
+
+    wifi_hostapdRead(original_config_file, "wpa_key_mgmt", wpa_key_mgmt, sizeof(wpa_key_mgmt));
+    list[4].name = "wpa_key_mgmt";
+    list[4].value = wpa_key_mgmt;
+
+    wifi_hostapdRead(original_config_file, "wpa_pairwise", wpa_pairwise, sizeof(wpa_pairwise));
+    list[5].name = "wpa_pairwise";
+    list[5].value = wpa_pairwise;
+
+    sprintf(current_config_file, "%s%d.conf", CONFIG_PREFIX, apIndex);
+    wifi_hostapdWrite(current_config_file, list, 6);
+
+    wifi_setApEnable(apIndex, FALSE);
+    wifi_setApEnable(apIndex, TRUE);
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
 }
 
 //The IP Address and port number of the RADIUS server used for WLAN security. RadiusServerIPAddr is only applicable when ModeEnabled is an Enterprise type (i.e. WPA-Enterprise, WPA2-Enterprise or WPA-WPA2-Enterprise).
