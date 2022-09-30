@@ -10446,6 +10446,133 @@ INT wifi_isZeroDFSSupported(UINT radioIndex, BOOL *supported)
     return RETURN_OK;
 }
 
+INT wifi_setDownlinkMuType(INT radio_index, wifi_dl_mu_type_t mu_type)
+{
+    // hemu onoff=<val> (bitmap- UL MU-MIMO(bit3), DL MU-MIMO(bit2), UL OFDMA(bit1), DL OFDMA(bit0))
+    struct params params = {0};
+    char config_file[64] = {0};
+    char buf[64] = {0};
+    unsigned int set_mu_type = 0;
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radio_index);
+    wifi_hostapdRead(config_file, "hemu_onoff", buf, sizeof(buf));
+
+    if (strlen(buf) > 0)
+        set_mu_type = strtol(buf, NULL, 10);
+
+    if (mu_type == WIFI_DL_MU_TYPE_NONE) {
+        set_mu_type &= ~0x05;   // unset bit 0, 2
+    } else if (mu_type == WIFI_DL_MU_TYPE_OFDMA) {
+        set_mu_type |= 0x01;
+        set_mu_type &= ~0x04;
+    } else if (mu_type == WIFI_DL_MU_TYPE_MIMO) {
+        set_mu_type &= ~0x01;
+        set_mu_type |= 0x04;
+    } else if (mu_type == WIFI_DL_MU_TYPE_OFDMA_MIMO){
+        set_mu_type |= 0x05;    // set bit 0, 2
+    }
+
+    params.name = "hemu_onoff";
+    sprintf(buf, "%u", set_mu_type);
+    params.value = buf;
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radio_index);
+    wifi_hostapdWrite(config_file, &params, 1);
+    wifi_hostapdProcessUpdate(radio_index, &params, 1);
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
+}
+
+INT wifi_getDownlinkMuType(INT radio_index, wifi_dl_mu_type_t *mu_type)
+{
+    struct params params={0};
+    char config_file[64] = {0};
+    char buf[64] = {0};
+    unsigned int get_mu_type = 0;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    if (mu_type == NULL)
+        return RETURN_ERR;
+
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radio_index);
+    wifi_hostapdRead(config_file, "hemu_onoff", buf, sizeof(buf));
+    get_mu_type = strtol(buf, NULL, 10);
+
+    if (get_mu_type & 0x04 && get_mu_type & 0x01)
+        *mu_type = WIFI_DL_MU_TYPE_OFDMA_MIMO;
+    else if (get_mu_type & 0x04)
+        *mu_type = WIFI_DL_MU_TYPE_MIMO;
+    else if (get_mu_type & 0x01)
+        *mu_type = WIFI_DL_MU_TYPE_OFDMA;
+    else
+        *mu_type = WIFI_DL_MU_TYPE_NONE;
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
+}
+
+INT wifi_setUplinkMuType(INT radio_index, wifi_ul_mu_type_t mu_type)
+{
+    // hemu onoff=<val> (bitmap- UL MU-MIMO(bit3), DL MU-MIMO(bit2), UL OFDMA(bit1), DL OFDMA(bit0))
+    struct params params={0};
+    char config_file[64] = {0};
+    char buf[64] = {0};
+    unsigned int set_mu_type = 0;
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radio_index);
+    wifi_hostapdRead(config_file, "hemu_onoff", buf, sizeof(buf));
+
+    if (strlen(buf) > 0)
+        set_mu_type = strtol(buf, NULL, 10);
+
+    // wifi hal only define up link type none and OFDMA, there is NO MU-MIMO.
+    if (mu_type == WIFI_UL_MU_TYPE_NONE) {
+        set_mu_type &= ~0x0a;
+    } else if (mu_type == WIFI_DL_MU_TYPE_OFDMA) {
+        set_mu_type |= 0x02;
+        set_mu_type &= ~0x08;
+    }
+
+    params.name = "hemu_onoff";
+    sprintf(buf, "%u", set_mu_type);
+    params.value = buf;
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radio_index);
+    wifi_hostapdWrite(config_file, &params, 1);
+    wifi_hostapdProcessUpdate(radio_index, &params, 1);
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
+}
+
+INT wifi_getUplinkMuType(INT radio_index, wifi_ul_mu_type_t *mu_type)
+{
+    struct params params={0};
+    char config_file[64] = {0};
+    char buf[64] = {0};
+    unsigned int get_mu_type = 0;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    if (mu_type == NULL)
+    return RETURN_ERR;
+
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radio_index);
+    wifi_hostapdRead(config_file, "hemu_onoff", buf, sizeof(buf));
+
+    get_mu_type = strtol(buf, NULL, 10);
+    if (get_mu_type & 0x02)
+        *mu_type = WIFI_DL_MU_TYPE_OFDMA;
+    else
+        *mu_type = WIFI_DL_MU_TYPE_NONE;
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
+}
+
+
 INT wifi_setGuardInterval(INT radio_index, wifi_guard_interval_t guard_interval)
 {
     char cmd[128] = {0};
