@@ -2765,12 +2765,14 @@ INT wifi_setRadioGuardInterval(INT radioIndex, CHAR *string)	//Tr181
 
     if (strcmp(string, "400nsec") == 0)
         GI = wifi_guard_interval_400;
-    else if (strcmp(string , "800nsec") == 0 || strcmp(string, "auto") == 0)
+    else if (strcmp(string , "800nsec") == 0)
         GI = wifi_guard_interval_800;
     else if (strcmp(string , "1600nsec") == 0)
         GI = wifi_guard_interval_1600;
     else if (strcmp(string , "3200nsec") == 0)
         GI = wifi_guard_interval_3200;
+    else
+        GI = wifi_guard_interval_auto;
 
     ret = wifi_setGuardInterval(radioIndex, GI);
 
@@ -10626,58 +10628,59 @@ INT wifi_getUplinkMuType(INT radio_index, wifi_ul_mu_type_t *mu_type)
 INT wifi_setGuardInterval(INT radio_index, wifi_guard_interval_t guard_interval)
 {
     char cmd[128] = {0};
-    char buf[64] = {0};
-    char band_str[8] = {0};
+    char buf[256] = {0};
+    char config_file[64] = {0};
     char GI[8] = {0};
-    int tmp = 0;
-    BOOL ax_mode = FALSE;
-    BOOL short_GI = FALSE;
+    int mode_map = 0;
     FILE *f = NULL;
-    wifi_band band;
+    wifi_band band = band_invalid;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-    if (wifi_getRadioMode(radio_index, buf, &tmp) == RETURN_ERR) {
+    if (wifi_getRadioMode(radio_index, buf, &mode_map) == RETURN_ERR) {
         wifi_dbg_printf("%s: wifi_getRadioMode return error\n", __func__);
         return RETURN_ERR;
     }
-    if (strstr(buf, "ax") != NULL)
-        ax_mode = TRUE;
 
-    if (guard_interval == wifi_guard_interval_400 && ax_mode != TRUE) {
-        short_GI = TRUE;
-        strcpy(GI, "0.4");
-    } else if (guard_interval == wifi_guard_interval_1600 && ax_mode == TRUE)
-        strcpy(GI, "1.6");
-    else if (guard_interval == wifi_guard_interval_3200 && ax_mode == TRUE)
-        strcpy(GI, "3.2");
-    else        // default
-        strcpy(GI, "0.8");
-
+    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radio_index);
     band = wifi_index_to_band(radio_index);
-    if (band == band_2_4)
-        strcpy(band_str, "2.4");
-    else if (band == band_5)
-        strcpy(band_str, "5");
-    else if (band == band_6)
-        strcpy(band_str, "6");
-    else {
-        wifi_dbg_printf("%s: invalid band\n");
-        return RETURN_ERR;
+
+    // Hostapd are not supported HE mode GI 1600, 3200 ns.
+    if (guard_interval == wifi_guard_interval_800) {    // remove all capab about short GI
+        snprintf(cmd, sizeof(cmd), "sed -E -i 's/\\[SHORT-GI-(.){1,2}0\\]//g' %s", config_file);
+        _syscmd(cmd, buf, sizeof(buf));
+    } else if (guard_interval == wifi_guard_interval_400 || guard_interval == wifi_guard_interval_auto){
+        wifi_hostapdRead(config_file, "ht_capab", buf, sizeof(buf));
+        if (strstr(buf, "[SHORT-GI-") == NULL) {
+            snprintf(cmd, sizeof(cmd), "sed -E -i '/^ht_capab=.*/s/$/[SHORT-GI-20][SHORT-GI-40]/' %s", config_file);
+            _syscmd(cmd, buf, sizeof(buf));
+        }
+        if (band == band_5) {
+            wifi_hostapdRead(config_file, "vht_capab", buf, sizeof(buf));
+            if (strstr(buf, "[SHORT-GI-") == NULL) {
+                snprintf(cmd, sizeof(cmd), "sed -E -i '/^vht_capab=.*/s/$/[SHORT-GI-80][SHORT-GI-160]/' %s", config_file);
+                _syscmd(cmd, buf, sizeof(buf));
+            }
+        }
     }
+    wifi_reloadAp(radio_index);
 
-    if (ax_mode == TRUE)
-        snprintf(cmd, sizeof(cmd), "iw dev %s%d set bitrates he-gi-%s %s", AP_PREFIX, radio_index, band_str, GI);
-    else
-        snprintf(cmd, sizeof(cmd), "iw dev %s%d set bitrates %sgi-%s", AP_PREFIX, radio_index, (short_GI)?"s":"l", band_str);
-    _syscmd(cmd, buf, sizeof(buf));
-
+    if (guard_interval == wifi_guard_interval_400)
+        strcpy(GI, "0.4");
+    else if (guard_interval == wifi_guard_interval_800)
+        strcpy(GI, "0.8");
+    else if (guard_interval == wifi_guard_interval_1600)
+        strcpy(GI, "1.6");
+    else if (guard_interval == wifi_guard_interval_3200)
+        strcpy(GI, "3.2");
+    else if (guard_interval == wifi_guard_interval_auto)
+        strcpy(GI, "auto");
     // Record GI for get GI function
     snprintf(buf, sizeof(buf), "%s%d.txt", GUARD_INTERVAL_FILE, radio_index);
     f = fopen(buf, "w");
-    if (f != NULL) {
-        fprintf(f, "%s", GI);
-    }
+    if (f == NULL)
+        return RETURN_ERR;
+    fprintf(f, "%s", GI);
     fclose(f);
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
