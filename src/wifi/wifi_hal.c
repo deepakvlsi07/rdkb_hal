@@ -2270,6 +2270,16 @@ INT wifi_setRadioAutoChannelEnable(INT radioIndex, BOOL enable) //RDKB
     return RETURN_ERR;
 }
 
+INT wifi_getRadioAutoChannelSupported(INT radioIndex, BOOL *output_bool)
+{
+    if (output_bool == NULL)
+        return RETURN_ERR;
+
+    *output_bool = TRUE;
+
+    return RETURN_OK;
+}
+
 INT wifi_getRadioDCSSupported(INT radioIndex, BOOL *output_bool) 	//RDKB
 {
     if (NULL == output_bool) 
@@ -5773,18 +5783,21 @@ INT wifi_getApWMMCapability(INT apIndex, BOOL *output)
 INT wifi_getApUAPSDCapability(INT apIndex, BOOL *output)
 {
     //get the running status from driver
-    if(!output)
-        return RETURN_ERR;
+    char cmd[128] = {0};
+    char buf[128] = {0};
+    int max_radio_num = 0, radioIndex = 0;
 
-    char config_file[MAX_BUF_SIZE] = {0};
-    char buf[16] = {0};
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-    sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,apIndex);
-    wifi_hostapdRead(config_file, "uapsd_advertisement_enabled", buf, sizeof(buf));
-    if (strncmp("1",buf,1) == 0)
-        *output = TRUE;
-    else
-        *output = FALSE;
+    wifi_getMaxRadioNumber(&max_radio_num);
+    radioIndex = apIndex % max_radio_num;
+    snprintf(cmd, sizeof(cmd), "iw phy phy%d info | grep u-APSD", radioIndex);
+    _syscmd(cmd,buf, sizeof(buf));
+
+    if (strlen(buf) > 0)
+        *output = true;
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
     return RETURN_OK;
 }
