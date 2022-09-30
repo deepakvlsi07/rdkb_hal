@@ -134,9 +134,7 @@ Licensed under the ISC license
 #define DEF_RADIO_PARAM_CONF "/usr/ccsp/wifi/radio_param_def.cfg"
 #define LM_DHCP_CLIENT_FORMAT   "%63d %17s %63s %63s"
 
-#define HOSTAPD_HT_CAPAB_20 "[SHORT-GI-20]"
-#define HOSTAPD_HT_CAPAB_40 "[SHORT-GI-20][SHORT-GI-40]"
-#define HOSTAPD_HT_CAPAB "[LDPC][SHORT-GI-20][SHORT-GI-40][TX-STBC][RX-STBC1][MAX-AMSDU-7935]"
+#define HOSTAPD_HT_CAPAB "[LDPC][SHORT-GI-20][SHORT-GI-40][MAX-AMSDU-7935]"
 
 #define BW_FNAME "/nvram/bw_file.txt"
 
@@ -8231,6 +8229,9 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
     char ht_mode[16] = ""; // HT20|HT40|HT80|HT160
     int sec_chan_offset;
     int width;
+    char config_file[64] = {0};
+    BOOL stbcEnable = FALSE;
+    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -8276,12 +8277,19 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
 
     wifi_setRadioChannel(radioIndex, channel);
 
+    snprintf(cmd, sizeof(cmd), "cat %s | grep STBC", config_file);
+    _syscmd(cmd, buf, sizeof(buf));
+    if (strlen(buf) != 0)
+        stbcEnable = TRUE;
+
     char *ext_str = "None";
     if (sec_chan_offset == 1) ext_str = "Above";
     else if (sec_chan_offset == -1) ext_str = "Below";
     wifi_setRadioExtChannel(radioIndex, ext_str);
 
     wifi_setRadioCenterChannel(radioIndex, center_chan);
+
+    wifi_setRadioSTBCEnable(radioIndex, stbcEnable);
 
     char mhz_str[16];
     snprintf(mhz_str, sizeof(mhz_str), "%dMHz", width);
