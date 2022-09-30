@@ -2561,61 +2561,42 @@ INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) 
 }
 
 //Set the Operating Channel Bandwidth.
-INT wifi_setRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) //Tr181	//AP only
+INT wifi_setRadioOperatingChannelBandwidth(INT radioIndex, CHAR *bandwidth) //Tr181	//AP only
 {
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    char config_file[MAX_BUF_SIZE];
-    struct params params[4];
-    struct params *pptr = params;
+    char config_file[128];
+    char set_value[16];
+    struct params params[2];
+    int max_radio_num = 0;
 
-    if(NULL == output_string)
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    if(NULL == bandwidth)
         return RETURN_ERR;
 
-    pptr->name = "vht_oper_chwidth";
-    if(strcmp(output_string,"20MHz") == 0)  // This piece of code only support for wifi hal api's validation
-        pptr->value="0";
-    else if(strcmp(output_string,"40MHz") == 0)
-        pptr->value="0";
-    else if(strcmp(output_string,"80MHz") == 0)
-        pptr->value="1";
-    else if(strcmp(output_string,"160MHz") == 0)
-        pptr->value="2";
-    else if(strcmp(output_string,"80+80") == 0)
-        pptr->value="3";
+    if(strstr(bandwidth,"80+80") != NULL)
+        strcpy(set_value, "3");
+    else if(strstr(bandwidth,"160") != NULL)
+        strcpy(set_value, "2");
+    else if(strstr(bandwidth,"80") != NULL)
+        strcpy(set_value, "1");
+    else if(strstr(bandwidth,"20") != NULL || strstr(bandwidth,"40") != NULL)
+        strcpy(set_value, "0");
     else
     {
-        printf("Invalid Bandwidth \n");
+        fprintf(stderr, "%s: Invalid Bandwidth %s\n", __func__, bandwidth);
         return RETURN_ERR;
     }
 
-    pptr++; // added vht_oper_chwidth
+    params[0].name = "vht_oper_chwidth";
+    params[0].value = set_value;
+    params[1].name = "he_oper_chwidth";
+    params[1].value = set_value;
 
-    if(radioIndex == 1)
+    wifi_getMaxRadioNumber(&max_radio_num);
+    for(int i=0; i<=MAX_APS/max_radio_num; i++)
     {
-        pptr->name= "ieee80211n";
-        if(strcmp(output_string,"20MHz") == 0)
-            pptr->value="0";
-        else if(strcmp(output_string,"40MHz") == 0)
-            pptr->value="1";
-        else if(strcmp(output_string,"80MHz") == 0)
-            pptr->value="1";
-        else 
-            pptr->value="0";
-
-        pptr++; // added ieee80211n
-
-        pptr->name="ieee80211ac";
-        if(strcmp(output_string,"80MHz") == 0)
-            pptr->value="1";
-        else
-            pptr->value="0";
-        pptr++;
-    }
-
-    for(int i=0; i<=MAX_APS/NUMBER_OF_RADIOS; i++)
-    {
-       snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex+(2*i));
-       wifi_hostapdWrite(config_file, params, (pptr - params));
+       snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex+(max_radio_num*i));
+       wifi_hostapdWrite(config_file, params, 2);
     }
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
