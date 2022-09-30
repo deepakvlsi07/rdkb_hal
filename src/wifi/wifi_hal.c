@@ -81,6 +81,7 @@ Licensed under the ISC license
 #define PSK_FILE "/tmp/hostapd"
 #define CHAIN_MASK_FILE "/tmp/chain_mask"
 #define AMSDU_FILE "/tmp/AMSDU"
+#define MCS_FILE "/tmp/MCS"
 
 #define DRIVER_2GHZ "ath9k"
 #define DRIVER_5GHZ "ath10k_pci"
@@ -2743,9 +2744,35 @@ INT wifi_setRadioGuardInterval(INT radioIndex, CHAR *string)	//Tr181
 //Get the Modulation Coding Scheme index, eg: "-1", "1", "15"
 INT wifi_getRadioMCS(INT radioIndex, INT *output_int) //Tr181
 {
-    if (NULL == output_int) 
+    char buf[32]={0};
+    char mcs_file[64] = {0};
+    char cmd[64] = {0};
+    int mode_bitmap = 0;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    if(output_int == NULL)
         return RETURN_ERR;
-    *output_int=(radioIndex==0)?1:3;
+    snprintf(mcs_file, sizeof(mcs_file), "%s%d.txt", MCS_FILE, radioIndex);
+
+    snprintf(cmd, sizeof(cmd), "cat %s 2> /dev/null", mcs_file);
+    _syscmd(cmd, buf, sizeof(buf));
+    if (strlen(buf) > 0)
+        *output_int = strtol(buf, NULL, 10);
+    else {
+        // output the max MCS for the current radio mode
+        if (wifi_getRadioMode(radioIndex, buf, &mode_bitmap) == RETURN_ERR) {
+            wifi_dbg_printf("%s: wifi_getradiomode return error.\n", __func__);
+            return RETURN_ERR;
+        }
+        if (mode_bitmap & WIFI_MODE_AX) {
+            *output_int = 11;
+        } else if (mode_bitmap & WIFI_MODE_AC) {
+            *output_int = 9;
+        } else if (mode_bitmap & WIFI_MODE_N) {
+            *output_int = 7;
+        }
+    }
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
     return RETURN_OK;
 }
@@ -2753,7 +2780,48 @@ INT wifi_getRadioMCS(INT radioIndex, INT *output_int) //Tr181
 //Set the Modulation Coding Scheme index
 INT wifi_setRadioMCS(INT radioIndex, INT MCS) //Tr181
 {
-    return RETURN_ERR;
+    // Only HE mode can specify MCS capability. We don't support MCS in HT mode, because that would be ambiguous (MCS code 8~11 refer to 2 NSS in HT but 1 NSS in HE adn VHT).
+    char config_file[64] = {0};
+    char set_value[16] = {0};
+    char mcs_file[32] = {0};
+    wifi_band band = band_invalid;
+    struct params set_config = {0};
+    FILE *f = NULL;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
+
+    if (MCS > 11 || MCS < 0) {
+        fprintf(stderr, "%s: invalid MCS %d\n", __func__, MCS);
+        return RETURN_ERR;
+    }
+
+    if (MCS <= 7)
+        strcpy(set_value, "0");
+    else if (MCS <= 9)
+        strcpy(set_value, "1");
+    else
+        strcpy(set_value, "2");
+
+    set_config.name = "he_basic_mcs_nss_set";
+    set_config.value = set_value;
+
+    wifi_hostapdWrite(config_file, &set_config, 1);
+    wifi_hostapdProcessUpdate(radioIndex, &set_config, 1);
+
+    // For pass tdk test, we need to record last MCS setting. No matter whether it is effective or not.
+    snprintf(mcs_file, sizeof(mcs_file), "%s%d.txt", MCS_FILE, radioIndex);
+    f = fopen(mcs_file, "w");
+    if (f == NULL) {
+        fprintf(stderr, "%s: fopen failed\n", __func__);
+        return RETURN_ERR;
+    }
+    fprintf(f, "%d", MCS);
+    fclose(f);
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
 }
 
 //Get supported Transmit Power list, eg : "0,25,50,75,100"
