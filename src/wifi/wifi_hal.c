@@ -2308,9 +2308,18 @@ INT wifi_setApEnableOnLine(ULONG wlanIndex,BOOL enable)
 
 INT wifi_factoryResetAP(int apIndex)
 {
+    char ap_config_file[64] = {0};
+    char cmd[128] = {0};
+
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    //factory reset is not done for now on Turris
+
+    wifi_setApEnable(apIndex, FALSE);
+    sprintf(ap_config_file, "%s%d.conf", CONFIG_PREFIX, apIndex);
+    sprintf(cmd, "rm %s && sh /lib/rdk/hostapd-init.sh", ap_config_file);
+    wifi_setApEnable(apIndex, TRUE);
+
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
     return RETURN_OK;
 }
 
