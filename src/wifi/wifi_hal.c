@@ -3580,7 +3580,7 @@ int get_noise(int radioIndex, struct channels_noise *channels_noise_arr, int cha
 {
     FILE *f = NULL;
     char cmd[128] = {0};
-    char *line = NULL;
+    char line[256] = {0};
     size_t len = 0;
     ssize_t read = 0;
     int tmp = 0, arr_index = -1;
@@ -3591,17 +3591,20 @@ int get_noise(int radioIndex, struct channels_noise *channels_noise_arr, int cha
         wifi_dbg_printf("%s: popen %s error\n", __func__, cmd);
         return RETURN_ERR;
     }
-    line = malloc(sizeof(char) * 256);
-    while((read = getline(&line, &len, f)) != -1) {
-        sscanf(line, "%d", &tmp);
-        if (tmp > 0) {      // channel frequency, the first line must be frequency
-            arr_index++;
-            channels_noise_arr[arr_index].channel = ieee80211_frequency_to_channel(tmp);
-        } else {            // noise
-            channels_noise_arr[arr_index].noise = tmp;
+    
+    while(fgets(line, sizeof(line), f) != NULL) {
+        if(arr_index < channels_num){
+            sscanf(line, "%d", &tmp);
+            if (tmp > 0) {      // channel frequency, the first line must be frequency
+                arr_index++;
+                channels_noise_arr[arr_index].channel = ieee80211_frequency_to_channel(tmp);
+            } else {            // noise
+                channels_noise_arr[arr_index].noise = tmp;
+            }
+        }else{
+            break;
         }
     }
-    free(line);
     pclose(f);
     return RETURN_OK;
 }
@@ -3623,7 +3626,7 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
     size_t len=0;
     int channels_num = 0;
     int vht_channel_width = 0;
-    bool get_nosie_ret = false;
+    int get_noise_ret = RETURN_ERR;
     bool filter_enable = false;
     bool filter_BSS = false;     // The flag determine whether the BSS information need to be filterd.
 
@@ -3642,8 +3645,7 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
     _syscmd(cmd, buf, sizeof(buf));
     channels_num = strtol(buf, NULL, 10);
 
-    struct channels_noise *channels_noise_arr = calloc(channels_num, sizeof(struct channels_noise));
-    get_nosie_ret = get_noise(radioIndex, channels_noise_arr, channels_num);
+
 
     sprintf(cmd, "iw dev %s%d scan | grep '%s%d\\|SSID\\|freq\\|beacon interval\\|capabilities\\|signal\\|Supported rates\\|DTIM\\| \
     // WPA\\|RSN\\|Group cipher\\|HT operation\\|secondary channel offset\\|channel width\\|HE.*GHz' | grep -v -e '*.*BSS'", AP_PREFIX, radioIndex, AP_PREFIX, radioIndex);
@@ -3652,6 +3654,10 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
         wifi_dbg_printf("%s: popen %s error\n", __func__, cmd);
         return RETURN_ERR;
     }
+	
+    struct channels_noise *channels_noise_arr = calloc(channels_num, sizeof(struct channels_noise));
+    get_noise_ret = get_noise(radioIndex, channels_noise_arr, channels_num);
+	
     ret = fgets(line, sizeof(line), f);
     while (ret != NULL) {
         if(strstr(line, "BSS") != NULL) {    // new neighbor info
@@ -3693,7 +3699,7 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
             }
 
             scan_array[index].ap_Noise = 0;
-            if (get_nosie_ret) {
+            if (get_noise_ret == RETURN_OK) {
                 for (int i = 0; i < channels_num; i++) {
                     if (scan_array[index].ap_Channel == channels_noise_arr[i].channel) {
                         scan_array[index].ap_Noise = channels_noise_arr[i].noise;
@@ -3805,6 +3811,7 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
     }
     *neighbor_ap_array = scan_array;
     pclose(f);
+    free(channels_noise_arr);
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
@@ -8300,7 +8307,7 @@ INT wifi_getNeighboringWiFiStatus(INT radio_index, wifi_neighbor_ap2_t **neighbo
     size_t len=0;
     int channels_num = 0;
     int vht_channel_width = 0;
-    bool get_nosie_ret = false;
+    int get_noise_ret = RETURN_ERR;
     bool filter_enable = false;
     bool filter_BSS = false;     // The flag determine whether the BSS information need to be filterd.
 
@@ -8319,9 +8326,6 @@ INT wifi_getNeighboringWiFiStatus(INT radio_index, wifi_neighbor_ap2_t **neighbo
     _syscmd(cmd, buf, sizeof(buf));
     channels_num = strtol(buf, NULL, 10);
 
-    struct channels_noise *channels_noise_arr = calloc(channels_num, sizeof(struct channels_noise));
-    get_nosie_ret = get_noise(radio_index, channels_noise_arr, channels_num);
-
     sprintf(cmd, "iw dev %s%d scan dump | grep '%s%d\\|SSID\\|freq\\|beacon interval\\|capabilities\\|signal\\|Supported rates\\|DTIM\\| \
     // WPA\\|RSN\\|Group cipher\\|HT operation\\|secondary channel offset\\|channel width\\|HE.*GHz' | grep -v -e '*.*BSS'", AP_PREFIX, radio_index, AP_PREFIX, radio_index);
     fprintf(stderr, "cmd: %s\n", cmd);
@@ -8329,6 +8333,10 @@ INT wifi_getNeighboringWiFiStatus(INT radio_index, wifi_neighbor_ap2_t **neighbo
         wifi_dbg_printf("%s: popen %s error\n", __func__, cmd);
         return RETURN_ERR;
     }
+	
+    struct channels_noise *channels_noise_arr = calloc(channels_num, sizeof(struct channels_noise));
+    get_noise_ret = get_noise(radio_index, channels_noise_arr, channels_num);
+	
     ret = fgets(line, sizeof(line), f);
     while (ret != NULL) {
         if(strstr(line, "BSS") != NULL) {    // new neighbor info
@@ -8370,7 +8378,7 @@ INT wifi_getNeighboringWiFiStatus(INT radio_index, wifi_neighbor_ap2_t **neighbo
             }
 
             scan_array[index].ap_Noise = 0;
-            if (get_nosie_ret) {
+            if (get_noise_ret == RETURN_OK) {
                 for (int i = 0; i < channels_num; i++) {
                     if (scan_array[index].ap_Channel == channels_noise_arr[i].channel) {
                         scan_array[index].ap_Noise = channels_noise_arr[i].noise;
@@ -8482,6 +8490,7 @@ INT wifi_getNeighboringWiFiStatus(INT radio_index, wifi_neighbor_ap2_t **neighbo
     }
     *neighbor_ap_array = scan_array;
     pclose(f);
+    free(channels_noise_arr);
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
