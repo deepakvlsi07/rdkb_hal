@@ -82,6 +82,7 @@ Licensed under the ISC license
 #define CHAIN_MASK_FILE "/tmp/chain_mask"
 #define AMSDU_FILE "/tmp/AMSDU"
 #define MCS_FILE "/tmp/MCS"
+#define NOACK_MAP_FILE "/tmp/NoAckMap"
 
 #define DRIVER_2GHZ "ath9k"
 #define DRIVER_5GHZ "ath10k_pci"
@@ -5872,11 +5873,47 @@ INT wifi_setApWmmUapsdEnable(INT apIndex, BOOL enable)
     return RETURN_OK;
 }
 
-// Sets the WMM ACK polity on the hardware. AckPolicy false means do not acknowledge, true means acknowledge
+// Sets the WMM ACK policy on the hardware. AckPolicy false means do not acknowledge, true means acknowledge
 INT wifi_setApWmmOgAckPolicy(INT apIndex, INT class, BOOL ackPolicy)  //RDKB
 {
-    //save config and apply instantly.
-    return RETURN_ERR;
+    // assume class 0->BE, 1->BK, 2->VI, 3->VO
+    char cmd[128] = {0};
+    char buf[128] = {0};
+    char ack_filepath[128] = {0};
+    uint16_t bitmap = 0;
+    uint16_t class_map[4] = {0x0009, 0x0006, 0x0030, 0x00C0};
+    FILE *f = NULL;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
+
+    // Get current setting
+    snprintf(ack_filepath, sizeof(ack_filepath), "%s%d.txt", NOACK_MAP_FILE, apIndex);
+    snprintf(cmd, sizeof(cmd), "cat %s 2> /dev/null", ack_filepath);
+    _syscmd(cmd, buf, sizeof(buf));
+    if (strlen(buf) > 0)
+        bitmap = strtoul(buf, NULL, 10);
+
+    bitmap = strtoul(buf, NULL, 10);
+
+    if (ackPolicy == TRUE) {    // True, unset this class
+        bitmap &= ~class_map[class];
+    } else {                    // False, set this class
+        bitmap |= class_map[class];
+    }
+
+    f = fopen(ack_filepath, "w");
+    if (f == NULL) {
+        fprintf(stderr, "%s: fopen failed\n", __func__);
+        return RETURN_ERR;
+    }
+    fprintf(f, "%hu", bitmap);
+    fclose(f);
+
+    snprintf(cmd, sizeof(cmd), "iw dev %s%d set noack_map 0x%04x\n", AP_PREFIX, apIndex, bitmap);
+    _syscmd(cmd, buf, sizeof(buf));
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n", __func__, __LINE__);
+    return RETURN_OK;
 }
 
 //The maximum number of devices that can simultaneously be connected to the access point. A value of 0 means that there is no specific limit.
