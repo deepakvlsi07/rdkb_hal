@@ -1997,6 +1997,30 @@ INT wifi_setRadioMode(INT radioIndex, CHAR *channelMode, UINT pureMode)
     return RETURN_OK;
 }
 
+INT wifi_setRadioHwMode(INT radioIndex, CHAR *hw_mode) {
+
+    char config_file[64] = {0};
+    struct params params = {0};
+    wifi_band band = band_invalid;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
+
+    band = wifi_index_to_band(radioIndex);
+    if (strncmp(hw_mode, "a", 1) == 0 && (band != band_5 || band != band_6))
+        return RETURN_ERR;
+    else if ((strncmp(hw_mode, "b", 1) == 0 || strncmp(hw_mode, "g", 1) == 0) && band != band_2_4)
+        return RETURN_ERR;
+
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radioIndex);
+    params.name = "hw_mode";
+    params.value = hw_mode;
+    wifi_hostapdWrite(config_file, &params, 1);
+    wifi_hostapdProcessUpdate(radioIndex, &params, 1);
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
+}
+
 //Get the list of supported channel. eg: "1-11"
 //The output_string is a max length 64 octet string that is allocated by the RDKB code.  Implementations must ensure that strings are not longer than this.
 INT wifi_getRadioPossibleChannels(INT radioIndex, CHAR *output_string)	//RDKB
