@@ -292,15 +292,22 @@ static void mac_addr_ntoa(char *mac_addr, unsigned char *arg)
 
 static int ieee80211_frequency_to_channel(int freq)
 {
+    /* see 802.11-2007 17.3.8.3.2 and Annex J */
     if (freq == 2484)
         return 14;
+    /* see 802.11ax D6.1 27.3.23.2 and Annex E */
+    else if (freq == 5935)
+        return 2;
     else if (freq < 2484)
         return (freq - 2407) / 5;
     else if (freq >= 4910 && freq <= 4980)
         return (freq - 4000) / 5;
-    else if (freq <= 45000)
+    else if (freq < 5950)
         return (freq - 5000) / 5;
-    else if (freq >= 58320 && freq <= 64800)
+    else if (freq <= 45000) /* DMG band lower limit */
+        /* see 802.11ax D6.1 27.3.23.2 */
+        return (freq - 5950) / 5;
+    else if (freq >= 58320 && freq <= 70200)
         return (freq - 56160) / 2160;
     else
         return 0;
@@ -2060,33 +2067,60 @@ INT wifi_getRadioPossibleChannels(INT radioIndex, CHAR *output_string)	//RDKB
 //The output_string is a max length 256 octet string that is allocated by the RDKB code.  Implementations must ensure that strings are not longer than this.
 INT wifi_getRadioChannelsInUse(INT radioIndex, CHAR *output_string)	//RDKB
 {
-    if (NULL == output_string)
-        return RETURN_ERR;
-    snprintf(output_string, 256, (radioIndex == 0)?"1,6,11":"36,40");
-#if 0
-    char IFName[50] ={0};
-    char buf[MAX_BUF_SIZE] = {0};
-    char cmd[MAX_CMD_SIZE] = {0};
+    char cmd[128] = {0};
+    char buf[128] = {0};
+    char config_file[64] = {0};
+    int channel = 0;
+    int freq = 0;
+    int bandwidth = 0;
+    int center_freq = 0;
+    int center_channel = 0;
+    int channel_delta = 0;
+    wifi_band band = band_invalid;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
+
     if (NULL == output_string)
         return RETURN_ERR;
 
-    //	snprintf(output_string, 256, (radioIndex==0)?"1,6,11":"36,40");
-    if(radioIndex == 0)
-    {
-        GetInterfaceName(IFName, "/nvram/hostapd0.conf");
-        sprintf(cmd,"%s %s %s","iwlist",IFName,"channel  | grep Channel | grep -v 'Current Frequency' | grep 2'\\.' | cut -d ':' -f1 | tr -s ' ' | cut -d ' ' -f3 | sed 's/^0//g' | tr '\\n' ' ' | sed 's/ /,/g' | sed 's/,$/ /g'");
+    sprintf(cmd, "iw %s%d info | grep channel | sed -e 's/[^0-9 ]//g'", AP_PREFIX, radioIndex);
+    _syscmd(cmd, buf, sizeof(buf));
+    if (strlen(buf) == 0) {
+        fprintf(stderr, "%s: failed to get channel information from iw.\n", __func__);
+        return RETURN_ERR;
     }
-    else if(radioIndex == 1)
-    {
-        GetInterfaceName(IFName, "/nvram/hostapd1.conf");
-        sprintf(cmd,"%s %s %s","iwlist",IFName,"channel  | grep Channel | grep -v 'Current Frequency' | grep 5'\\.[1-9]' | cut -d ':' -f1 | tr -s ' ' | cut -d ' ' -f3 |tr '\\n' ' ' | sed 's/ /,/g' | sed 's/,$/ /g'");
+    sscanf(buf, "%d %d %d %*d %d", &channel, &freq, &bandwidth, &center_freq);
+
+    if (bandwidth == 20) {
+        snprintf(output_string, 256, "%d", channel);
+        return RETURN_OK;
     }
-    _syscmd(cmd,buf, sizeof(buf));
-    if(strlen(buf) > 0)
-        strcpy(output_string,buf);
-    else
-        strcpy(output_string,"0");
-#endif
+
+    center_channel = ieee80211_frequency_to_channel(center_freq);
+
+    band = wifi_index_to_band(radioIndex);
+    if (band == band_2_4 && bandwidth == 40) {
+        sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radioIndex);
+        memset(buf, 0, sizeof(buf));
+        wifi_halgetRadioExtChannel(config_file, buf);       // read ht_capab for HT40+ or -
+
+        if (strncmp(buf, "AboveControlChannel", strlen("AboveControlChannel") == 0) && channel < 10) {
+            snprintf(output_string, 256, "%d,%d", channel, channel+4);
+        } else if (strncmp(buf, "BelowControlChannel", strlen("BelowControlChannel") == 0) && channel > 4) {
+            snprintf(output_string, 256, "%d,%d", channel-4, channel);
+        } else {
+            fprintf(stderr, "%s: invalid channel %d set with %s\n.", __func__, channel, buf);
+            return RETURN_ERR;
+        }
+    } else if (band == band_5 || band == band_6){
+        // to minus 20 is an offset, because frequence of a channel have a range. We need to use offset to calculate correct channel.
+        // example: bandwidth 80: center is 42 (5210), channels are 36-48 (5170-5250). The delta should be 6.
+        channel_delta = (bandwidth-20)/10;
+        snprintf(output_string, 256, "%d-%d", (center_channel-channel_delta), (center_channel+channel_delta));
+    } else
+        return RETURN_ERR;
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n", __func__, __LINE__);
     return RETURN_OK;
 }
 
