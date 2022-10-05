@@ -2423,6 +2423,19 @@ INT wifi_setRadioDCSScanTime(INT radioIndex, INT interval_seconds, INT dwell_mil
     return RETURN_OK;
 }
 
+INT wifi_getRadioDfsAtBootUpEnable(INT radioIndex, BOOL *output_bool)	//Tr181
+{
+    if (output_bool == NULL)
+         return RETURN_ERR;
+     *output_bool = true;   
+    return RETURN_OK;     
+}
+
+INT wifi_setRadioDfsAtBootUpEnable(INT radioIndex, BOOL enable)	//Tr181
+{
+    return RETURN_OK;
+}
+
 //Get the Dfs enable status
 INT wifi_getRadioDfsEnable(INT radioIndex, BOOL *output_bool)	//Tr181
 {
