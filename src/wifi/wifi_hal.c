@@ -1952,7 +1952,7 @@ INT wifi_setRadioMode(INT radioIndex, CHAR *channelMode, UINT pureMode)
     char config_file[64] = {0};
     char bandwidth[16] = {0};
     int mode_check_bit = 1 << 3;    // n mode
-    wifi_ieee80211_Mode mode = (wifi_ieee80211_Mode)pureMode;
+    
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s_%d:%d\n", __func__, channelMode, pureMode, __LINE__);
     // Set radio mode
@@ -1962,15 +1962,15 @@ INT wifi_setRadioMode(INT radioIndex, CHAR *channelMode, UINT pureMode)
     snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
 
     // check the bit map from n to ax, and set hostapd config
-    if (mode & WIFI_MODE_N)
+    if (pureMode & WIFI_MODE_N)
         list[0].value = "1";
     else
         list[0].value = "0";
-    if (mode & WIFI_MODE_AC)
+    if (pureMode & WIFI_MODE_AC)
         list[1].value = "1";
     else
         list[1].value = "0";
-    if (mode & WIFI_MODE_AX)
+    if (pureMode & WIFI_MODE_AX)
         list[2].value = "1";
     else
         list[2].value = "0";
@@ -6080,19 +6080,19 @@ INT wifi_getApSecurityModeEnabled(INT apIndex, CHAR *output)
     strcpy(output, "None");//Copying "None" to output string for default case
     wifi_hostapdRead(config_file, "wpa_key_mgmt", key_mgmt, sizeof(key_mgmt));
     if (strstr(key_mgmt, "WPA-PSK")) {
-        if (strcmp(wpa, "1"))
+        if (!strcmp(wpa, "1"))
             snprintf(output, 32, "WPA-Personal");
-        else if (strcmp(wpa, "2"))
+        else if (!strcmp(wpa, "2"))
             snprintf(output, 32, "WPA2-Personal");
-        else if (strcmp(wpa, "3"))
+        else if (!strcmp(wpa, "3"))
             snprintf(output, 32, "WPA-WPA2-Personal");
 
     } else if (strstr(key_mgmt, "WPA-EAP")) {
-        if (strcmp(wpa, "1"))
+        if (!strcmp(wpa, "1"))
             snprintf(output, 32, "WPA-Enterprise");
-        else if (strcmp(wpa, "2"))
+        else if (!strcmp(wpa, "2"))
             snprintf(output, 32, "WPA2-Enterprise");
-        else if (strcmp(wpa, "3"))
+        else if (!strcmp(wpa, "3"))
             snprintf(output, 32, "WPA-WPA2-Enterprise");
     } else if (strstr(key_mgmt, "SAE")) {
         wifi_hostapdRead(config_file, "transition_disable", buf, sizeof(buf));
@@ -11350,7 +11350,7 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
     char cmd[128] = {0};
     char config_file[64] = {0};
     int bandwidth;
-    int set_mode;
+    int set_mode = 0;
     wifi_radio_operationParam_t current_param;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
@@ -12191,23 +12191,23 @@ INT wifi_getApSecurity(INT ap_index, wifi_vap_security_t *security)
     wifi_getApSecurityModeEnabled(ap_index, buf);   // Get wpa config
     security->mode = wifi_security_mode_none;
     if (strlen(buf) != 0) {
-        if (strcmp(buf, "WPA-Personal"))
+        if (!strcmp(buf, "WPA-Personal"))
             security->mode = wifi_security_mode_wpa_personal;
-        else if (strcmp(buf, "WPA2-Personal"))
+        else if (!strcmp(buf, "WPA2-Personal"))
             security->mode = wifi_security_mode_wpa2_personal;
-        else if (strcmp(buf, "WPA-WPA2-Personal"))
+        else if (!strcmp(buf, "WPA-WPA2-Personal"))
             security->mode = wifi_security_mode_wpa_wpa2_personal;
-        else if (strcmp(buf, "WPA-Enterprise"))
+        else if (!strcmp(buf, "WPA-Enterprise"))
             security->mode = wifi_security_mode_wpa_enterprise;
-        else if (strcmp(buf, "WPA2-Enterprise"))
+        else if (!strcmp(buf, "WPA2-Enterprise"))
             security->mode = wifi_security_mode_wpa2_enterprise;
-        else if (strcmp(buf, "WPA-WPA2-Enterprise"))
+        else if (!strcmp(buf, "WPA-WPA2-Enterprise"))
             security->mode = wifi_security_mode_wpa_wpa2_enterprise;
-        else if (strcmp(buf, "WPA3-Personal"))
+        else if (!strcmp(buf, "WPA3-Personal"))
             security->mode = wifi_security_mode_wpa3_personal;
-        else if (strcmp(buf, "WPA3-Transition"))
+        else if (!strcmp(buf, "WPA3-Transition"))
             security->mode = wifi_security_mode_wpa3_transition;
-        else if (strcmp(buf, "WPA3-Enterprise"))
+        else if (!strcmp(buf, "WPA3-Enterprise"))
             security->mode = wifi_security_mode_wpa3_enterprise;
     }
 
