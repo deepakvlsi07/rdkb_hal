@@ -11627,102 +11627,188 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 
 static int array_index_to_vap_index(UINT radioIndex, int arrayIndex)
 {
-    if (radioIndex != 0 && radioIndex != 1)
-    {
-        printf("%s: Wrong radio index (%d)\n", __func__, index);
-        return -1;
+    int max_radio_num = 0;
+
+    wifi_getMaxRadioNumber(&max_radio_num);
+    if (radioIndex >= max_radio_num || radioIndex < 0) {
+        fprintf(stderr, "%s: Wrong radio index (%d)\n", __func__, radioIndex);
+        return RETURN_ERR;
     }
 
-    // XXX: hardcode vap indexes for now (0,1 - home, 2,3 - backhaul 6,7 - onboard)
-    // XXX : assumed radioIndex for 2.4 is 0 radioIndex for 5G is 1
+    return (arrayIndex * max_radio_num) + radioIndex;
+}
 
-    return (arrayIndex * 2) + radioIndex;
+wifi_bitrate_t beaconRate_string_to_enum(char *beaconRate) {
+    if (strncmp(beaconRate, "1Mbps", 5) == 0)
+        return WIFI_BITRATE_1MBPS;
+    else if (strncmp(beaconRate, "2Mbps", 5) == 0)
+        return WIFI_BITRATE_2MBPS;
+    else if (strncmp(beaconRate, "5.5Mbps", 7) == 0)
+        return WIFI_BITRATE_5_5MBPS;
+    else if (strncmp(beaconRate, "6Mbps", 5) == 0)
+        return WIFI_BITRATE_6MBPS;
+    else if (strncmp(beaconRate, "9Mbps", 5) == 0)
+        return WIFI_BITRATE_9MBPS;
+    else if (strncmp(beaconRate, "11Mbps", 6) == 0)
+        return WIFI_BITRATE_11MBPS;
+    else if (strncmp(beaconRate, "12Mbps", 6) == 0)
+        return WIFI_BITRATE_12MBPS;
+    else if (strncmp(beaconRate, "18Mbps", 6) == 0)
+        return WIFI_BITRATE_18MBPS;
+    else if (strncmp(beaconRate, "24Mbps", 6) == 0)
+        return WIFI_BITRATE_24MBPS;
+    else if (strncmp(beaconRate, "36Mbps", 6) == 0)
+        return WIFI_BITRATE_36MBPS;
+    else if (strncmp(beaconRate, "48Mbps", 6) == 0)
+        return WIFI_BITRATE_48MBPS;
+    else if (strncmp(beaconRate, "54Mbps", 6) == 0)
+        return WIFI_BITRATE_54MBPS;
+    return WIFI_BITRATE_DEFAULT;
 }
 
 INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 {
-    INT ret;
-    int i;
-    BOOL enabled = false;
-    char buf[256];
-    wifi_secur_list *secur_item;
-    int vap_index;
-    INT mode;
-    map->num_vaps = 5; // XXX: this is a hack. For both radio let's support 5 vaps for now
+    INT mode = 0;
+    INT ret = -1;
+    INT output = 0;
+    int i = 0;
+    int vap_index = 0;
+    BOOL enabled = FALSE;
+    char buf[256] = {0};
+    wifi_vap_security_t security;
+    map->num_vaps = 5;      // Hardcoded
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     printf("Entering %s index = %d\n", __func__, (int)index);
 
-    map->vap_array[index].radio_index = index;
     for (i = 0; i < 5; i++)
     {
+        map->vap_array[i].radio_index = index;
+
         vap_index = array_index_to_vap_index(index, i);
         if (vap_index < 0)
-	{
             return RETURN_ERR;
-        }
 
-        strncpy(map->vap_array[i].bridge_name, "brlan0", sizeof(map->vap_array[i].bridge_name) - 1);
+        strcpy(map->vap_array[i].bridge_name, BRIDGE_NAME);
 
         map->vap_array[i].vap_index = vap_index;
 
         memset(buf, 0, sizeof(buf));
-        wifi_getApName(vap_index, buf); // XXX: error handling
-        strncpy(map->vap_array[i].vap_name, buf, sizeof(map->vap_array[i].vap_name) - 1);
+        ret = wifi_getApName(vap_index, buf);
+        if (ret != RETURN_OK) {
+            printf("%s: wifi_getApName return error\n", __func__);
+            return RETURN_ERR;
+        }
+        snprintf(map->vap_array[i].vap_name, sizeof(map->vap_array[i].vap_name), "%s", buf);
+
+        memset(buf, 0, sizeof(buf));
+        ret = wifi_getSSIDNameStatus(vap_index, buf);
+        if (ret != RETURN_OK) {
+            printf("%s: wifi_getSSIDNameStatus return error\n", __func__);
+            return RETURN_ERR;
+        }
+        snprintf(map->vap_array[i].u.bss_info.ssid, sizeof(map->vap_array[i].u.bss_info.ssid), "%s", buf);
 
         ret = wifi_getSSIDEnable(vap_index, &enabled);
-        if (ret != RETURN_OK)
-        {
-            printf("%s: failed to get SSIDEnable for index %d\n", __func__, i);
+        if (ret != RETURN_OK) {
+            printf("%s: wifi_getSSIDEnable return error\n", __func__);
             return RETURN_ERR;
         }
         map->vap_array[i].u.bss_info.enabled = enabled;
 
+        ret = wifi_getApSsidAdvertisementEnable(vap_index, &enabled);
+        if (ret != RETURN_OK) {
+            printf("%s: wifi_getApSsidAdvertisementEnable return error\n", __func__);
+            return RETURN_ERR;
+        }
+        map->vap_array[i].u.bss_info.showSsid = enabled;
+        
+        ret = wifi_getApIsolationEnable(vap_index, &enabled);
+        if (ret != RETURN_OK) {
+            printf("%s: wifi_getApIsolationEnable return error\n", __func__);
+            return RETURN_ERR;
+        }
+        map->vap_array[i].u.bss_info.isolation = enabled;
+
+        ret = wifi_getApMaxAssociatedDevices(vap_index, &output);
+        if (ret != RETURN_OK) {
+            printf("%s: wifi_getApMaxAssociatedDevices return error\n", __func__);
+            return RETURN_ERR;
+        }
+        map->vap_array[i].u.bss_info.bssMaxSta = output;
+
+        ret = wifi_getBSSTransitionActivation(vap_index, &enabled);
+        if (ret != RETURN_OK) {
+            printf("%s: wifi_getBSSTransitionActivation return error\n", __func__);
+            return RETURN_ERR;
+        }
+        map->vap_array[i].u.bss_info.bssTransitionActivated = enabled;
+
+        ret = wifi_getNeighborReportActivation(vap_index, &enabled);
+        if (ret != RETURN_OK) {
+            printf("%s: wifi_getNeighborReportActivation return error\n", __func__);
+            return RETURN_ERR;
+        }
+        map->vap_array[i].u.bss_info.nbrReportActivated = enabled;
+
+        ret = wifi_getApSecurity(vap_index, &security);
+        if (ret != RETURN_OK) {
+            printf("%s: wifi_getApSecurity return error\n", __func__);
+            return RETURN_ERR;
+        }
+        map->vap_array[i].u.bss_info.security = security;
+
+        ret = wifi_getApMacAddressControlMode(vap_index, &mode);
+        if (ret != RETURN_OK) {
+            printf("%s: wifi_getApMacAddressControlMode return error\n", __func__);
+            return RETURN_ERR;
+        }
+        if (mode == 0) 
+            map->vap_array[i].u.bss_info.mac_filter_enable = FALSE;
+        else 
+            map->vap_array[i].u.bss_info.mac_filter_enable = TRUE;
+        if (mode == 1) 
+            map->vap_array[i].u.bss_info.mac_filter_mode = wifi_mac_filter_mode_white_list;
+        else if (mode == 2) 
+            map->vap_array[i].u.bss_info.mac_filter_mode = wifi_mac_filter_mode_black_list;
+
+        ret = wifi_getApWmmEnable(vap_index, &enabled);
+        if (ret != RETURN_OK) {
+            printf("%s: wifi_getApWmmEnable return error\n", __func__);
+            return RETURN_ERR;
+        }
+        map->vap_array[i].u.bss_info.wmm_enabled = enabled;
+
+        ret = wifi_getApUAPSDCapability(vap_index, &enabled);
+        if (ret != RETURN_OK) {
+            printf("%s: wifi_getApUAPSDCapability return error\n", __func__);
+            return RETURN_ERR;
+        }
+        map->vap_array[i].u.bss_info.UAPSDEnabled = enabled;
+
         memset(buf, 0, sizeof(buf));
-        wifi_getBaseBSSID(vap_index, buf);
+        ret = wifi_getApBeaconRate(vap_index, buf);
+        if (ret != RETURN_OK) {
+            printf("%s: wifi_getApBeaconRate return error\n", __func__);
+            return RETURN_ERR;
+        }
+        map->vap_array[i].u.bss_info.beaconRate = beaconRate_string_to_enum(buf);
+
+        memset(buf, 0, sizeof(buf));
+        ret = wifi_getBaseBSSID(vap_index, buf);
+        if (ret != RETURN_OK) {
+            printf("%s: wifi_getBaseBSSID return error\n", __func__);
+            return RETURN_ERR;
+        }
         sscanf(buf, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
             &map->vap_array[i].u.bss_info.bssid[0],
             &map->vap_array[i].u.bss_info.bssid[1],
             &map->vap_array[i].u.bss_info.bssid[2],
             &map->vap_array[i].u.bss_info.bssid[3],
             &map->vap_array[i].u.bss_info.bssid[4],
-            &map->vap_array[i].u.bss_info.bssid[5]); // XXX: handle error
+            &map->vap_array[i].u.bss_info.bssid[5]);
 
-        wifi_getApSsidAdvertisementEnable(vap_index, &enabled); // XXX: error handling
-        map->vap_array[i].u.bss_info.showSsid = enabled;
-
-        wifi_getApMacAddressControlMode(vap_index, &mode); // XXX: handle errors
-        if (mode == 0) map->vap_array[i].u.bss_info.mac_filter_enable = false;
-        else map->vap_array[i].u.bss_info.mac_filter_enable = true;
-
-        if (mode == 1) map->vap_array[i].u.bss_info.mac_filter_mode = wifi_mac_filter_mode_white_list;
-        else if (mode == 2) map->vap_array[i].u.bss_info.mac_filter_mode = wifi_mac_filter_mode_black_list; // XXX: handle wrong mode
-
-        memset(buf, 0, sizeof(buf));
-        wifi_getSSIDNameStatus(vap_index, buf); // XXX: error handling
-        strncpy(map->vap_array[i].u.bss_info.ssid, buf, sizeof(map->vap_array[i].u.bss_info.ssid) - 1);
-
-        wifi_getApSecurityModeEnabled(vap_index, buf);
-
-        if (!(secur_item = wifi_get_item_by_str(ARRAY_AND_SIZE(map_security), buf)))
-        {
-            printf("%s: ssid_index %d: Failed to decode security mode (%s)\n", __func__, vap_index, buf);
-            return RETURN_ERR;
-        }
-        map->vap_array[i].u.bss_info.security.mode = secur_item->key;
-
-        memset(buf, 0, sizeof(buf));
-        wifi_getApSecurityKeyPassphrase(vap_index, buf); // XXX: error handling
-        strncpy(map->vap_array[i].u.bss_info.security.u.key.key, buf, sizeof(map->vap_array[i].u.bss_info.security.u.key.key) - 1);
-
-        wifi_getNeighborReportActivation(vap_index, &enabled); // XXX: error handling
-        map->vap_array[i].u.bss_info.nbrReportActivated = enabled;
-
-        wifi_getBSSTransitionActivation(vap_index, &enabled); // XXX: error handling
-        map->vap_array[i].u.bss_info.bssTransitionActivated = enabled;
-
-        wifi_getApIsolationEnable(vap_index, &enabled);
-        map->vap_array[i].u.bss_info.isolation = enabled;
+        // TODO: wps, noack
     }
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
