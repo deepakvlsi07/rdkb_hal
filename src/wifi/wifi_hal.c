@@ -74,7 +74,7 @@ Licensed under the ISC license
 #define SOCK_PREFIX "/var/run/hostapd/wifi"
 #define VAP_STATUS_FILE "/tmp/vap-status"
 #define ESSID_FILE "/tmp/essid"
-#define GUARD_INTERVAL_FILE "/tmp/guard-interval"
+#define GUARD_INTERVAL_FILE "/nvram/guard-interval"
 #define CHANNEL_STATS_FILE "/tmp/channel_stats"
 #define DFS_ENABLE_FILE "/nvram/dfs_enable.txt"
 #define VLAN_FILE "/nvram/hostapd.vlan"
