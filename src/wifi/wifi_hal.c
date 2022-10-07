@@ -2023,9 +2023,12 @@ INT wifi_setRadioHwMode(INT radioIndex, CHAR *hw_mode) {
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
 
     band = wifi_index_to_band(radioIndex);
-    if (strncmp(hw_mode, "a", 1) == 0 && (band != band_5 || band != band_6))
+
+    if (strncmp(hw_mode, "a", 1) == 0 && (band != band_5 && band != band_6))
         return RETURN_ERR;
     else if ((strncmp(hw_mode, "b", 1) == 0 || strncmp(hw_mode, "g", 1) == 0) && band != band_2_4)
+        return RETURN_ERR;
+    else if ((strncmp(hw_mode, "a", 1) && strncmp(hw_mode, "b", 1) && strncmp(hw_mode, "g", 1)) || band == band_invalid)
         return RETURN_ERR;
 
     sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radioIndex);
