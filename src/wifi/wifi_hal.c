@@ -11562,8 +11562,8 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
     if (!strcmp(buf, "20MHz")) operationParam->channelWidth = WIFI_CHANNELBANDWIDTH_20MHZ;
     else if (!strcmp(buf, "40MHz")) operationParam->channelWidth = WIFI_CHANNELBANDWIDTH_40MHZ;
     else if (!strcmp(buf, "80MHz")) operationParam->channelWidth = WIFI_CHANNELBANDWIDTH_80MHZ;
-    else if (!strcmp(buf, "160")) operationParam->channelWidth = WIFI_CHANNELBANDWIDTH_160MHZ;
-    else if (!strcmp(buf, "80+80")) operationParam->channelWidth = WIFI_CHANNELBANDWIDTH_80_80MHZ;
+    else if (!strcmp(buf, "160MHz")) operationParam->channelWidth = WIFI_CHANNELBANDWIDTH_160MHZ;
+    else if (!strcmp(buf, "80+80MHz")) operationParam->channelWidth = WIFI_CHANNELBANDWIDTH_80_80MHZ;
     else
     {
         fprintf(stderr, "Unknown channel bandwidth: %s\n", buf);
