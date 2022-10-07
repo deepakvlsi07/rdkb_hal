@@ -1096,6 +1096,9 @@ INT wifi_setRadioCountryCode(INT radioIndex, CHAR *CountryCode)
     if(NULL == CountryCode || strlen(CountryCode) >= 32 )
         return RETURN_ERR;
 
+    if (strlen(CountryCode) == 0)
+        strcpy(CountryCode, "US");
+
     params.name = "country_code";
     params.value = CountryCode;
     sprintf(config_file,"%s%d.conf",CONFIG_PREFIX, radioIndex);
