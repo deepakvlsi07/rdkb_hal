@@ -5115,6 +5115,8 @@ INT wifi_setApBasicAuthenticationMode(INT apIndex, CHAR *authMode)
         params.value = "SAE";
     else if (strcmp(authMode, "EAP_192-bit_Authentication") == 0)
         params.value = "WPA-EAP-SUITE-B-192";
+    else if (strcmp(authMode, "PSK-SAEAuthentication") == 0)
+        params.value = "WPA-PSK WPA-PSK-SHA256 SAE";
     else if(strcmp(authMode,"None") == 0) //Donot change in case the authMode is None
         return RETURN_OK;			  //This is taken careof in beaconType
 
@@ -6203,6 +6205,11 @@ INT wifi_setApSecurityModeEnabled(INT apIndex, CHAR *encMode)
     {
         strcpy(securityType,"11i");
         strcpy(authMode,"SAEAuthentication");
+    }
+    else if (strcmp(encMode, "WPA3-Transition") == 0)
+    {
+        strcpy(securityType, "11i");
+        strcpy(authMode, "PSK-SAEAuthentication");
     }
     else if (strcmp(encMode, "WPA3-Enterprise") == 0)
     {
@@ -12117,6 +12124,82 @@ INT wifi_getHalCapability(wifi_hal_capability_t *cap)
     return RETURN_OK;
 }
 
+INT wifi_setOpportunisticKeyCaching(int ap_index, BOOL okc_enable)
+{
+    struct params h_config={0};
+    char config_file[64] = {0};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
+
+    h_config.name = "okc";
+    h_config.value = okc_enable?"1":"0";
+
+    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, ap_index);
+    wifi_hostapdWrite(config_file, &h_config, 1);
+    wifi_hostapdProcessUpdate(ap_index, &h_config, 1);
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n", __func__, __LINE__);
+    return RETURN_OK;
+}
+
+INT wifi_setSAEMFP(int ap_index, BOOL enable)
+{
+    struct params h_config={0};
+    char config_file[64] = {0};
+    char buf[128] = {0};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
+
+    h_config.name = "sae_require_mfp";
+    h_config.value = enable?"1":"0";
+
+    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, ap_index);
+    wifi_hostapdWrite(config_file, &h_config, 1);
+    wifi_hostapdProcessUpdate(ap_index, &h_config, 1);
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n", __func__, __LINE__);
+    return RETURN_OK;
+}
+
+INT wifi_setSAEpwe(int ap_index, int sae_pwe)
+{
+    struct params h_config={0};
+    char config_file[64] = {0};
+    char buf[128] = {0};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
+
+    h_config.name = "sae_pwe";
+    snprintf(buf, sizeof(buf), "%d", sae_pwe);
+    h_config.value = buf;
+
+    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, ap_index);
+    wifi_hostapdWrite(config_file, &h_config, 1);
+    wifi_hostapdProcessUpdate(ap_index, &h_config, 1);
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n", __func__, __LINE__);
+    return RETURN_OK;
+}
+
+INT wifi_setDisable_EAPOL_retries(int ap_index, BOOL disable_EAPOL_retries)
+{
+    // wpa3 use SAE instead of PSK, so we need to disable this feature when using wpa3.
+    struct params h_config={0};
+    char config_file[64] = {0};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
+
+    h_config.name = "wpa_disable_eapol_key_retries";
+    h_config.value = disable_EAPOL_retries?"1":"0";
+
+    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, ap_index);
+    wifi_hostapdWrite(config_file, &h_config, 1);
+    wifi_hostapdProcessUpdate(ap_index, &h_config, 1);
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n", __func__, __LINE__);
+    return RETURN_OK;
+}
+
 INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
 {
     char buf[128] = {0};
@@ -12124,7 +12207,12 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
     char password[64] = {0};
     char mfp[32] = {0};
     char wpa_mode[32] = {0};
+    BOOL okc_enable = FALSE;
+    BOOL sae_MFP = FALSE;
+    BOOL disable_EAPOL_retries = TRUE;
+    int sae_pwe = 0;
     struct params params = {0};
+    wifi_band band = band_invalid;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -12144,16 +12232,49 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
         strcpy(wpa_mode, "WPA2-Enterprise");
     else if (security->mode == wifi_security_mode_wpa_wpa2_enterprise)
         strcpy(wpa_mode, "WPA-WPA2-Enterprise");
-    else if (security->mode == wifi_security_mode_wpa3_personal || security->mode == wifi_security_mode_wpa3_transition)
+    else if (security->mode == wifi_security_mode_wpa3_personal) {
         strcpy(wpa_mode, "WPA3-Personal");
-    else if (security->mode == wifi_security_mode_wpa3_enterprise)
+        okc_enable = TRUE;
+        sae_MFP = TRUE;
+        sae_pwe = 2;
+        disable_EAPOL_retries = FALSE;
+    } else if (security->mode == wifi_security_mode_wpa3_transition) {
+        strcpy(wpa_mode, "WPA3-Transition");
+        okc_enable = TRUE;
+        sae_MFP = TRUE;
+        sae_pwe = 2;
+        disable_EAPOL_retries = FALSE;
+    } else if (security->mode == wifi_security_mode_wpa3_enterprise) {
         strcpy(wpa_mode, "WPA3-Enterprise");
+        sae_MFP = TRUE;
+        sae_pwe = 2;
+        disable_EAPOL_retries = FALSE;
+    }
+
+    band = wifi_index_to_band(ap_index);
+    if (band == band_6 && strstr(wpa_mode, "WPA3") == NULL) {
+        fprintf(stderr, "%s: 6G band must set with wpa3.\n", __func__);
+        return RETURN_ERR;
+    }
 
     wifi_setApSecurityModeEnabled(ap_index, wpa_mode);
+    wifi_setOpportunisticKeyCaching(ap_index, okc_enable);
+    wifi_setSAEMFP(ap_index, TRUE);
+    wifi_setSAEpwe(ap_index, 2);
+    wifi_setDisable_EAPOL_retries(ap_index, disable_EAPOL_retries);
 
-    strncpy(password, security->u.key.key, 63);
-    password[63] = '\0';
-    wifi_setApSecurityKeyPassphrase(ap_index, password);
+    if (security->mode != wifi_security_mode_none) {
+        if (security->u.key.type == wifi_security_key_type_psk || security->u.key.type == wifi_security_key_type_psk_sae) {
+            strncpy(password, security->u.key.key, 63);     // 8 to 63 characters
+            password[63] = '\0';
+            wifi_setApSecurityKeyPassphrase(ap_index, password);
+        }
+        if (security->u.key.type == wifi_security_key_type_sae || security->u.key.type == wifi_security_key_type_psk_sae) {
+            params.name = "sae_password";
+            params.value = security->u.key.key;
+            wifi_hostapdWrite(config_file, &params, 1);
+        }
+    }
 
     if (security->mode != wifi_security_mode_none) {
         memset(&params, 0, sizeof(params));
@@ -12215,7 +12336,7 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
 
 INT wifi_getApSecurity(INT ap_index, wifi_vap_security_t *security)
 {
-    char buf[128] = {0};
+    char buf[256] = {0};
     char config_file[128] = {0};
     int disable = 0;
     // struct params params = {0};
@@ -12255,6 +12376,20 @@ INT wifi_getApSecurity(INT ap_index, wifi_vap_security_t *security)
             security->encr = wifi_encryption_aes;
         else
             security->encr = wifi_encryption_aes_tkip;
+    }
+
+    if (security->mode != wifi_encryption_none) {
+        memset(buf, 0, sizeof(buf));
+        // wpa3 can use one or both configs as password, so we check sae_password first.
+        wifi_hostapdRead(config_file, "sae_password", buf, sizeof(buf));
+        if (security->mode == wifi_security_mode_wpa3_personal && strlen(buf) != 0) {
+            security->u.key.type = wifi_security_key_type_sae;
+        } else {
+            security->u.key.type = wifi_security_key_type_psk;
+            wifi_hostapdRead(config_file, "wpa_passphrase", buf, sizeof(buf));
+        }
+        strncpy(security->u.key.key, buf, sizeof(buf));
+        security->u.key.key[255] = '\0';
     }
 
     memset(buf, 0, sizeof(buf));
