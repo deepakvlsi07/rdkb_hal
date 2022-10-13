@@ -214,7 +214,10 @@ static wifi_secur_list map_security[] =
     WIFI_ITEM_STR(wifi_security_mode_wpa2_personal,           "WPA2-Personal"),
     WIFI_ITEM_STR(wifi_security_mode_wpa2_enterprise,         "WPA2-Enterprise"),
     WIFI_ITEM_STR(wifi_security_mode_wpa_wpa2_personal,       "WPA-WPA2-Personal"),
-    WIFI_ITEM_STR(wifi_security_mode_wpa_wpa2_enterprise,     "WPA-WPA2-Enterprise")
+    WIFI_ITEM_STR(wifi_security_mode_wpa_wpa2_enterprise,     "WPA-WPA2-Enterprise"),
+    WIFI_ITEM_STR(wifi_security_mode_wpa3_personal,           "WPA3-Personal"),
+    WIFI_ITEM_STR(wifi_security_mode_wpa3_transition,         "WPA3-Transition"),
+    WIFI_ITEM_STR(wifi_security_mode_wpa3_enterprise,         "WPA3-Enterprise")
 };
 
 wifi_secur_list * wifi_get_item_by_key(wifi_secur_list *list, int list_sz, int key)
@@ -12259,8 +12262,8 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
 
     wifi_setApSecurityModeEnabled(ap_index, wpa_mode);
     wifi_setOpportunisticKeyCaching(ap_index, okc_enable);
-    wifi_setSAEMFP(ap_index, TRUE);
-    wifi_setSAEpwe(ap_index, 2);
+    wifi_setSAEMFP(ap_index, sae_MFP);
+    wifi_setSAEpwe(ap_index, sae_pwe);
     wifi_setDisable_EAPOL_retries(ap_index, disable_EAPOL_retries);
 
     if (security->mode != wifi_security_mode_none) {
@@ -12289,7 +12292,7 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
     }
 
     if (security->mfp == wifi_mfp_cfg_disabled)
-        strcpy(mfp, "Disable");
+        strcpy(mfp, "Disabled");
     else if (security->mfp == wifi_mfp_cfg_optional)
         strcpy(mfp, "Optional");
     else if (security->mfp == wifi_mfp_cfg_required)
