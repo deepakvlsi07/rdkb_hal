@@ -216,7 +216,7 @@ static wifi_secur_list map_security[] =
     WIFI_ITEM_STR(wifi_security_mode_wpa_wpa2_personal,       "WPA-WPA2-Personal"),
     WIFI_ITEM_STR(wifi_security_mode_wpa_wpa2_enterprise,     "WPA-WPA2-Enterprise"),
     WIFI_ITEM_STR(wifi_security_mode_wpa3_personal,           "WPA3-Personal"),
-    WIFI_ITEM_STR(wifi_security_mode_wpa3_transition,         "WPA3-Transition"),
+    WIFI_ITEM_STR(wifi_security_mode_wpa3_transition,         "WPA3-Personal-Transition"),
     WIFI_ITEM_STR(wifi_security_mode_wpa3_enterprise,         "WPA3-Enterprise")
 };
 
@@ -6102,7 +6102,7 @@ INT wifi_getApSecurityModeEnabled(INT apIndex, CHAR *output)
 
     strcpy(output, "None");//Copying "None" to output string for default case
     wifi_hostapdRead(config_file, "wpa_key_mgmt", key_mgmt, sizeof(key_mgmt));
-    if (strstr(key_mgmt, "WPA-PSK")) {
+    if (strstr(key_mgmt, "WPA-PSK") && strstr(key_mgmt, "SAE") == NULL) {
         if (!strcmp(wpa, "1"))
             snprintf(output, 32, "WPA-Personal");
         else if (!strcmp(wpa, "2"))
@@ -6118,12 +6118,10 @@ INT wifi_getApSecurityModeEnabled(INT apIndex, CHAR *output)
         else if (!strcmp(wpa, "3"))
             snprintf(output, 32, "WPA-WPA2-Enterprise");
     } else if (strstr(key_mgmt, "SAE")) {
-        wifi_hostapdRead(config_file, "transition_disable", buf, sizeof(buf));
-        int disable = strtol(buf, NULL, 16);
-        if (disable & 0x1)
+        if (strstr(key_mgmt, "WPA-PSK") == NULL)
             snprintf(output, 32, "WPA3-Personal");
         else
-            snprintf(output, 32, "WPA3-Transition");
+            snprintf(output, 32, "WPA3-Personal-Transition");
     } else if (strstr(key_mgmt, "WPA-EAP-SUITE-B-192")) {
         snprintf(output, 32, "WPA3-Enterprise");
     }
@@ -6209,7 +6207,7 @@ INT wifi_setApSecurityModeEnabled(INT apIndex, CHAR *encMode)
         strcpy(securityType,"11i");
         strcpy(authMode,"SAEAuthentication");
     }
-    else if (strcmp(encMode, "WPA3-Transition") == 0)
+    else if (strcmp(encMode, "WPA3-Personal-Transition") == 0)
     {
         strcpy(securityType, "11i");
         strcpy(authMode, "PSK-SAEAuthentication");
@@ -12242,7 +12240,7 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
         sae_pwe = 2;
         disable_EAPOL_retries = FALSE;
     } else if (security->mode == wifi_security_mode_wpa3_transition) {
-        strcpy(wpa_mode, "WPA3-Transition");
+        strcpy(wpa_mode, "WPA3-Personal-Transition");
         okc_enable = TRUE;
         sae_MFP = TRUE;
         sae_pwe = 2;
@@ -12363,7 +12361,7 @@ INT wifi_getApSecurity(INT ap_index, wifi_vap_security_t *security)
             security->mode = wifi_security_mode_wpa_wpa2_enterprise;
         else if (!strcmp(buf, "WPA3-Personal"))
             security->mode = wifi_security_mode_wpa3_personal;
-        else if (!strcmp(buf, "WPA3-Transition"))
+        else if (!strcmp(buf, "WPA3-Personal-Transition"))
             security->mode = wifi_security_mode_wpa3_transition;
         else if (!strcmp(buf, "WPA3-Enterprise"))
             security->mode = wifi_security_mode_wpa3_enterprise;
