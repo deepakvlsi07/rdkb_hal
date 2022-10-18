@@ -1598,10 +1598,19 @@ INT wifi_getRadioSupportedFrequencyBands(INT radioIndex, CHAR *output_string)	//
 //The output_string is a max length 64 octet string that is allocated by the RDKB code.  Implementations must ensure that strings are not longer than this.
 INT wifi_getRadioOperatingFrequencyBand(INT radioIndex, CHAR *output_string) //Tr181
 {
+    wifi_band band = band_invalid;
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     if (NULL == output_string)
         return RETURN_ERR;
-    snprintf(output_string, 64, (radioIndex == 0)?"2.4GHz":"5GHz");
+    band = wifi_index_to_band(radioIndex);
+
+    if (band == band_2_4) 
+        snprintf(output_string, 64, "2.4GHz");
+    else if (band == band_5)
+        snprintf(output_string, 64, "5GHz");   
+    else if (band == band_6)
+        snprintf(output_string, 64, "6GHz");
+
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
     return RETURN_OK;
@@ -8145,6 +8154,24 @@ static int util_get_sec_chan_offset(int channel, const char* ht_mode)
     return -EINVAL;
 }
 
+static int util_get_6g_sec_chan_offset(int channel, const char* ht_mode)
+{
+    int idx = channel%8;
+    if (0 == strcmp(ht_mode, "HT40") ||
+        0 == strcmp(ht_mode, "HT80") ||
+        0 == strcmp(ht_mode, "HT160")) {
+        switch (idx) {
+            case 1:
+                return 1;
+            case 5:
+                return -1;
+            default:
+                return -EINVAL;
+        }
+    }
+
+    return -EINVAL;
+}
 static void util_hw_mode_to_bw_mode(const char* hw_mode, char *bw_mode, int bw_mode_len)
 {
     if (NULL == hw_mode) return;
@@ -8171,6 +8198,14 @@ static int util_chan_to_freq(int chan)
     return 0;
 }
 
+static int util_6G_chan_to_freq(int chan)
+{
+    if (chan)
+        return 5950 + chan * 5;
+    else
+        return 0;
+        
+}
 const int *util_unii_5g_chan2list(int chan, int width)
 {
     static const int lists[] = {
@@ -8262,6 +8297,76 @@ static int util_unii_5g_centerfreq(const char *ht_mode, int channel)
     return sum / cnt;
 }
 
+static int util_unii_6g_centerfreq(const char *ht_mode, int channel)
+{
+    if (NULL == ht_mode)
+        return 0;
+
+    int width = strtol((ht_mode + 2), NULL, 10);
+
+    int idx = 0 ;
+    int centerchan = 0;
+    int chan_ofs = 1;
+
+    if (width == 40){
+        idx = ((channel/4) + chan_ofs)%2;
+        switch (idx) {
+            case 0:
+                centerchan = (channel - 2);
+                break;
+            case 1:
+                centerchan = (channel + 2);
+                break;                 
+            default:
+                return -EINVAL;
+        }
+    }else if (width == 80){
+        idx = ((channel/4) + chan_ofs)%4; 
+        switch (idx) {
+            case 0:
+                centerchan = (channel - 6);
+                break;
+            case 1:
+                centerchan = (channel + 6);
+                break;
+            case 2:
+                centerchan = (channel + 2);
+                break;
+            case 3:
+                centerchan = (channel - 2);
+                break;
+            default:
+                return -EINVAL;
+        }    
+    }else if (width == 160){
+        switch (channel) {
+            case 1 ... 29:
+                centerchan = 15;
+                break;
+            case 33 ... 61:
+                centerchan = 47;
+                break;
+            case 65 ... 93:
+                centerchan = 79;
+                break;
+            case 97 ... 125:
+                centerchan = 111;
+                break;
+            case 129 ... 157:
+                centerchan = 143;
+                break;
+            case 161 ... 189:
+                centerchan = 175;
+                break;
+            case 193 ... 221:
+                centerchan = 207;
+                break;
+            default:
+                return -EINVAL;
+        }        
+    }
+    return centerchan;
+}
 static int util_radio_get_hw_mode(int radioIndex, char *hw_mode, int hw_mode_size)
 {
     BOOL onlyG, onlyN, onlyA;
@@ -8292,22 +8397,26 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
     char config_file[64] = {0};
     BOOL stbcEnable = FALSE;
     char *ext_str = "None";
+    wifi_band band = band_invalid;
+    int center_chan = 0;
+    int center_freq1 = 0;
 
     snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
+    band = wifi_index_to_band(radioIndex);
+
     width = channel_width_MHz > 20 ? channel_width_MHz : 20;
 
     // Get radio mode HT20|HT40|HT80 etc.
     if (channel){
-        freq = util_chan_to_freq(channel);
+        if (band == band_6){
+            freq = util_6G_chan_to_freq(channel);
+        }else{
+            freq = util_chan_to_freq(channel);
+        }
         snprintf(ht_mode, sizeof(ht_mode), "HT%d", width);
-        // Find channel offset +1/-1 for wide modes (HT40|HT80|HT160)
-        sec_chan_offset = util_get_sec_chan_offset(channel, ht_mode);
-        if (sec_chan_offset != -EINVAL)
-            snprintf(sec_chan_offset_str, sizeof(sec_chan_offset_str), "sec_channel_offset=%d", sec_chan_offset);
-
 
         // Provide bandwith if specified
         if (channel_width_MHz > 20) {
@@ -8320,15 +8429,33 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
             snprintf(opt_chan_info_str, sizeof(opt_chan_info_str), "bandwidth=%d ht", width);
         }
 
-        int center_chan = 0;
+
         if (channel_width_MHz > 20) {
-            center_chan = util_unii_5g_centerfreq(ht_mode, channel);
-            if (center_chan > 0) {
-                int center_freq1 = util_chan_to_freq(center_chan);
-                if (center_freq1)
-                    snprintf(center_freq1_str, sizeof(center_freq1_str), "center_freq1=%d", center_freq1);
+            if (band == band_6){
+                center_chan = util_unii_6g_centerfreq(ht_mode, channel);
+                if(center_chan){
+                    center_freq1 = util_6G_chan_to_freq(center_chan);
+                }
+            }else{
+                center_chan = util_unii_5g_centerfreq(ht_mode, channel);
+                if(center_chan){
+                    center_freq1 = util_chan_to_freq(center_chan);
+                }
             }
+            
+            if (center_freq1)
+                snprintf(center_freq1_str, sizeof(center_freq1_str), "center_freq1=%d", center_freq1);
+            
         }
+
+        // Find channel offset +1/-1 for wide modes (HT40|HT80|HT160)
+        if (band == band_6){
+            sec_chan_offset = util_get_6g_sec_chan_offset(channel, ht_mode);
+        }else{
+            sec_chan_offset = util_get_sec_chan_offset(channel, ht_mode);
+        }
+        if (sec_chan_offset != -EINVAL)
+            snprintf(sec_chan_offset_str, sizeof(sec_chan_offset_str), "sec_channel_offset=%d", sec_chan_offset);
 
         // Only the first AP, other are hanging on the same radio
         int apIndex = radioIndex;
