@@ -2064,6 +2064,26 @@ INT wifi_setRadioHwMode(INT radioIndex, CHAR *hw_mode) {
     return RETURN_OK;
 }
 
+INT wifi_setNoscan(INT radioIndex, CHAR *noscan)
+{
+    char config_file[64] = {0};
+    struct params params = {0};
+    wifi_band band = band_invalid;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
+
+    band = wifi_index_to_band(radioIndex);
+
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radioIndex);
+    params.name = "noscan";
+    params.value = noscan;
+    wifi_hostapdWrite(config_file, &params, 1);
+    wifi_hostapdProcessUpdate(radioIndex, &params, 1);
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
+}
+
 //Get the list of supported channel. eg: "1-11"
 //The output_string is a max length 64 octet string that is allocated by the RDKB code.  Implementations must ensure that strings are not longer than this.
 INT wifi_getRadioPossibleChannels(INT radioIndex, CHAR *output_string)	//RDKB
