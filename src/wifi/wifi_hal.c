@@ -2058,6 +2058,7 @@ INT wifi_setRadioMode(INT radioIndex, CHAR *channelMode, UINT pureMode)
 INT wifi_setRadioHwMode(INT radioIndex, CHAR *hw_mode) {
 
     char config_file[64] = {0};
+    char buf[64] = {0};
     struct params params = {0};
     wifi_band band = band_invalid;
 
@@ -2077,6 +2078,23 @@ INT wifi_setRadioHwMode(INT radioIndex, CHAR *hw_mode) {
     params.value = hw_mode;
     wifi_hostapdWrite(config_file, &params, 1);
     wifi_hostapdProcessUpdate(radioIndex, &params, 1);
+
+    if (band == band_2_4) {
+        if (strncmp(hw_mode, "b", 1) == 0) {
+            wifi_setRadioMode(radioIndex, "20MHz", WIFI_MODE_B);
+            snprintf(buf, sizeof(buf), "%s", "1,2,5.5,11");
+            wifi_setRadioOperationalDataTransmitRates(radioIndex, buf);
+            snprintf(buf, sizeof(buf), "%s", "1,2");
+            wifi_setRadioBasicDataTransmitRates(radioIndex, buf);
+        } else {
+            // We don't set mode here, because we don't know whitch mode should be set (g, n or ax?).
+
+            snprintf(buf, sizeof(buf), "%s", "6,9,12,18,24,36,48,54");
+            wifi_setRadioOperationalDataTransmitRates(radioIndex, buf);
+            snprintf(buf, sizeof(buf), "%s", "6,12,24");
+            wifi_setRadioBasicDataTransmitRates(radioIndex, buf);
+        }
+    }
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
@@ -3172,6 +3190,7 @@ INT wifi_setRadioBasicDataTransmitRates(INT radioIndex, CHAR *TransmitRates)
     int flag=0, i=0;
     struct params params={'\0'};
     char config_file[MAX_BUF_SIZE] = {0};
+    wifi_band band = wifi_index_to_band(radioIndex);
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     if(NULL == TransmitRates)
@@ -3212,7 +3231,7 @@ INT wifi_setRadioBasicDataTransmitRates(INT radioIndex, CHAR *TransmitRates)
     for(i=0;i<strlen(temp_TransmitRates);i++)
     {
     //if (((temp_TransmitRates[i]>=48) && (temp_TransmitRates[i]<=57)) | (temp_TransmitRates[i]==32))
-        if (((temp_TransmitRates[i]>='0') && (temp_TransmitRates[i]<='9')) | (temp_TransmitRates[i]==' ') | (temp_TransmitRates[i]=='.') | (temp_TransmitRates[i]==','))
+        if (((temp_TransmitRates[i]>='0') && (temp_TransmitRates[i]<='9')) || (temp_TransmitRates[i]==' ') || (temp_TransmitRates[i]=='.') || (temp_TransmitRates[i]==','))
         {
             continue;
         }
@@ -3226,9 +3245,9 @@ INT wifi_setRadioBasicDataTransmitRates(INT radioIndex, CHAR *TransmitRates)
     while(temp!=NULL)
     {
         strcpy(temp1,temp);
-        if(radioIndex==1)
+        if(band == band_5)
         {
-            if((strcmp(temp,"1")==0) | (strcmp(temp,"2")==0) | (strcmp(temp,"5.5")==0))
+            if((strcmp(temp,"1")==0) || (strcmp(temp,"2")==0) || (strcmp(temp,"5.5")==0))
             {
                 return RETURN_ERR;
             }
@@ -8086,21 +8105,21 @@ INT wifi_setRadioOperationalDataTransmitRates(INT wlanIndex,CHAR *output)
 {
     int i=0;
     char *temp;
-    char temp1[128];
-    char temp_output[128];
-    char temp_TransmitRates[128];
+    char temp1[128] = {0};
+    char temp_output[128] = {0};
+    char temp_TransmitRates[128] = {0};
     struct params params={'\0'};
     char config_file[MAX_BUF_SIZE] = {0};
+    wifi_band band = wifi_index_to_band(wlanIndex);
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     if(NULL == output)
         return RETURN_ERR;
-
     strcpy(temp_TransmitRates,output);
 
     for(i=0;i<strlen(temp_TransmitRates);i++)
     {
-        if (((temp_TransmitRates[i]>='0') && (temp_TransmitRates[i]<='9')) | (temp_TransmitRates[i]==' ') | (temp_TransmitRates[i]=='.'))
+        if (((temp_TransmitRates[i]>='0') && (temp_TransmitRates[i]<='9')) || (temp_TransmitRates[i]==' ') || (temp_TransmitRates[i]=='.') || (temp_TransmitRates[i]==','))
         {
             continue;
         }
@@ -8110,13 +8129,13 @@ INT wifi_setRadioOperationalDataTransmitRates(INT wlanIndex,CHAR *output)
         }
     }
     strcpy(temp_output,"");
-    temp = strtok(temp_TransmitRates," ");
+    temp = strtok(temp_TransmitRates,",");
     while(temp!=NULL)
     {
         strcpy(temp1,temp);
-        if(wlanIndex==1)
+        if(band == band_5)
         {
-            if((strcmp(temp,"1")==0) | (strcmp(temp,"2")==0) | (strcmp(temp,"5.5")==0))
+            if((strcmp(temp,"1")==0) || (strcmp(temp,"2")==0) || (strcmp(temp,"5.5")==0))
             {
                 return RETURN_ERR;
             }
@@ -8131,14 +8150,13 @@ INT wifi_setRadioOperationalDataTransmitRates(INT wlanIndex,CHAR *output)
             strcat(temp1,"0");
         }
         strcat(temp_output,temp1);
-        temp = strtok(NULL," ");
+        temp = strtok(NULL,",");
         if(temp!=NULL)
         {
             strcat(temp_output," ");
         }
     }
     strcpy(output,temp_output);
-
 
     params.name = "supported_rates";
     params.value = output;
