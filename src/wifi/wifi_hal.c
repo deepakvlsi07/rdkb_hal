@@ -98,13 +98,8 @@ Licensed under the ISC license
 
 */
 
-#ifdef WIFI_HAL_VERSION_3
-#define MAX_RADIOS 3
-#else
-#define MAX_RADIOS 2
-#endif
 
-#define MAX_APS MAX_RADIOS*5
+#define MAX_APS MAX_NUM_RADIOS*5
 #ifndef AP_PREFIX
 #define AP_PREFIX	"wifi"
 #endif
@@ -713,7 +708,7 @@ INT wifi_getMaxRadioNumber(INT *max_radio_num)
 
     snprintf(cmd, sizeof(cmd), "iw list | grep Wiphy | wc -l");
     _syscmd(cmd, buf, sizeof(buf));
-    *max_radio_num = strtoul(buf, NULL, 10) > MAX_RADIOS ? MAX_RADIOS:strtoul(buf, NULL, 10);
+    *max_radio_num = strtoul(buf, NULL, 10) > MAX_NUM_RADIOS ? MAX_NUM_RADIOS:strtoul(buf, NULL, 10);
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
@@ -1105,7 +1100,7 @@ INT wifi_createInitialConfigFiles()
 INT wifi_getRadioCountryCode(INT radioIndex, CHAR *output_string)
 {
     char buf[MAX_BUF_SIZE] = {0}, cmd[MAX_CMD_SIZE] = {0}, *value;
-    if(!output_string || (radioIndex >= MAX_RADIOS))
+    if(!output_string || (radioIndex >= MAX_NUM_RADIOS))
         return RETURN_ERR;
 
     sprintf(cmd,"hostapd_cli -i %s%d status driver | grep country | cut -d '=' -f2", AP_PREFIX, radioIndex);
@@ -1266,7 +1261,7 @@ INT wifi_getRadioEnable(INT radioIndex, BOOL *output_bool)      //RDKB
         return RETURN_ERR;
 
     *output_bool = FALSE;
-    if (radioIndex >= MAX_RADIOS)// Target has two wifi radios
+    if (radioIndex >= MAX_NUM_RADIOS)// Target has two wifi radios
         return RETURN_ERR;
 
     phyId = radio_index_to_phy(radioIndex);
@@ -1367,7 +1362,7 @@ INT wifi_getRadioStatus(INT radioIndex, BOOL *output_bool)	//RDKB
 INT wifi_getRadioIfName(INT radioIndex, CHAR *output_string) //Tr181
 {
     int phyId = 0;
-    if (NULL == output_string || radioIndex>=MAX_RADIOS || radioIndex<0)
+    if (NULL == output_string || radioIndex>=MAX_NUM_RADIOS || radioIndex<0)
         return RETURN_ERR;
     phyId = radio_index_to_phy(radioIndex);
     snprintf(output_string, 64, "%s%d", RADIO_PREFIX, phyId);
@@ -3532,8 +3527,6 @@ INT wifi_getSSIDEnable(INT ssidIndex, BOOL *output_bool) //Tr181
     if (NULL == output_bool) 
         return RETURN_ERR;
 
-    //For this target, mapping SSID Index 13 & 14 to 2 & 3 respectively.
-    if(ssidIndex==13 || ssidIndex==14) ssidIndex -= 11;
     return wifi_getApEnable(ssidIndex, output_bool);
 }
 
@@ -3541,8 +3534,6 @@ INT wifi_getSSIDEnable(INT ssidIndex, BOOL *output_bool) //Tr181
 //Set SSID enable configuration parameters
 INT wifi_setSSIDEnable(INT ssidIndex, BOOL enable) //Tr181
 {
-    //For this target, mapping SSID Index 13 & 14 to 2 & 3 respectively.
-    if(ssidIndex==13 || ssidIndex==14) ssidIndex -= 11;
     return wifi_setApEnable(ssidIndex, enable);
 }
 
@@ -3557,9 +3548,7 @@ INT wifi_getSSIDStatus(INT ssidIndex, CHAR *output_string) //Tr181
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     if (NULL == output_string)
         return RETURN_ERR;
-    //For this target, mapping SSID Index 13 & 14 to 2 & 3 respectively.
-    if(ssidIndex==13 || ssidIndex==14) ssidIndex -= 11;
-
+ 
     wifi_getApEnable(ssidIndex,&output_bool);
     snprintf(output_string, 32, output_bool==1?"Enabled":"Disabled");
 
@@ -4811,15 +4800,16 @@ INT wifi_setRadioIGMPSnoopingEnable(INT radioIndex, BOOL enable)
 {
     char cmd[128]={0};
     char buf[4]={0};
-
+    int max_num_radios =0;
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
     // bridge
     snprintf(cmd, sizeof(cmd),  "echo %d > /sys/devices/virtual/net/%s/bridge/multicast_snooping", enable, BRIDGE_NAME);
     _syscmd(cmd, buf, sizeof(buf));
 
+    wifi_getMaxRadioNumber(&max_num_radios);
     // mac80211
-    for (int i = 0; i < MAX_RADIOS; i++) {
+    for (int i = 0; i < max_num_radios; i++) {
         snprintf(cmd, sizeof(cmd),  "echo %d > /sys/devices/virtual/net/%s/brif/%s%d/multicast_to_unicast", enable, BRIDGE_NAME, AP_PREFIX, i);
         _syscmd(cmd, buf, sizeof(buf));
     }
@@ -9222,11 +9212,13 @@ INT wifi_setApScanFilter(INT apIndex, INT mode, CHAR *essid)
     char file_name[128] = {0};
     char buf[128] = {0};
     FILE *f = NULL;
+    int max_num_radios = 0;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
+    wifi_getMaxRadioNumber(&max_num_radios);
     if (essid == NULL || strlen(essid) == 0 || apIndex == -1) {
-        for (int index = 0; index < MAX_RADIOS; index++) {
+        for (int index = 0; index < max_num_radios; index++) {
             snprintf(file_name, sizeof(file_name), "%s%d.txt", ESSID_FILE, index);
             f = fopen(file_name, "w");
             if (f == NULL)
@@ -12191,13 +12183,16 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
             return RETURN_ERR;
         }
 
-        if (vap_info->u.bss_info.mac_filter_enable == false)
+        if (vap_info->u.bss_info.mac_filter_enable == false){
             acl_mode = 0;
-        else {
-            if (vap_info->u.bss_info.mac_filter_mode == wifi_mac_filter_mode_black_list)
+        }else {
+            if (vap_info->u.bss_info.mac_filter_mode == wifi_mac_filter_mode_black_list){
                 acl_mode = 2;
-            else
+                snprintf(cmd, sizeof(cmd), "touch %s%d", DENY_PREFIX, vap_info->vap_index);
+                _syscmd(cmd, buf, sizeof(buf));
+            }else{
                 acl_mode = 1;
+            }
         }
 
         ret = wifi_setApWmmEnable(vap_info->vap_index, vap_info->u.bss_info.wmm_enabled);
@@ -12415,7 +12410,7 @@ INT wifi_getHalCapability(wifi_hal_capability_t *cap)
     /* number of radios platform property */
     snprintf(cmd, sizeof(cmd), "ls -d /sys/class/net/wlan* | wc -l");
     _syscmd(cmd, output, sizeof(output));
-    cap->wifi_prop.numRadios = atoi(output) > MAX_RADIOS ? MAX_RADIOS: atoi(output) ;
+    cap->wifi_prop.numRadios = atoi(output) > MAX_NUM_RADIOS ? MAX_NUM_RADIOS: atoi(output) ;
 
     for(radioIndex=0; radioIndex < cap->wifi_prop.numRadios; radioIndex++)
     {
@@ -12427,7 +12422,7 @@ INT wifi_getHalCapability(wifi_hal_capability_t *cap)
 
         for (j = 0; j < cap->wifi_prop.radiocap[radioIndex].maxNumberVAPs; j++)
         {
-            if (iter >= MAX_RADIOS * MAX_NUM_VAP_PER_RADIO)
+            if (iter >= MAX_NUM_RADIOS * MAX_NUM_VAP_PER_RADIO)
             {
                  printf("%s: to many vaps for index map (%d)\n", __func__, iter);
                  return RETURN_ERR;
@@ -12861,7 +12856,7 @@ INT wifi_getProxyArp(INT apIndex, BOOL *enable)
 
 INT wifi_getRadioStatsEnable(INT radioIndex, BOOL *output_enable)
 {
-    if (NULL == output_enable || radioIndex >=MAX_RADIOS)
+    if (NULL == output_enable || radioIndex >=MAX_NUM_RADIOS)
         return RETURN_ERR;
     *output_enable=TRUE;
     return RETURN_OK;
