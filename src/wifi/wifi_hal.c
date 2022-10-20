@@ -1142,7 +1142,6 @@ INT wifi_setRadioCountryCode(INT radioIndex, CHAR *CountryCode)
         WIFI_ENTRY_EXIT_DEBUG("Inside %s: wifi_hostapdProcessUpdate() return %d\n"
                 ,__func__, ret);
     }
-    wifi_reloadAp(radioIndex);
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
     return RETURN_OK;
