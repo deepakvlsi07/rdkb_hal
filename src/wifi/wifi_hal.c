@@ -1734,7 +1734,7 @@ INT wifi_getRadioSupportedStandards(INT radioIndex, CHAR *output_string) //Tr181
     // ht capabilities
     snprintf(cmd, sizeof(cmd),  "iw phy%d info | grep '[^PHY|MAC|VHT].Capabilities' | head -n 1 | cut -d ':' -f2 | sed 's/^.//' | tr -d '\\n'", phyId);
     _syscmd(cmd, buf, sizeof(buf));
-    if (strncmp(buf, "0x00", 4) != 0) {
+    if (strlen(buf) >= 4 && strncmp(buf, "0x00", 4) != 0) {
         strcat(temp_output, "n,");
     }
 
@@ -1742,7 +1742,7 @@ INT wifi_getRadioSupportedStandards(INT radioIndex, CHAR *output_string) //Tr181
     if (band == band_5) {
         snprintf(cmd, sizeof(cmd),  "iw phy%d info | grep 'VHT Capabilities' | cut -d '(' -f2 | cut -c1-10 | tr -d '\\n'", phyId);
         _syscmd(cmd, buf, sizeof(buf));
-        if (strncmp(buf, "0x00000000", 10) != 0) {
+        if (strlen(buf) >= 10 && strncmp(buf, "0x00000000", 10) != 0) {
             strcat(temp_output, "ac,");
         }
     }
@@ -1750,7 +1750,7 @@ INT wifi_getRadioSupportedStandards(INT radioIndex, CHAR *output_string) //Tr181
     // he capabilities
     snprintf(cmd, sizeof(cmd),  "iw phy%d info | grep 'HE MAC Capabilities' | head -n 2 | tail -n 1 | cut -d '(' -f2 | cut -c1-6 | tr -d '\\n'", phyId);
     _syscmd(cmd, buf, sizeof(buf));
-    if (strncmp (buf, "0x0000", 6) != 0) {
+    if (strlen(buf) >= 6 && strncmp (buf, "0x0000", 6) != 0) {
         strcat(temp_output, "ax,");
     }
 
