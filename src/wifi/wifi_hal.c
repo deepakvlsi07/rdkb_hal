@@ -1234,7 +1234,7 @@ INT wifi_getRadioNumberOfEntries(ULONG *output) //Tr181
 {
     if (NULL == output)
         return RETURN_ERR;
-    *output = 2;
+    *output = MAX_NUM_RADIOS;
 
     return RETURN_OK;
 }
@@ -4550,17 +4550,17 @@ INT wifi_setRadioSTBCEnable(INT radioIndex, BOOL STBC_Enable)
             // Append the STBC flags in capab config
             memset(cmd, 0, sizeof(cmd));
             if (i == 0)
-                snprintf(cmd, sizeof(cmd), "sed -E -i '/^ht_capab=.*/s/$/[TX-STBC][RX-STBC1]/' %s", config_file);
+                snprintf(cmd, sizeof(cmd), "sed -r -i '/^ht_capab=.*/s/$/[TX-STBC][RX-STBC1]/' %s", config_file);
             else
-                snprintf(cmd, sizeof(cmd), "sed -E -i '/^vht_capab=.*/s/$/[TX-STBC-2BY1][RX-STBC-1]/' %s", config_file);
+                snprintf(cmd, sizeof(cmd), "sed -r -i '/^vht_capab=.*/s/$/[TX-STBC-2BY1][RX-STBC-1]/' %s", config_file);
             _syscmd(cmd, buf, sizeof(buf));
         } else if (STBC_Enable == FALSE) {
             // Remove the STBC flags and remain other flags in capab
             memset(cmd, 0, sizeof(cmd));
-            snprintf(cmd, sizeof(cmd), "sed -E -i 's/\\[TX-STBC(-2BY1)?*\\]//' %s", config_file);
+            snprintf(cmd, sizeof(cmd), "sed -r -i 's/\\[TX-STBC(-2BY1)?*\\]//' %s", config_file);
             _syscmd(cmd, buf, sizeof(buf));
             memset(cmd, 0, sizeof(cmd));
-            snprintf(cmd, sizeof(cmd), "sed -E -i 's/\\[RX-STBC-?[1-3]*\\]//' %s", config_file);
+            snprintf(cmd, sizeof(cmd), "sed -r -i 's/\\[RX-STBC-?[1-3]*\\]//' %s", config_file);
             _syscmd(cmd, buf, sizeof(buf));
         }
     }
@@ -10884,18 +10884,18 @@ INT wifi_setGuardInterval(INT radio_index, wifi_guard_interval_t guard_interval)
 
     // Hostapd are not supported HE mode GI 1600, 3200 ns.
     if (guard_interval == wifi_guard_interval_800) {    // remove all capab about short GI
-        snprintf(cmd, sizeof(cmd), "sed -E -i 's/\\[SHORT-GI-(.){1,2}0\\]//g' %s", config_file);
+        snprintf(cmd, sizeof(cmd), "sed -r -i 's/\\[SHORT-GI-(.){1,2}0\\]//g' %s", config_file);
         _syscmd(cmd, buf, sizeof(buf));
     } else if (guard_interval == wifi_guard_interval_400 || guard_interval == wifi_guard_interval_auto){
         wifi_hostapdRead(config_file, "ht_capab", buf, sizeof(buf));
         if (strstr(buf, "[SHORT-GI-") == NULL) {
-            snprintf(cmd, sizeof(cmd), "sed -E -i '/^ht_capab=.*/s/$/[SHORT-GI-20][SHORT-GI-40]/' %s", config_file);
+            snprintf(cmd, sizeof(cmd), "sed -r -i '/^ht_capab=.*/s/$/[SHORT-GI-20][SHORT-GI-40]/' %s", config_file);
             _syscmd(cmd, buf, sizeof(buf));
         }
         if (band == band_5) {
             wifi_hostapdRead(config_file, "vht_capab", buf, sizeof(buf));
             if (strstr(buf, "[SHORT-GI-") == NULL) {
-                snprintf(cmd, sizeof(cmd), "sed -E -i '/^vht_capab=.*/s/$/[SHORT-GI-80][SHORT-GI-160]/' %s", config_file);
+                snprintf(cmd, sizeof(cmd), "sed -r -i '/^vht_capab=.*/s/$/[SHORT-GI-80][SHORT-GI-160]/' %s", config_file);
                 _syscmd(cmd, buf, sizeof(buf));
             }
         }
