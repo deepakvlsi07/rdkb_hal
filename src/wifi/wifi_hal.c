@@ -480,11 +480,11 @@ wifi_band wifi_index_to_band(int apIndex)
         snprintf(cmd, sizeof(cmd), "hostapd_cli -i %s%d status | grep 'freq=' | cut -d '=' -f2 | tr -d '\n'", AP_PREFIX, apIndex);
         _syscmd(cmd, buf, sizeof(buf));
         freq = strtol(buf, NULL, 10);
-        if (freq > 2401 && freq < 2495)
+        if (freq >= 2401 && freq <= 2495)
             band = band_2_4;
-        else if (freq > 5160 && freq < 5915)
+        else if (freq >= 5150 && freq <= 5895)
             band = band_5;
-        else if (freq > 5955 && freq < 7125)
+        else if (freq >= 5945 && freq <= 7125)
             band = band_6;
 
         if(band != band_invalid)
