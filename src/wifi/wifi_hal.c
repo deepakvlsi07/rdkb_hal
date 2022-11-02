@@ -2486,9 +2486,14 @@ INT wifi_setApDTIMInterval(INT apIndex, INT dtimInterval)
 //Check if the driver support the Dfs
 INT wifi_getRadioDfsSupport(INT radioIndex, BOOL *output_bool) //Tr181
 {
+    wifi_band band = band_invalid;
     if (NULL == output_bool) 
         return RETURN_ERR;
-    *output_bool=TRUE;
+    *output_bool=FALSE;
+
+    band = wifi_index_to_band(radioIndex);
+    if (band == band_5)
+        *output_bool = TRUE;
     return RETURN_OK;
 }
 
@@ -2545,17 +2550,12 @@ INT wifi_getRadioDfsEnable(INT radioIndex, BOOL *output_bool)	//Tr181
 {
     char buf[16] = {0};
     FILE *f = NULL;
-    wifi_band band;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
     *output_bool = TRUE;        // default
     if (NULL == output_bool) 
         return RETURN_ERR;
-
-    band = wifi_index_to_band(radioIndex);
-    if (band != band_5)
-        return RETURN_OK;
 
     f = fopen(DFS_ENABLE_FILE, "r");
     if (f != NULL) {
@@ -2574,13 +2574,8 @@ INT wifi_setRadioDfsEnable(INT radioIndex, BOOL enable)	//Tr181
     char config_file[128] = {0};
     FILE *f = NULL;
     struct params params={0};
-    wifi_band band;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-
-    band = wifi_index_to_band(radioIndex);
-    if (band != band_5)
-        return RETURN_OK;
 
     f = fopen(DFS_ENABLE_FILE, "w");
     if (f == NULL)
@@ -2833,7 +2828,7 @@ INT wifi_getRadioGuardInterval(INT radioIndex, CHAR *output_string)	//Tr181
     else if (GI == wifi_guard_interval_3200)
         strcpy(output_string, "3200nsec");
     else
-        strcpy(output_string, "auto");
+        strcpy(output_string, "Auto");
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
@@ -2920,17 +2915,18 @@ INT wifi_setRadioMCS(INT radioIndex, INT MCS) //Tr181
 
     snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
 
-    if (MCS > 11 || MCS < 0) {
+    // -1 means auto
+    if (MCS > 15 || MCS < -1) {
         fprintf(stderr, "%s: invalid MCS %d\n", __func__, MCS);
         return RETURN_ERR;
     }
 
-    if (MCS <= 7)
-        strcpy(set_value, "0");
-    else if (MCS <= 9)
+    if (MCS > 9 || MCS == -1)
+        strcpy(set_value, "2");
+    else if (MCS > 7)
         strcpy(set_value, "1");
     else
-        strcpy(set_value, "2");
+        strcpy(set_value, "0");
 
     set_config.name = "he_basic_mcs_nss_set";
     set_config.value = set_value;
@@ -5063,8 +5059,12 @@ INT wifi_getApWpaEncryptionMode(INT apIndex, CHAR *output_string)
     else
         return RETURN_ERR;
     memset(output_string,'\0',32);
-    sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,apIndex);
     wifi_hostapdRead(config_file,param_name,output_string,32);
+    if (strlen(output_string) == 0) {       // rsn_pairwise is optional. When it is empty use wpa_pairwise instead.
+        param_name = "wpa_pairwise";
+        memset(output_string, '\0', 32);
+        wifi_hostapdRead(config_file, param_name, output_string, 32);
+    }
     wifi_dbg_printf("\n%s output_string=%s",__func__,output_string);
 
     if(strcmp(output_string,"TKIP") == 0)
