@@ -715,7 +715,7 @@ INT wifi_getMaxRadioNumber(INT *max_radio_num)
     return RETURN_OK;
 }
 
-// Input must be "1Mbps"; "5.5Mbps"; "6Mbps"; "2Mbps"; "11Mbps"; "12Mbps"; "24Mbps"
+// Input could be "1Mbps"; "5.5Mbps"; "6Mbps"; "2Mbps"; "11Mbps"; "12Mbps"; "24Mbps"
 INT wifi_setApBeaconRate(INT radioIndex,CHAR *beaconRate)
 {
     struct params params={'\0'};
@@ -723,11 +723,14 @@ INT wifi_setApBeaconRate(INT radioIndex,CHAR *beaconRate)
     char buf[MAX_BUF_SIZE] = {'\0'};
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    if (strlen (beaconRate) < 5)
-        return RETURN_ERR;
     // Copy the numeric value
-    strncpy(buf, beaconRate, strlen(beaconRate) - 4);
-    buf[strlen(beaconRate) - 4] = '\0';
+    if (strlen (beaconRate) >= 5) {
+        strncpy(buf, beaconRate, strlen(beaconRate) - 4);
+        buf[strlen(beaconRate) - 4] = '\0';
+    } else if (strlen(beaconRate) > 0)
+        strcpy(buf, beaconRate);
+    else
+        return RETURN_ERR;
 
     params.name = "beacon_rate";
     // hostapd config unit is 100 kbps. To convert Mbps to 100kbps, the value need to multiply 10.
