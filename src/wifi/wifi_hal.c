@@ -5991,7 +5991,17 @@ INT wifi_getApWmmUapsdEnable(INT apIndex, BOOL *output)
     //get the running status from driver
     if(!output)
         return RETURN_ERR;
-    *output=TRUE;
+
+    char config_file[128] = {0};
+    char buf[16] = {0};
+
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, apIndex);
+    wifi_hostapdRead(config_file, "uapsd_advertisement_enabled", buf, sizeof(buf));
+    if (strlen(buf) == 0 || strncmp("1", buf, 1) == 0)
+        *output = TRUE;
+    else
+        *output = FALSE;
+
     return RETURN_OK;
 }
 
