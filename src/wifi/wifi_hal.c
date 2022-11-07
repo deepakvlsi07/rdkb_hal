@@ -467,24 +467,28 @@ INT radio_index_to_phy(int radioIndex)
     
     return phyIndex;      
 }
-wifi_band wifi_index_to_band(int apIndex)
+
+wifi_band wifi_index_to_band(int radioIndex)
 {
     char cmd[128] = {0};
     char buf[64] = {0};
-    int freq = 0;
+    int nl80211_band = 0;
     int i = 0;
+    int phyIndex = 0;
     wifi_band band = band_invalid;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    phyIndex = radio_index_to_phy(radioIndex);
     while(i < 10){
-        snprintf(cmd, sizeof(cmd), "hostapd_cli -i %s%d status | grep 'freq=' | cut -d '=' -f2 | tr -d '\n'", AP_PREFIX, apIndex);
+        snprintf(cmd, sizeof(cmd), "iw phy%d info | grep 'Band .:' | tail -n 1 | tr -d ':\\n' | awk '{print $2}'", phyIndex);
         _syscmd(cmd, buf, sizeof(buf));
-        freq = strtol(buf, NULL, 10);
-        if (freq >= 2401 && freq <= 2495)
+        nl80211_band = strtol(buf, NULL, 10);
+        if (nl80211_band == 1)
             band = band_2_4;
-        else if (freq >= 5150 && freq <= 5895)
+        else if (nl80211_band == 2)
             band = band_5;
-        else if (freq >= 5945 && freq <= 7125)
+        else if (nl80211_band == 4)     // band == 3 is 60GHz
             band = band_6;
 
         if(band != band_invalid)
