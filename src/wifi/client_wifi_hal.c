@@ -29,9 +29,7 @@
 #include <wpa_ctrl.h>
 #include <errno.h>
 #include <net/if.h>
-#define SOCK_PREFIX "/var/run/wpa_supplicant/"
-
-#ifdef _TURRIS_EXTENDER_
+#define CTRL_INTERFACE "/var/run/wpa_supplicant"
 
 /* Helper wpa_supplicant events */
 #ifndef container_of
@@ -322,21 +320,30 @@ static int ctrl_enable(struct ctrl *ctrl)
 /* client API */
 INT wifi_getSTANumberOfEntries(ULONG *output) //Tr181
 {
+    char cmd[128] = {0};
+    char buf[16] = {0};
+
     if (NULL == output)
         return RETURN_ERR;
 
-    *output = 2;
+    snprintf(cmd, sizeof(cmd), "wpa_cli -g%s-global status | grep ^ifname | wc -l", CTRL_INTERFACE);
+    _syscmd(cmd, buf, sizeof(buf));
+    // *output = 2;
+    *output = strtoll(buf, NULL, 10);
     return RETURN_OK;
 }
 
 INT wifi_getSTAName(INT apIndex, CHAR *output_string)
 {
-    if (NULL == output_string)
+    int radioIndex = 0;
+    int staIndex = 0;
+
+    if (NULL == output_string || apIndex < 0)
         return RETURN_ERR;
-    if(apIndex == 0)
-        snprintf(output_string, 16, "bhaul-sta-24");
-    else
-        snprintf(output_string, 16, "bhaul-sta-50");
+
+    wifi_getSTARadioIndex(apIndex, &radioIndex);
+    staIndex = apIndex % radioIndex;
+    snprintf(output_string, 33, "radio%d-sta%d", radioIndex, staIndex);
 
     return RETURN_OK;
 }
@@ -345,7 +352,7 @@ INT wifi_getSTARadioIndex(INT ssidIndex, INT *radioIndex)
 {
     if (NULL == radioIndex)
         return RETURN_ERR;
-    *radioIndex = ssidIndex%2;
+    *radioIndex = ssidIndex%MAX_NUM_RADIOS;
     return RETURN_OK;
 }
 
@@ -387,6 +394,23 @@ INT wifi_getSTABSSID(INT ssidIndex, CHAR *output_string)
 
     sprintf(cmd, "wpa_cli -i%s status |grep bssid | cut -f 2 -d =", ssid_ifname);
     _syscmd(cmd, output_string, 64);
+
+    return RETURN_OK;
+}
+
+INT wifi_setSTABSSID(INT ssidIndex, CHAR *input_string)
+{
+    char cmd[128] = {0};
+    int ret = 0;
+    char ssid_ifname[128];
+    char buf[128] = {0};
+
+    ret = wifi_getSTAName(ssidIndex, ssid_ifname);
+    if (ret != RETURN_OK)
+        return RETURN_ERR;
+
+    snprintf(cmd, sizeof(cmd), "ip link set dev %s address %s", ssid_ifname, input_string);
+    _syscmd(cmd, buf, sizeof(buf));
 
     return RETURN_OK;
 }
@@ -452,7 +476,7 @@ static int init_client_wpa()
         {   
             return RETURN_ERR;
         }
-        sprintf(wpa_ctrl[s].sockpath, "%s%s", SOCK_PREFIX, ssid_ifname);
+        sprintf(wpa_ctrl[s].sockpath, "%s/%s", CTRL_INTERFACE, ssid_ifname);
         wpa_ctrl[s].ssid_index = s;
         printf("Opening ctrl for %s\n", ssid_ifname);
         if (ctrl_enable(&wpa_ctrl[s]))
@@ -489,24 +513,20 @@ INT wifi_getSTANetworks(INT apIndex, wifi_sta_network_t **out_staNetworks_array,
     char *kv;
     wifi_sta_network_t * staNetwork;
 
-    
-   if(out_array_size <= 0 )
-            return RETURN_ERR;
+    if(out_array_size <= 0 )
+        return RETURN_ERR;
 
     char ssid_ifname[128];
 
     ret = wifi_getSTAName(apIndex, ssid_ifname);
-    if (ret != RETURN_OK)
-    {   
+    if (ret != RETURN_OK)   
         return RETURN_ERR;
-    }
     
-    snprintf(fname, sizeof(fname), "/tmp/%s.conf", ssid_ifname);
+    snprintf(fname, sizeof(fname), "/nvram/%s.conf", ssid_ifname);
     fd = fopen(fname, "r");
-    if (!fd) {
+    if (!fd)
         return RETURN_ERR;
-    }
-     
+
     staNetwork= *out_staNetworks_array;
     while ((read = getline(&line, &len, fd)) != -1) {
         if(!strncmp(line, "network={",strlen("network={"))) {
@@ -566,75 +586,63 @@ close:
 INT wifi_setSTANetworks(INT apIndex, wifi_sta_network_t **staNetworks_array, INT array_size, BOOL scan_cur_freq)
 {
     FILE *fd = NULL;
-    char fname[100];
+    char fname[100] = {0};
     char cmd[128] = {0};
     char out[64] = {0};
     int ret = 0;
-    char freq_list[] = "5180 5200 5220 5240 5745 5765 5785 5805";
+    char zero[8] = {0};
+    bool enable_current = FALSE;
 
-    wifi_sta_network_t * sta = NULL;
+    wifi_sta_network_t *sta = NULL;
     if(array_size < 0)
             return RETURN_ERR;
     char ssid_ifname[128];
 
     ret = wifi_getSTAName(apIndex, ssid_ifname);
     if (ret != RETURN_OK)
-    {
         return RETURN_ERR;
+    snprintf(fname, sizeof(fname), "/nvram/%s.conf", ssid_ifname);
+    if (access(fname, F_OK) != 0) {
+        sprintf(cmd, "touch %s", fname);
+        _syscmd(cmd, out, sizeof(out));
     }
-
-    sprintf(cmd, "cp /tmp/%s.conf /tmp/%s.old", ssid_ifname, ssid_ifname);
+    sprintf(cmd, "cp %s /nvram/%s.old", fname, ssid_ifname);
     _syscmd(cmd, out, 64);
 
-    snprintf(fname, sizeof(fname), "/tmp/%s.conf", ssid_ifname);
     fd = fopen(fname, "w");
     if (!fd) {
             return RETURN_ERR;
     }
-    fprintf(fd, "ctrl_interface=%s\n", SOCK_PREFIX);
+    fprintf(fd, "ctrl_interface=%s\n", CTRL_INTERFACE);
     fprintf(fd, "scan_cur_freq=%d\n", scan_cur_freq ? 1 : 0);
 
-    sta = (wifi_sta_network_t *) *staNetworks_array;
+    sta = *staNetworks_array;
     for(int i=0; i<array_size; ++i, sta++) {
         fprintf(fd, "network={\n");
         fprintf(fd, "\tscan_ssid=1\n");
         fprintf(fd, "\tbgscan=\"\"\n");
         fprintf(fd, "\tssid=\"%s\"\n", sta->ssid);
-        fprintf(fd, "\tpsk=\"%s\"\n", sta->psk);
+        if (sta->psk_len > 7 && sta->psk_len < 128)
+            fprintf(fd, "\tpsk=\"%s\"\n", sta->psk);
         fprintf(fd, "\tkey_mgmt=%s\n", sta->key_mgmt);
-        fprintf(fd, "\tpairwise=%s\n", sta->pairwise);
-        fprintf(fd, "\tproto=%s\n", sta->proto);
-        fprintf(fd, "\t%s", strlen(sta->bssid) > 0 ? "" : "#");
-        fprintf(fd, "bssid=%02x:%02x:%02x:%02x:%02x:%02x\n", sta->bssid[0],sta->bssid[1],sta->bssid[2],sta->bssid[3],sta->bssid[4],sta->bssid[5]);
-        if((apIndex%2) && (strlen(sta->bssid) == 0))
-        {
-            //scan non dfs channel on 5G
-            fprintf(fd, "\tscan_freq=%s\n", freq_list);
-            fprintf(fd, "\tfreq_list=%s\n", freq_list);
+        if (!strncmp(sta->key_mgmt, "SAE", 3)) {                    // wpa3-personal must use with ieee80211w
+            fprintf(fd, "\tieee80211w=2\n");
         }
+        fprintf(fd, "\tpairwise=%s\n", sta->pairwise);
+        if (memcmp(sta->bssid, zero, sizeof(sta->bssid)) != 0)      // Not 00:00:00:00:00:00 means need to specify ap mac address.
+            fprintf(fd, "bssid=%02x:%02x:%02x:%02x:%02x:%02x\n", sta->bssid[0],sta->bssid[1],sta->bssid[2],sta->bssid[3],sta->bssid[4],sta->bssid[5]);
         fprintf(fd, "}\n");
     }
     fclose(fd);
 
-    sprintf(cmd, "diff -q /tmp/%s.conf /tmp/%s.old", ssid_ifname, ssid_ifname);
-    if(_syscmd(cmd, out, 64))
+    wifi_getSTAEnabled(apIndex, &enable_current);
+    sprintf(cmd, "diff -q /nvram/%s.conf /nvram/%s.old", ssid_ifname, ssid_ifname);
+    if (enable_current && _syscmd(cmd, out, 64))
     {
         sprintf(cmd, "wpa_cli -B -i%s reconfigure", ssid_ifname);
         _syscmd(cmd, out, 64);
-        if(apIndex%2)
-        {
-            wifi_setApEnable(1,false);
-            wifi_setApEnable(3,false);
-            wifi_setApEnable(5,false);
-        }
-        else
-        {
-            wifi_setApEnable(0,false);
-            wifi_setApEnable(2,false);
-            wifi_setApEnable(4,false);
-        }
     }
-    sprintf(cmd, "rm /tmp/%s.old", ssid_ifname);
+    sprintf(cmd, "rm /nvram/%s.old", ssid_ifname);
     _syscmd(cmd, out, 64);
 
     return RETURN_OK;
@@ -664,9 +672,10 @@ INT wifi_getSTAEnabled(INT ssidIndex, BOOL *enabled)
 INT wifi_setSTAEnabled(INT ssidIndex, BOOL enable)
 {
     char ssid_ifname[128];
-    char cmd[128] = {0};
+    char cmd[256] = {0};
     char out[64] = {0};
     int ret = 0;
+    int radioIndex = 0;
 
     BOOL en;
     wifi_getSTAEnabled(ssidIndex,&en);
@@ -674,23 +683,43 @@ INT wifi_setSTAEnabled(INT ssidIndex, BOOL enable)
         return RETURN_OK;
 
     ret = wifi_getSTAName(ssidIndex, ssid_ifname);
-    if (ret != RETURN_OK)
-    {   
+    if (ret != RETURN_OK)   
         return RETURN_ERR;
-    }
 
-    if(enable)
-    {
-        sprintf(cmd, "wpa_cli -g/var/run/wpa_supplicant-global interface_add %s /tmp/%s.conf nl80211 /var/run/wpa_supplicant", ssid_ifname, ssid_ifname);
-        ret = _syscmd(cmd, out, 64); 
-
-    }
-    else
-    {
-         sprintf(cmd, "wpa_cli -g/var/run/wpa_supplicant-global -i global interface_remove  %s", ssid_ifname);
-         ret = _syscmd(cmd, out, 64);
+    if (enable) {
+        snprintf(cmd, sizeof(cmd), "wpa_cli -g/var/run/wpa_supplicant-global interface_add %s /nvram/%s.conf nl80211 /var/run/wpa_supplicant", ssid_ifname, ssid_ifname);
+        ret = _syscmd(cmd, out, 64);
+    } else {
+        snprintf(cmd, sizeof(cmd), "wpa_cli -g/var/run/wpa_supplicant-global -i global interface_remove  %s", ssid_ifname);
+        ret = _syscmd(cmd, out, 64);
     }
 
     return ret == 0 ? RETURN_OK : RETURN_ERR;
 }
-#endif
+
+INT wifi_createSTAInterface(INT ssidIndex, char *bssid)
+{
+    char cmd[128] = {0};
+    char buf[128] = {0};
+    char ssid_ifname[128] = {0};
+    int radioIndex = 0;
+    int phyIndex = 0;
+    int ret = 0;
+
+    ret = wifi_getSTAName(ssidIndex, ssid_ifname);
+    if (ret != RETURN_OK)
+        return RETURN_ERR;
+
+    wifi_getSTARadioIndex(ssidIndex, &radioIndex);
+    phyIndex = radio_index_to_phy(radioIndex);
+    if (phyIndex == -1) {
+        fprintf(stderr, "%s: Invalid radio index %d.\n", radioIndex);
+        return RETURN_ERR;
+    }
+    snprintf(cmd, sizeof(cmd), "iw phy phy%d interface add %s type managed 4addr on", phyIndex, ssid_ifname);
+    _syscmd(cmd, buf, sizeof(buf));
+    snprintf(cmd, sizeof(cmd), "ip link set dev %s address %s && ip link set dev %s up", ssid_ifname, bssid, ssid_ifname);
+    _syscmd(cmd, buf, sizeof(buf));
+
+    return RETURN_OK;
+}
