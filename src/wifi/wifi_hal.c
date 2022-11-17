@@ -2218,33 +2218,18 @@ INT wifi_getRadioChannelsInUse(INT radioIndex, CHAR *output_string)	//RDKB
 //Get the running channel number 
 INT wifi_getRadioChannel(INT radioIndex,ULONG *output_ulong)	//RDKB
 {
-#ifdef MTK_IMPL
-    if(!wifi_getApChannel(radioIndex, output_ulong))
-        return RETURN_OK;
-    else
-        return RETURN_ERR;
-#else
-    char cmd[1024] = {0}, buf[5] = {0};
+    char channel_str[16] = {0};
+    char config_file[128] = {0};
 
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    if (NULL == output_ulong)
+    if (output_ulong == NULL)
         return RETURN_ERR;
 
-    snprintf(cmd, sizeof(cmd),
-        "ls -1 /sys/class/net/%s%d/device/ieee80211/phy*/device/net/ | "
-        "xargs -I {} iw dev {} info | grep channel | head -n1 | "
-        "cut -d ' ' -f2", RADIO_PREFIX, radioIndex);
-    _syscmd(cmd, buf, sizeof(buf));
+    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
+    wifi_hostapdRead(config_file, "channel", channel_str, sizeof(channel_str));
 
-    *output_ulong = (strlen(buf) >= 1)? atol(buf): 0;
-    if (*output_ulong <= 0) {
-        *output_ulong = 0;
-        return RETURN_ERR;
-    }
+    *output_ulong = strtoul(channel_str, NULL, 10);
 
-    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
-#endif
 }
 
 
@@ -3126,6 +3111,9 @@ INT wifi_setRadioBeaconPeriod(INT radioIndex, UINT BeaconPeriod)
     char buf[MAX_BUF_SIZE] = {'\0'};
     char config_file[MAX_BUF_SIZE] = {'\0'};
 
+    if (BeaconPeriod < 15 || BeaconPeriod > 65535)
+        return RETURN_ERR;
+
     params.name = "beacon_int";
     snprintf(buf, sizeof(buf), "%u", BeaconPeriod);
     params.value = buf;
@@ -3534,10 +3522,11 @@ INT wifi_applyRadioSettings(INT radioIndex)
 //Get the radio index assocated with this SSID entry
 INT wifi_getSSIDRadioIndex(INT ssidIndex, INT *radioIndex)
 {
-    if (NULL == radioIndex) 
+    if(NULL == radioIndex)
         return RETURN_ERR;
-    *radioIndex=ssidIndex%2;
-
+    int max_radio_num = 0;
+    wifi_getMaxRadioNumber(&max_radio_num);
+    *radioIndex = ssidIndex%max_radio_num;
     return RETURN_OK;
 }
 
@@ -4995,8 +4984,9 @@ INT wifi_setApBeaconInterval(INT apIndex, INT beaconInterval)
 
 INT wifi_setDTIMInterval(INT apIndex, INT dtimInterval)
 {
-    //save config and apply instantly
-    return RETURN_ERR;
+    if (wifi_setApDTIMInterval(apIndex, dtimInterval) != RETURN_OK)
+        return RETURN_ERR;
+    return RETURN_OK;
 }
 
 // Get the packet size threshold supported.
@@ -5282,7 +5272,9 @@ INT wifi_getApRadioIndex(INT apIndex, INT *output_int)
 {
     if(NULL == output_int)
         return RETURN_ERR;
-    *output_int = apIndex%2;
+    int max_radio_num = 0;
+    wifi_getMaxRadioNumber(&max_radio_num);
+    *output_int = apIndex%max_radio_num;
     return RETURN_OK;
 }
 
@@ -6693,7 +6685,7 @@ INT wifi_setApSecurityRadiusSettings(INT apIndex, wifi_radius_setting_t *input)
 INT wifi_getApWpsEnable(INT apIndex, BOOL *output_bool)
 {
     char buf[MAX_BUF_SIZE] = {0}, cmd[MAX_CMD_SIZE] = {0}, *value;
-    if(!output_bool || !(apIndex==0 || apIndex==1))
+    if(!output_bool)
         return RETURN_ERR;
     sprintf(cmd,"hostapd_cli -i %s%d get_config | grep wps_state | cut -d '=' -f2", AP_PREFIX, apIndex);
     _syscmd(cmd, buf, sizeof(buf));
@@ -6712,8 +6704,6 @@ INT wifi_setApWpsEnable(INT apIndex, BOOL enable)
     char config_file[MAX_BUF_SIZE] = {0};
     struct params params;
 
-    if(!(apIndex==0 || apIndex==1))
-        return RETURN_ERR;
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     //store the paramters, and wait for wifi up to apply
     params.name = "wps_state";
@@ -6758,7 +6748,7 @@ INT wifi_setApWpsConfigMethodsEnabled(INT apIndex, CHAR *methodString)
     char config_file[MAX_BUF_SIZE], config_methods[MAX_BUF_SIZE] = {0};
     struct params params;
 
-    if(!methodString || !(apIndex==0 || apIndex==1))
+    if(!methodString)
         return RETURN_ERR;
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     //store the paramters, and wait for wifi up to apply
@@ -6810,7 +6800,7 @@ INT wifi_getApWpsDevicePIN(INT apIndex, ULONG *output_ulong)
     char buf[MAX_BUF_SIZE] = {0};
     char cmd[MAX_CMD_SIZE] = {0};
 
-    if(!output_ulong || !(apIndex==0 || apIndex==1))
+    if(!output_ulong)
         return RETURN_ERR;
     snprintf(cmd, sizeof(cmd), "cat %s%d.conf | grep ap_pin | cut -d '=' -f2", CONFIG_PREFIX, apIndex);
     _syscmd(cmd, buf, sizeof(buf));
@@ -6830,8 +6820,6 @@ INT wifi_setApWpsDevicePIN(INT apIndex, ULONG pin)
     ULONG prev_pin = 0;
     struct params params;
 
-    if(!(apIndex==0 || apIndex==1))
-        return RETURN_ERR;
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     snprintf(ap_pin, sizeof(ap_pin), "%lu", pin);
     params.name = "ap_pin";
@@ -6850,7 +6838,7 @@ INT wifi_getApWpsConfigurationState(INT apIndex, CHAR *output_string)
     char cmd[MAX_CMD_SIZE];
     char buf[MAX_BUF_SIZE]={0};
 
-    if(!output_string || !(apIndex==0 || apIndex==1))
+    if(!output_string)
         return RETURN_ERR;
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     snprintf(output_string, 32, "Not configured");
@@ -6871,8 +6859,6 @@ INT wifi_setApWpsEnrolleePin(INT apIndex, CHAR *pin)
     char buf[MAX_BUF_SIZE]={0};
     BOOL enable;
 
-    if(!(apIndex==0 || apIndex==1))
-        return RETURN_ERR;
     wifi_getApEnable(apIndex, &enable);
     if (!enable)
         return RETURN_ERR;
@@ -6895,8 +6881,6 @@ INT wifi_setApWpsButtonPush(INT apIndex)
     char buf[MAX_BUF_SIZE]={0};
     BOOL enable=FALSE;
 
-    if(!(apIndex==0 || apIndex==1))
-        return RETURN_ERR;
     wifi_getApEnable(apIndex, &enable);
     if (!enable)
         return RETURN_ERR;
@@ -6919,8 +6903,6 @@ INT wifi_cancelApWPS(INT apIndex)
     char cmd[MAX_CMD_SIZE];
     char buf[MAX_BUF_SIZE]={0};
 
-    if(!(apIndex==0 || apIndex==1))
-        return RETURN_ERR;
     snprintf(cmd, sizeof(cmd), "hostapd_cli -i%s%d wps_cancel", AP_PREFIX, apIndex);
     _syscmd(cmd,buf, sizeof(buf));
 
@@ -8088,6 +8070,10 @@ INT wifi_getRadioOperationalDataTransmitRates(INT wlanIndex,CHAR *output)
     sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,wlanIndex);
     wifi_hostapdRead(config_file,"supported_rates",output,64);
 
+    if (strlen(output) == 0) {
+        wifi_getRadioSupportedDataTransmitRates(wlanIndex, output);
+        return RETURN_OK;
+    }
     strcpy(temp_TransmitRates,output);
     strcpy(temp_output,"");
     temp = strtok(temp_TransmitRates," ");
