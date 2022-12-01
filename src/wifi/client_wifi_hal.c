@@ -574,7 +574,7 @@ INT wifi_getSTANetworks(INT apIndex, wifi_sta_network_t **out_staNetworks_array,
             if(id >= out_array_size)
                 goto close;
             staNetwork++;
-            }
+        }
     }
 close:
     fclose(fd);
@@ -602,11 +602,7 @@ INT wifi_setSTANetworks(INT apIndex, wifi_sta_network_t **staNetworks_array, INT
     if (ret != RETURN_OK)
         return RETURN_ERR;
     snprintf(fname, sizeof(fname), "/nvram/%s.conf", ssid_ifname);
-    if (access(fname, F_OK) != 0) {
-        sprintf(cmd, "touch %s", fname);
-        _syscmd(cmd, out, sizeof(out));
-    }
-    sprintf(cmd, "cp %s /nvram/%s.old", fname, ssid_ifname);
+    sprintf(cmd, "touch %s && cp %s /nvram/%s.old", fname, fname, ssid_ifname);
     _syscmd(cmd, out, 64);
 
     fd = fopen(fname, "w");
@@ -713,7 +709,7 @@ INT wifi_createSTAInterface(INT ssidIndex, char *bssid)
     wifi_getSTARadioIndex(ssidIndex, &radioIndex);
     phyIndex = radio_index_to_phy(radioIndex);
     if (phyIndex == -1) {
-        fprintf(stderr, "%s: Invalid radio index %d.\n", radioIndex);
+        fprintf(stderr, "%s: Invalid radio index %d.\n", __func__, radioIndex);
         return RETURN_ERR;
     }
     snprintf(cmd, sizeof(cmd), "iw phy phy%d interface add %s type managed 4addr on", phyIndex, ssid_ifname);

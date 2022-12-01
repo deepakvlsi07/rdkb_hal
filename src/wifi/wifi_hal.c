@@ -680,8 +680,8 @@ static int writeBandWidth(int radioIndex,char *bw_value)
 
 static int readBandWidth(int radioIndex,char *bw_value)
 {
-    char buf[MAX_BUF_SIZE];
-    char cmd[MAX_CMD_SIZE];
+    char buf[MAX_BUF_SIZE] = {0};
+    char cmd[MAX_CMD_SIZE] = {0};
     sprintf(cmd,"grep 'SET_BW%d=' %s | sed 's/^.*=//'",radioIndex,BW_FNAME);
     _syscmd(cmd,buf,sizeof(buf));
     if(NULL!=strstr(buf,"20MHz"))
@@ -947,6 +947,10 @@ void macfilter_init()
     sprintf(acl_file_path,"/tmp/mac_filter.sh");
 
     fp=fopen(acl_file_path,"w+");
+    if (fp == NULL) {
+        fprintf(stderr, "%s: failed to open file %s.\n", __func__, acl_file_path);
+        return RETURN_ERR;
+    }
     sprintf(buf,"#!/bin/sh \n");
     fprintf(fp,"%s\n",buf);
 
@@ -1869,7 +1873,7 @@ INT wifi_getRadioMode(INT radioIndex, CHAR *output_string, UINT *pureMode)
         return RETURN_ERR;
 
     // grep all of the ieee80211 protocol config set to 1
-    snprintf(config_file, sizeof(cmd), "%s%d.conf", CONFIG_PREFIX, radioIndex);
+    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
     snprintf(cmd, sizeof(cmd), "cat %s | grep -E \"ieee.*=1\" | cut -d '=' -f1 | tr -d 'ieee80211'", config_file);
     _syscmd(cmd, buf, sizeof(buf));
 
@@ -2115,6 +2119,8 @@ INT wifi_setNoscan(INT radioIndex, CHAR *noscan)
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
 
     band = wifi_index_to_band(radioIndex);
+    if (band != band_2_4)
+        return RETURN_OK;
 
     sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radioIndex);
     params.name = "noscan";
@@ -2325,7 +2331,7 @@ INT wifi_setRadioCenterChannel(INT radioIndex, ULONG channel)
     if (band == band_2_4)
         return RETURN_OK;
 
-    snprintf(str_idx, sizeof(str_idx), "%d", channel);
+    snprintf(str_idx, sizeof(str_idx), "%lu", channel);
     list[0].name = "vht_oper_centr_freq_seg0_idx";
     list[0].value = str_idx;
     list[1].name = "he_oper_centr_freq_seg0_idx";
@@ -2452,8 +2458,8 @@ INT wifi_setApDTIMInterval(INT apIndex, INT dtimInterval)
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     if (dtimInterval < 1 || dtimInterval > 255) {
-        return RETURN_ERR;
         WIFI_ENTRY_EXIT_DEBUG("Invalid dtimInterval: %d\n", dtimInterval);
+        return RETURN_ERR;
     }
     
     params.name = "dtim_period";
@@ -2537,6 +2543,9 @@ INT wifi_getRadioDfsEnable(INT radioIndex, BOOL *output_bool)	//Tr181
     FILE *f = NULL;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    if (output_bool == NULL)
+        return RETURN_ERR;
 
     *output_bool = TRUE;        // default
     if (NULL == output_bool) 
@@ -3940,8 +3949,8 @@ INT wifi_getRadioWifiTrafficStats(INT radioIndex, wifi_radioTrafficStats_t *outp
 
 INT wifi_getBasicTrafficStats(INT apIndex, wifi_basicTrafficStats_t *output_struct)
 {
-    char cmd[128];
-    char buf[1280];
+    char cmd[128] = {0};
+    char buf[1280] = {0};
     char *pos = NULL;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
@@ -4287,10 +4296,10 @@ static int AssoDevInfo_callback(struct nl_msg *msg, void *arg) {
 INT wifi_getAssociatedDeviceDetail(INT apIndex, INT devIndex, wifi_device_t *output_struct)
 {
 #ifdef HAL_NETLINK_IMPL
-    Netlink nl;
-    char if_name[10];
+    Netlink nl = {0};
+    char if_name[10] = {0};
 
-    wifi_device_info_t info;
+    wifi_device_info_t info = {0};
     info.wifi_devIndex = devIndex;
 
     snprintf(if_name,sizeof(if_name),"%s%d", AP_PREFIX, apIndex);
@@ -4342,8 +4351,8 @@ INT wifi_getAssociatedDeviceDetail(INT apIndex, INT devIndex, wifi_device_t *out
     FILE *file = NULL;
     char if_name[10] = {'\0'};
     char pipeCmd[256] = {'\0'};
-    char line[256];
-    int count,device = 0;
+    char line[256] = {0};
+    int count = 0, device = 0;
 
     snprintf(if_name,sizeof(if_name),"%s%d", AP_PREFIX, apIndex);
 
@@ -4646,7 +4655,7 @@ INT wifi_setRadioTxChainMask(INT radioIndex, INT numStreams)
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
     if (numStreams == 0) {
-        fprintf(stderr, "The mask did not support 0 (auto).\n", numStreams);
+        fprintf(stderr, "The mask did not support 0 (auto).\n");
         return RETURN_ERR;
     }
     wifi_setRadioEnable(radioIndex, FALSE);
@@ -5028,7 +5037,8 @@ INT wifi_getApWpaEncryptoinMode(INT apIndex, CHAR *output_string)
 INT wifi_getApWpaEncryptionMode(INT apIndex, CHAR *output_string)
 {
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    char *param_name, buf[32], config_file[MAX_BUF_SIZE] = {0};
+    char *param_name = NULL;
+    char buf[32] = {0}, config_file[MAX_BUF_SIZE] = {0};
 
     if(NULL == output_string)
         return RETURN_ERR;
@@ -5093,7 +5103,7 @@ INT wifi_setApWpaEncryptionMode(INT apIndex, CHAR *encMode)
         wifi_hostapdWrite(config_file, &params, 1);
         wifi_hostapdProcessUpdate(apIndex, &params, 1);
 
-        params.name,"rsn_pairwise";
+        params.name = "rsn_pairwise";
         sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,apIndex);
         wifi_hostapdWrite(config_file, &params, 1);
         wifi_hostapdProcessUpdate(apIndex, &params, 1);
@@ -5631,7 +5641,7 @@ INT wifi_setApVlanEnable(INT apIndex, BOOL VlanEnabled)
 // gets the vlan ID for this ap from an internal enviornment variable
 INT wifi_getApVlanID(INT apIndex, INT *output_int)
 {
-    if(apIndex=0)
+    if(apIndex==0)
     {
         *output_int=100;
         return RETURN_OK;
@@ -5683,9 +5693,9 @@ INT wifi_resetApVlanCfg(INT apIndex)
     band = wifi_index_to_band(apIndex);
     if (band == band_2_4)
         sprintf(original_config_file, "/etc/hostapd-2G.conf");
-    else if (band = band_5)
+    else if (band == band_5)
         sprintf(original_config_file, "/etc/hostapd-5G.conf");
-    else if (band = band_6)
+    else if (band == band_6)
         sprintf(original_config_file, "/etc/hostapd-6G.conf");
 
     wifi_hostapdRead(original_config_file, "vlan_file", vlan_file, sizeof(vlan_file));
@@ -5770,6 +5780,7 @@ static int align_hostapd_config(int index)
     ULONG lval;
     wifi_getRadioChannel(index%2, &lval);
     wifi_setRadioChannel(index%2, lval);
+    return RETURN_OK;
 }
 
 // sets the AP enable status variable for the specified ap.
@@ -6100,7 +6111,7 @@ INT wifi_setApMaxAssociatedDevices(INT apIndex, UINT number)
     char config_file[MAX_BUF_SIZE] = {0};
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    if (number > MAX_ASSOCIATED_STA_NUM || number < 0) {
+    if (number > MAX_ASSOCIATED_STA_NUM) {
         WIFI_ENTRY_EXIT_DEBUG("%s: Invalid input\n",__func__);
         return RETURN_ERR;
     }
@@ -6331,7 +6342,7 @@ INT wifi_setApSecurityModeEnabled(INT apIndex, CHAR *encMode)
 // PSK Key of 8 to 63 characters is considered an ASCII string, and 64 characters are considered as HEX value
 INT wifi_getApSecurityPreSharedKey(INT apIndex, CHAR *output_string)
 {
-    char buf[16];
+    char buf[16] = {0};
     char config_file[MAX_BUF_SIZE] = {0};
 
     if(output_string==NULL)
@@ -6453,9 +6464,9 @@ INT wifi_setApSecurityReset(INT apIndex)
     band = wifi_index_to_band(apIndex);
     if (band == band_2_4)
         sprintf(original_config_file, "/etc/hostapd-2G.conf");
-    else if (band = band_5)
+    else if (band == band_5)
         sprintf(original_config_file, "/etc/hostapd-5G.conf");
-    else if (band = band_6)
+    else if (band == band_6)
         sprintf(original_config_file, "/etc/hostapd-6G.conf");
     else
         return RETURN_ERR;
@@ -6915,12 +6926,12 @@ INT wifi_cancelApWPS(INT apIndex)
 //HAL funciton should allocate an data structure array, and return to caller with "associated_dev_array"
 INT wifi_getApAssociatedDeviceDiagnosticResult(INT apIndex, wifi_associated_dev_t **associated_dev_array, UINT *output_array_size)
 {
-    FILE *f;
+    FILE *f = NULL;
     int read_flag=0, auth_temp=0, mac_temp=0,i=0;
-    char cmd[256], buf[2048];
-    char *param , *value, *line=NULL;
+    char cmd[256] = {0}, buf[2048] = {0};
+    char *param = NULL, *value = NULL, *line=NULL;
     size_t len = 0;
-    ssize_t nread;
+    ssize_t nread = 0;
     wifi_associated_dev_t *dev=NULL;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
@@ -6942,7 +6953,7 @@ INT wifi_getApAssociatedDeviceDiagnosticResult(INT apIndex, wifi_associated_dev_
         *output_array_size=0;
         return RETURN_ERR;
     }
-    while ((nread = getline(&line, &len, f)) != -1)
+    while ((getline(&line, &len, f)) != -1)
     {
         param = strtok(line,"=");
         value = strtok(NULL,"=");
@@ -7049,7 +7060,7 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
         }
         fclose(fp);
 
-        sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep Station | cut -d ' ' -f 2", interface_name);
+        sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep Station | cut -d ' ' -f 2");
         fp = popen(pipeCmd, "r");
         if(fp)
         {
@@ -7072,7 +7083,7 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
             pclose(fp);
         }
 
-        sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep signal | tr -s ' ' | cut -d ' ' -f 2 > /tmp/wifi_signalstrength.txt", interface_name);
+        sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep signal | tr -s ' ' | cut -d ' ' -f 2 > /tmp/wifi_signalstrength.txt");
         fp = popen(pipeCmd, "r");
         if(fp)
         { 
@@ -7102,7 +7113,7 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
             }
 
             //BytesSent
-            sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep 'tx bytes' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Bytes_Send.txt", interface_name);
+            sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep 'tx bytes' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Bytes_Send.txt");
             fp = popen(pipeCmd, "r");
             if(fp)
             { 
@@ -7120,7 +7131,7 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
             }
 
             //BytesReceived
-            sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep 'rx bytes' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Bytes_Received.txt", interface_name);
+            sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep 'rx bytes' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Bytes_Received.txt");
             fp = popen(pipeCmd, "r");
             if (fp)
             {
@@ -7138,7 +7149,7 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
             }
 
             //PacketsSent
-            sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep 'tx packets' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Packets_Send.txt", interface_name);
+            sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep 'tx packets' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Packets_Send.txt");
             fp = popen(pipeCmd, "r");
             if (fp)
             {
@@ -7157,7 +7168,7 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
             }
 
             //PacketsReceived
-            sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep 'rx packets' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Packets_Received.txt", interface_name);
+            sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep 'rx packets' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Packets_Received.txt");
             fp = popen(pipeCmd, "r");
             if (fp)
             {
@@ -7175,7 +7186,7 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
             }
 
             //ErrorsSent
-            sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep 'tx failed' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Tx_Failed.txt", interface_name);
+            sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep 'tx failed' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Tx_Failed.txt");
             fp = popen(pipeCmd, "r");
             if (fp)
             {
@@ -7193,7 +7204,7 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
             }
 
             //ErrorsSent
-            sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep 'tx failed' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Tx_Failed.txt", interface_name);
+            sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep 'tx failed' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Tx_Failed.txt");
             fp = popen(pipeCmd, "r");
             if (fp)
             {
@@ -7211,7 +7222,7 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
             }
 
             //LastDataDownlinkRate
-            sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep 'tx bitrate' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Bitrate_Send.txt", interface_name);
+            sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep 'tx bitrate' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Bitrate_Send.txt");
             fp = popen(pipeCmd, "r");
             if (fp)
             {
@@ -7230,7 +7241,7 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
             }
 
             //LastDataUplinkRate
-            sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep 'rx bitrate' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Bitrate_Received.txt", interface_name);
+            sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep 'rx bitrate' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Bitrate_Received.txt");
             fp = popen(pipeCmd, "r");
             if (fp)
             {
@@ -7674,6 +7685,10 @@ INT wifi_getApInactiveAssociatedDeviceDiagnosticResult(char *filename,wifi_assoc
     memset(buf,0,sizeof(buf));
     sprintf(buf,"cat %s | grep Station | cut -d ' ' -f2 | sort | uniq",filename);
     fp = popen(buf,"r");
+    if (fp == NULL) {
+        fprintf(stderr, "%s: failed pipe command %s.\n", __func__, buf);
+        return RETURN_ERR;
+    }
     for(count = 0; count < maccount ; count++)
     {
         fgets(path,sizeof(path),fp);
@@ -7858,12 +7873,12 @@ INT wifi_ifConfigUp(INT apIndex)
 //>> Deprecated. Replace with wifi_applyRadioSettings
 INT wifi_pushBridgeInfo(INT apIndex)
 {
-    char ip[32];
-    char subnet[32];
-    char bridge[32];
-    int vlanId;
-    char cmd[128];
-    char buf[1024];
+    char ip[32] = {0};
+    char subnet[32] = {0};
+    char bridge[32] = {0};
+    int vlanId = 0;
+    char cmd[128] = {0};
+    char buf[1024] = {0};
 
     wifi_getApBridgeInfo(apIndex,bridge,ip,subnet);
     wifi_getApVlanID(apIndex,&vlanId);
@@ -8364,6 +8379,8 @@ static int util_unii_5g_centerfreq(const char *ht_mode, int channel)
         cnt++;
         chans++;
     }
+    if (cnt == 0)
+        return 0;
     return sum / cnt;
 }
 
@@ -8789,7 +8806,6 @@ INT wifi_getApAssociatedDeviceStats(
     FILE *f = NULL;
     char *line = NULL;
     size_t len = 0;
-    ssize_t read = 0;
 
     if(wifi_getApName(apIndex, interface_name) != RETURN_OK) {
         wifi_dbg_printf("%s: wifi_getApName failed\n",  __FUNCTION__);
@@ -8803,7 +8819,7 @@ INT wifi_getApAssociatedDeviceStats(
         return RETURN_ERR;
     }
 
-    while ((read = getline(&line, &len, f))  != -1) {
+    while ((getline(&line, &len, f)) != -1) {
         key = strtok(line,":");
         val = strtok(NULL,":");
 
@@ -8952,7 +8968,7 @@ INT wifi_getApAssociatedDeviceDiagnosticResult2(INT apIndex,wifi_associated_dev2
         }
         fclose(fp);
 
-        sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep Station | cut -d ' ' -f 2", interface_name);
+        sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep Station | cut -d ' ' -f 2");
         fp = popen(pipeCmd, "r");
         if(fp)
         {
@@ -8976,7 +8992,7 @@ INT wifi_getApAssociatedDeviceDiagnosticResult2(INT apIndex,wifi_associated_dev2
         }
 
         //Updating  RSSI per client
-        sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep signal | tr -s ' ' | cut -d ' ' -f 2 > /tmp/wifi_signalstrength.txt", interface_name);
+        sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep signal | tr -s ' ' | cut -d ' ' -f 2 > /tmp/wifi_signalstrength.txt");
         fp = popen(pipeCmd, "r");
         if(fp)
         {
@@ -8996,7 +9012,7 @@ INT wifi_getApAssociatedDeviceDiagnosticResult2(INT apIndex,wifi_associated_dev2
 
 
         //LastDataDownlinkRate
-        sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep 'tx bitrate' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Bitrate_Send.txt", interface_name);
+        sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep 'tx bitrate' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Bitrate_Send.txt");
         fp = popen(pipeCmd, "r");
         if (fp)
         {
@@ -9015,7 +9031,7 @@ INT wifi_getApAssociatedDeviceDiagnosticResult2(INT apIndex,wifi_associated_dev2
         }
 
         //LastDataUplinkRate
-        sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep 'rx bitrate' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Bitrate_Received.txt", interface_name);
+        sprintf(pipeCmd, "cat /tmp/AssociatedDevice_Stats.txt | grep 'rx bitrate' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Bitrate_Received.txt");
         fp = popen(pipeCmd, "r");
         if (fp)
         {
@@ -9956,7 +9972,7 @@ static int ieee80211_channel_to_frequency(int channel, int *freqMHz)
     {
         fgets(output, sizeof(output), fp);
         *freqMHz = atoi(output);
-        fclose(fp);
+        pclose(fp);
     }
 
     return 0;
@@ -10436,7 +10452,7 @@ static void ctrl_watchdog_cb(EV_P_ ev_timer *timer, int events)
 
     for (s = 0; s < snum; s++) {
         if (wifi_getApEnable(s, &status) != RETURN_OK) {
-            printf("%s: failed to get AP Enable for index: %d\n", __func__, s);
+            printf("%s: failed to get AP Enable for index: %lu\n", __func__, s);
             continue;
         }
         if (status == false) continue;
@@ -10450,7 +10466,7 @@ static void ctrl_watchdog_cb(EV_P_ ev_timer *timer, int events)
 
         printf("WPA_CTRL: ping timeout index=%d\n", wpa_ctrl[s].ssid_index);
         ctrl_close(&wpa_ctrl[s]);
-        printf("WPA_CTRL: ev_timer_again %d\n", s);
+        printf("WPA_CTRL: ev_timer_again %lu\n", s);
         ev_timer_again(EV_DEFAULT_ &wpa_ctrl[s].retry);
     }
 }
@@ -11899,7 +11915,7 @@ static int array_index_to_vap_index(UINT radioIndex, int arrayIndex)
     int max_radio_num = 0;
 
     wifi_getMaxRadioNumber(&max_radio_num);
-    if (radioIndex >= max_radio_num || radioIndex < 0) {
+    if (radioIndex >= max_radio_num) {
         fprintf(stderr, "%s: Wrong radio index (%d)\n", __func__, radioIndex);
         return RETURN_ERR;
     }
@@ -11973,7 +11989,7 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
     int vap_index = 0;
     BOOL enabled = FALSE;
     char buf[256] = {0};
-    wifi_vap_security_t security;
+    wifi_vap_security_t security = {0};
     map->num_vaps = 5;      // Hardcoded
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
@@ -12413,11 +12429,11 @@ static int getRadioCapabilities(int radioIndex, wifi_radio_capabilities_t *rcap)
 
 INT wifi_getHalCapability(wifi_hal_capability_t *cap)
 {
-    INT status, radioIndex;
-    char cmd[MAX_BUF_SIZE], output[MAX_BUF_SIZE];
+    INT status = 0, radioIndex = 0;
+    char cmd[MAX_BUF_SIZE] = {0}, output[MAX_BUF_SIZE] = {0};
     int iter = 0;
-    unsigned int j;
-    wifi_interface_name_idex_map_t *iface_info;
+    unsigned int j = 0;
+    wifi_interface_name_idex_map_t *iface_info = NULL;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -12460,7 +12476,7 @@ INT wifi_getHalCapability(wifi_hal_capability_t *cap)
             // TODO: primary
             iface_info->index = array_index_to_vap_index(radioIndex, j);
             memset(output, 0, sizeof(output));
-            if (iface_info >= 0 && wifi_getApName(iface_info->index, output) == RETURN_OK)
+            if (iface_info->index >= 0 && wifi_getApName(iface_info->index, output) == RETURN_OK)
             {
                  strncpy(iface_info->vap_name, output, sizeof(iface_info->vap_name) - 1);
             }
@@ -12888,7 +12904,6 @@ INT wifi_getTWTsessions(INT ap_index, UINT maxNumberSessions, wifi_twt_sessions_
     char buf[128] = {0};
     char line[128] = {0};
     size_t len = 0;
-    ssize_t read = 0;
     FILE *f = NULL;
     int index = 0;
     int exp = 0;
@@ -12922,7 +12937,7 @@ INT wifi_getTWTsessions(INT ap_index, UINT maxNumberSessions, wifi_twt_sessions_
     }
 
     // the format of each line is "[wcid] [id] [flags] [exp] [mantissa] [duration] [tsf]"
-    while((read = fgets(line, sizeof(line), f)) != NULL) {
+    while((fgets(line, sizeof(line), f)) != NULL) {
         char *tmp = NULL;
         strcpy(buf, line);
         tmp = strtok(buf, " ");
@@ -12950,7 +12965,7 @@ INT wifi_getTWTsessions(INT ap_index, UINT maxNumberSessions, wifi_twt_sessions_
 
         // wakeInterval_uSec is a unsigned integer, but the maximum TWT wake interval could be 2^15 (mantissa) * 2^32 = 2^47.
         twt_wake_interval = mantissa * (1 << exp);
-        if (twt_wake_interval/mantissa != (1 << exp)) {
+        if (mantissa == 0 || twt_wake_interval/mantissa != (1 << exp)) {
             // Overflow handling
             twtSessions[index].twtParameters.params.individual.wakeInterval_uSec = -1;   // max unsigned int
         } else {
