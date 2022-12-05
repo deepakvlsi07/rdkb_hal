@@ -5004,21 +5004,29 @@ INT wifi_getApRtsThresholdSupported(INT apIndex, BOOL *output_bool)
     //save config and apply instantly
     if (NULL == output_bool)
         return RETURN_ERR;
-    *output_bool = FALSE;
+    *output_bool = TRUE;
     return RETURN_OK;
 }
 
 // sets the packet size threshold in bytes to apply RTS/CTS backoff rules.
 INT wifi_setApRtsThreshold(INT apIndex, UINT threshold)
 {
-    char cmd[128];
-    char buf[512];
+    char buf[16] = {0};
+    char config_file[128] = {0};
+    struct params param = {0};
 
-    if (threshold > 0)
-        snprintf(cmd, sizeof(cmd), "iwconfig %s%d rts %d", AP_PREFIX, apIndex, threshold);
-    else
-        snprintf(cmd, sizeof(cmd), "iwconfig %s%d rts off", AP_PREFIX, apIndex);
-    _syscmd(cmd, buf, sizeof(buf));
+    if (threshold > 65535) {
+        fprintf(stderr, "%s: rts threshold %u is too big.\n", __func__, threshold);
+        return RETURN_ERR;
+    }
+
+    snprintf(config_file, sizeof(config_file), "%s%d.conf", AP_PREFIX, apIndex);
+    snprintf(buf, sizeof(buf), "%u", threshold);
+    param.name = "rts_threshold";
+    param.value = buf;
+    wifi_hostapdWrite(config_file, &param, 1);
+    wifi_hostapdProcessUpdate(apIndex, &param, 1);
+    wifi_reloadAp(apIndex);
 
     return RETURN_OK;
 }
