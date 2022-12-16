@@ -1414,7 +1414,7 @@ INT wifi_getRadioMaxBitRate(INT radioIndex, CHAR *output_string) //RDKB
     // The formula to coculate bit rate is "Subcarriers * Modulation * Coding rate * Spatial stream / (Data interval + Guard interval)"
     // For max bit rate, we should always choose the best MCS
     char mode[64] = {0};
-    char channel_bandwidth_str[16] = {0};
+    char channel_bandwidth_str[64] = {0};
     char *tmp = NULL;
     UINT mode_map = 0;
     UINT num_subcarrier = 0;
@@ -2272,14 +2272,15 @@ INT wifi_getRadioChannel(INT radioIndex,ULONG *output_ulong)	//RDKB
 INT wifi_getApChannel(INT apIndex,ULONG *output_ulong) //RDKB
 {
     char cmd[1024] = {0}, buf[5] = {0};
-    char interface_name[50] = {0};
+    char interface_name[16] = {0};
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     if (NULL == output_ulong)
         return RETURN_ERR;
 
     snprintf(cmd, sizeof(cmd), "iw dev %s info |grep channel | cut -d ' ' -f2",interface_name);
-    wifi_getApName(apIndex,interface_name);
+    if (wifi_getApName(apIndex,interface_name) != RETURN_OK)
+        return RETURN_ERR;
     _syscmd(cmd,buf,sizeof(buf));
     *output_ulong = (strlen(buf) >= 1)? atol(buf): 0;
     if (*output_ulong == 0) {
@@ -2578,9 +2579,6 @@ INT wifi_getRadioDfsEnable(INT radioIndex, BOOL *output_bool)	//Tr181
         return RETURN_ERR;
 
     *output_bool = TRUE;        // default
-    if (NULL == output_bool) 
-        return RETURN_ERR;
-
     f = fopen(DFS_ENABLE_FILE, "r");
     if (f != NULL) {
         fgets(buf, 2, f);
@@ -3486,7 +3484,8 @@ INT wifi_getRadioTrafficStats2(INT radioIndex, wifi_radioTrafficStats2_t *output
     if (NULL == output_struct)
         return RETURN_ERR;
 
-    GetInterfaceName(radioIndex, interface_name);
+    if (GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+        return RETURN_ERR;
 
     wifi_getApEnable(radioIndex, &iface_status);
 
@@ -4136,8 +4135,9 @@ INT wifi_getWifiTrafficStats(INT apIndex, wifi_trafficStats_t *output_struct)
 
     memset(output_struct, 0, sizeof(wifi_trafficStats_t));
 
-    GetInterfaceName(apIndex,interface_name);
-    GetIfacestatus(apIndex, interface_status);
+    if (GetInterfaceName(apIndex,interface_name) != RETURN_OK)
+        return RETURN_ERR;
+    GetIfacestatus(interface_name, interface_status);
 
     if(0 != strcmp(interface_status, "1"))
         return RETURN_ERR;
@@ -9216,7 +9216,8 @@ INT wifi_getSSIDTrafficStats2(INT ssidIndex,wifi_ssidTrafficStats2_t *output_str
         return RETURN_ERR;
 
     memset(out, 0, sizeof(wifi_ssidTrafficStats2_t));
-    GetInterfaceName(ssidIndex, interface_name);
+    if (GetInterfaceName(ssidIndex, interface_name) != RETURN_OK)
+        return RETURN_ERR;
     sprintf(pipeCmd, "cat /proc/net/dev | grep %s", interface_name);
 
     fp = popen(pipeCmd, "r");
