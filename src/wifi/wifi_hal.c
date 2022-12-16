@@ -68,17 +68,17 @@ Licensed under the ISC license
 #define MAX_POSSIBLE_CHANNEL_STRING_BUF 512
 #define IF_NAME_SIZE 50
 #define CONFIG_PREFIX "/nvram/hostapd"
-#define ACL_PREFIX "/tmp/hostapd-acl"
-#define DENY_PREFIX "/tmp/hostapd-deny"
+#define ACL_PREFIX "/nvram/hostapd-acl"
+#define DENY_PREFIX "/nvram/hostapd-deny"
 //#define ACL_PREFIX "/tmp/wifi_acl_list" //RDKB convention
 #define SOCK_PREFIX "/var/run/hostapd/wifi"
-#define VAP_STATUS_FILE "/tmp/vap-status"
+#define VAP_STATUS_FILE "/nvram/vap-status"
 #define ESSID_FILE "/tmp/essid"
 #define GUARD_INTERVAL_FILE "/nvram/guard-interval"
 #define CHANNEL_STATS_FILE "/tmp/channel_stats"
 #define DFS_ENABLE_FILE "/nvram/dfs_enable.txt"
 #define VLAN_FILE "/nvram/hostapd.vlan"
-#define PSK_FILE "/tmp/hostapd"
+#define PSK_FILE "/nvram/hostapd"
 #define CHAIN_MASK_FILE "/tmp/chain_mask"
 #define AMSDU_FILE "/tmp/AMSDU"
 #define MCS_FILE "/tmp/MCS"
@@ -460,7 +460,7 @@ INT radio_index_to_phy(int radioIndex)
     _syscmd(cmd, buf, sizeof(buf));
 
     if (strlen(buf) == 0 || strstr(buf, "phy") == NULL) {
-        fprintf(stderr, "%s: failed to get phy index\n", __func__);
+        fprintf(stderr, "%s: failed to get phy index with: %d\n", __func__, radioIndex);
         return RETURN_ERR;
     }
     sscanf(buf, "phy%d", &phyIndex);
@@ -468,17 +468,37 @@ INT radio_index_to_phy(int radioIndex)
     return phyIndex;      
 }
 
-wifi_band wifi_index_to_band(int radioIndex)
+INT wifi_getMaxRadioNumber(INT *max_radio_num)
+{
+    char cmd[64] = {0};
+    char buf[4] = {0};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    snprintf(cmd, sizeof(cmd), "iw list | grep Wiphy | wc -l");
+    _syscmd(cmd, buf, sizeof(buf));
+    *max_radio_num = strtoul(buf, NULL, 10) > MAX_NUM_RADIOS ? MAX_NUM_RADIOS:strtoul(buf, NULL, 10);
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
+    return RETURN_OK;
+}
+
+wifi_band wifi_index_to_band(int apIndex)
 {
     char cmd[128] = {0};
     char buf[64] = {0};
     int nl80211_band = 0;
     int i = 0;
     int phyIndex = 0;
+    int radioIndex = 0;
+    int max_radio_num = 0;
     wifi_band band = band_invalid;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
+    wifi_getMaxRadioNumber(&max_radio_num);
+    radioIndex = apIndex % max_radio_num;
     phyIndex = radio_index_to_phy(radioIndex);
     while(i < 10){
         snprintf(cmd, sizeof(cmd), "iw phy%d info | grep 'Band .:' | tail -n 1 | tr -d ':\\n' | awk '{print $2}'", phyIndex);
@@ -715,22 +735,6 @@ static int readBandWidth(int radioIndex,char *bw_value)
     {
         return RETURN_ERR;
     }
-    return RETURN_OK;
-}
-
-INT wifi_getMaxRadioNumber(INT *max_radio_num)
-{
-    char cmd[64] = {0};
-    char buf[4] = {0};
-
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-
-    snprintf(cmd, sizeof(cmd), "iw list | grep Wiphy | wc -l");
-    _syscmd(cmd, buf, sizeof(buf));
-    *max_radio_num = strtoul(buf, NULL, 10) > MAX_NUM_RADIOS ? MAX_NUM_RADIOS:strtoul(buf, NULL, 10);
-
-    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
-
     return RETURN_OK;
 }
 
@@ -1362,7 +1366,7 @@ INT wifi_setRadioEnable(INT radioIndex, BOOL enable)
 
         for(apIndex=radioIndex; apIndex<MAX_APS; apIndex+=max_radio_num)
         {
-            snprintf(cmd, sizeof(cmd), "iw %s%d interface add %s type __ap", RADIO_PREFIX, phyId, interface_name);
+            snprintf(cmd, sizeof(cmd), "iw phy%d interface add %s type __ap", phyId, interface_name);
             ret = _syscmd(cmd, buf, sizeof(buf));
             if ( ret == RETURN_ERR)
             {
@@ -5885,7 +5889,7 @@ INT wifi_setApEnable(INT apIndex, BOOL enable)
         sprintf(cmd, "ip link set %s down", interface_name);
         _syscmd(cmd, buf, sizeof(buf));
     }
-    snprintf(cmd, sizeof(cmd), "sed '/%s/c %s=%d' -i %s",
+    snprintf(cmd, sizeof(cmd), "sed -i -n -e '/^%s=/!p' -e '$a%s=%d' %s",
                   interface_name, interface_name, enable, VAP_STATUS_FILE);
     _syscmd(cmd, buf, sizeof(buf));
     //Wait for wifi up/down to apply
@@ -11186,7 +11190,7 @@ INT wifi_pushMultiPskKeys(INT apIndex, wifi_key_multi_psk_t *keys, INT keysNumbe
     if(keysNumber < 0)
             return RETURN_ERR;
 
-    snprintf(fname, sizeof(fname), "/tmp/hostapd%d.psk", apIndex);
+    snprintf(fname, sizeof(fname), "%s%d.psk", PSK_FILE, apIndex);
     fd = fopen(fname, "w");
     if (!fd) {
             return RETURN_ERR;
@@ -11220,7 +11224,7 @@ INT wifi_getMultiPskKeys(INT apIndex, wifi_key_multi_psk_t *keys, INT keysNumber
         return RETURN_ERR;
     }
 
-    snprintf(fname, sizeof(fname), "/tmp/hostapd%d.psk", apIndex);
+    snprintf(fname, sizeof(fname), "%s%d.psk", PSK_FILE, apIndex);
     fd = fopen(fname, "r");
     if (!fd) {
         return RETURN_ERR;
@@ -12282,6 +12286,23 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
     return RETURN_OK;
 }
 
+void checkVapStatus(int apIndex, bool *enable)
+{
+    char if_name[16] = {0};
+    char cmd[128] = {0};
+    char buf[128] = {0};
+
+    *enable = FALSE;
+    if (GetInterfaceName(apIndex, if_name) != RETURN_OK)
+        return;
+
+    snprintf(cmd, sizeof(cmd), "cat %s | grep ^%s=1", VAP_STATUS_FILE, if_name);
+    _syscmd(cmd, buf, sizeof(buf));
+    if (strlen(buf) > 0)
+        *enable = TRUE;
+    return;
+}
+
 static int prepareInterface(UINT apIndex, char *new_interface)
 {
     char cur_interface[16] = {0};
@@ -12301,12 +12322,12 @@ static int prepareInterface(UINT apIndex, char *new_interface)
         phyIndex = radio_index_to_phy(radioIndex);
         // disable and del old interface, then add new interface
         wifi_setApEnable(apIndex, FALSE);
-        snprintf(cmd, sizeof(cmd), "iw %s del && iw %s%d interface add %s type __ap", cur_interface, RADIO_PREFIX, phyIndex, new_interface);
-        _syscmd(cmd, buf, sizeof(buf));
-        // modify vap status file, replace old interface with the new one
-        snprintf(cmd, sizeof(cmd), "sed -i -n -e '/^%s=/!p' -e '$a%s=1' %s", cur_interface, new_interface, VAP_STATUS_FILE);
+        snprintf(cmd, sizeof(cmd), "iw %s del && iw phy%d interface add %s type __ap", cur_interface, phyIndex, new_interface);
         _syscmd(cmd, buf, sizeof(buf));
     }
+    // update the vap status file
+    snprintf(cmd, sizeof(cmd), "sed -i -n -e '/^%s=/!p' -e '$a%s=1' %s", cur_interface, new_interface, VAP_STATUS_FILE);
+    _syscmd(cmd, buf, sizeof(buf));
     return RETURN_OK;
 }
 
@@ -12323,6 +12344,7 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
     char config_file[64] = {0};
     char bssid[32] = {0};
     char psk_file[64] = {0};
+    bool enable = FALSE;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     printf("Entering %s index = %d\n", __func__, (int)index);
@@ -12330,31 +12352,39 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
     {
         multiple_set = TRUE;
         vap_info = &map->vap_array[i];
-        if (vap_info->u.bss_info.enabled == FALSE)
+
+        // Check vap status file to enable multiple ap if the system boot.
+        checkVapStatus(vap_info->vap_index, &enable);
+        if (vap_info->u.bss_info.enabled == FALSE && enable == FALSE)
             continue;
 
         fprintf(stderr, "\nCreate VAP for ssid_index=%d (vap_num=%d)\n", vap_info->vap_index, i);
 
-        // multi-ap need to copy current radio config
-        if (vap_info->radio_index != vap_info->vap_index) {
+        if (wifi_getApEnable(vap_info->vap_index, &enable) != RETURN_OK)
+            enable = FALSE;
+
+        // multi-ap first up need to copy current radio config
+        if (vap_info->radio_index != vap_info->vap_index && enable == FALSE) {
             snprintf(cmd, sizeof(cmd), "cp %s%d.conf %s%d.conf", CONFIG_PREFIX, vap_info->radio_index, CONFIG_PREFIX, vap_info->vap_index);
             _syscmd(cmd, buf, sizeof(buf));
+            if (strlen(vap_info->vap_name) == 0)    // default name of the interface is wifiX
+                snprintf(vap_info->vap_name, 16, "wifi%d", vap_info->vap_index);
+        } else {
+            // Check whether the interface name is valid or this ap change it.
+            int apIndex = -1;
+            wifi_getApIndexFromName(vap_info->vap_name, &apIndex);
+            if (apIndex != -1 && apIndex != vap_info->vap_index)
+                continue;
+            prepareInterface(vap_info->vap_index, vap_info->vap_name);
         }
 
         struct params params[3];
-        // Check whether the interface name is used by other ap.
-        int apIndex = -1;
-        wifi_getApIndexFromName(vap_info->vap_name, &apIndex);
-        if (apIndex != -1 && apIndex != vap_info->vap_index)
-            continue;
-        prepareInterface(vap_info->vap_index, vap_info->vap_name);
-
         params[0].name = "interface";
         params[0].value = vap_info->vap_name;
         mac_addr_ntoa(bssid, vap_info->u.bss_info.bssid);
         params[1].name = "bssid";
         params[1].value = bssid;
-        snprintf(psk_file, sizeof(psk_file), "\\/tmp\\/hostapd%d.psk", vap_info->vap_index);
+        snprintf(psk_file, sizeof(psk_file), "\\/nvram\\/hostapd%d.psk", vap_info->vap_index);
         params[2].name = "wpa_psk_file";
         params[2].value = psk_file;
 
