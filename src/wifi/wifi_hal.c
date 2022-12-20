@@ -4954,7 +4954,7 @@ INT wifi_getApName(INT apIndex, CHAR *output_string)
         return RETURN_ERR;
 
     if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
-        memset(output_string, 0, 16);
+        snprintf(output_string, 16, "%s%d", AP_PREFIX, apIndex);    // For wifiagent generating data model.
     else
         snprintf(output_string, 16, "%s", interface_name);
     return RETURN_OK;
@@ -4971,16 +4971,22 @@ INT wifi_getIndexFromName(CHAR *inputSsidString, INT *output_int)
 
     snprintf(cmd, sizeof(cmd), "grep -rn ^interface=%s$ /nvram/hostapd*.conf | cut -d '.' -f1 | cut -d 'd' -f2 | tr -d '\\n'", inputSsidString);
     _syscmd(cmd, buf, sizeof(buf));
-    // May get multiple output, so we need to check which ap is enable.
+
     apIndex_str = strtok(buf, "\n");
     while (apIndex_str != NULL) {
         apIndex = strtoul(apIndex_str, NULL, 10);
-        wifi_getApEnable(apIndex, &enable);
         if (enable == TRUE) {
             *output_int = apIndex;
             return RETURN_OK;
         }
         apIndex_str = strtok(NULL, "\n");
+    }
+
+    // If interface name is not in hostapd config, the caller maybe wifi agent to generate data model.
+    apIndex_str = strstr(inputSsidString, AP_PREFIX);
+    if (apIndex_str) {
+        sscanf(apIndex_str + strlen(AP_PREFIX), "%d", output_int);
+        return RETURN_OK;
     }
     *output_int = -1;
     return RETURN_OK;
