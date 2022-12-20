@@ -558,7 +558,7 @@ static int wifi_hostapdWrite(char *conf_file, struct params *list, int item_coun
 }
 
 //For Getting Current Interface Name from corresponding hostapd configuration
-static int GetInterfaceName(int apIndex, char *interface_name)
+static int wifi_GetInterfaceName(int apIndex, char *interface_name)
 {
     char config_file[128] = {0};
 
@@ -576,6 +576,14 @@ static int GetInterfaceName(int apIndex, char *interface_name)
     return RETURN_OK;
 }
 
+// wifi agent will call this function, do not change the parameter
+void GetInterfaceName(char *interface_name, char *conf_file)
+{
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    wifi_hostapdRead(conf_file,"interface",interface_name, IF_NAME_SIZE);
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+}
+
 static int wifi_hostapdProcessUpdate(int apIndex, struct params *list, int item_count)
 {
     char interface_name[16] = {0};
@@ -585,7 +593,7 @@ static int wifi_hostapdProcessUpdate(int apIndex, struct params *list, int item_
     FILE *fp;
     int i;
     //NOTE RELOAD should be done in ApplySSIDSettings
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     for(i=0; i<item_count; i++, list++)
     {
@@ -614,7 +622,7 @@ static int wifi_reloadAp(int apIndex)
     char cmd[MAX_CMD_SIZE]="";
     char buf[MAX_BUF_SIZE]="";
 
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     snprintf(cmd, sizeof(cmd), "hostapd_cli -i %s reload", interface_name);
     if (_syscmd(cmd, buf, sizeof(buf)) == RETURN_ERR)
@@ -1035,7 +1043,7 @@ INT wifi_init()                            //RDKB
     //macfilter_init();
 
     system("/usr/sbin/iw reg set US");
-    system("systemctl start hostapd.service");
+    // system("systemctl start hostapd.service");
     sleep(2);//sleep to wait for hostapd to start
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
@@ -1134,7 +1142,7 @@ INT wifi_getRadioCountryCode(INT radioIndex, CHAR *output_string)
     if(!output_string || (radioIndex >= MAX_NUM_RADIOS))
         return RETURN_ERR;
 
-    if (GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     sprintf(cmd,"hostapd_cli -i %s status driver | grep country | cut -d '=' -f2", interface_name);
     _syscmd(cmd, buf, sizeof(buf));
@@ -1196,7 +1204,7 @@ INT wifi_getRadioChannelStats2(INT radioIndex, wifi_channelStats2_t *outputChann
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-    if (GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     snprintf(cmd, sizeof(cmd), "iw %s scan | grep signal | awk '{print $2}' | sort -n | tail -n1", interface_name);
     _syscmd(cmd, buf, sizeof(buf));
@@ -1311,7 +1319,7 @@ INT wifi_getRadioEnable(INT radioIndex, BOOL *output_bool)      //RDKB
 	fclose(fp);
     //TODO: check if hostapd with config is running
 	char buf[MAX_BUF_SIZE] = {0}, cmd[MAX_CMD_SIZE] = {0};
-	if (GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 	sprintf(cmd, "hostapd_cli -i %s status | grep state | cut -d '=' -f2", interface_name);
 	_syscmd(cmd, buf, sizeof(buf));
@@ -1337,7 +1345,7 @@ INT wifi_setRadioEnable(INT radioIndex, BOOL enable)
 
     wifi_getMaxRadioNumber(&max_radio_num);
 
-    if (GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     if(enable==FALSE)
     {
@@ -2212,7 +2220,7 @@ INT wifi_getRadioChannelsInUse(INT radioIndex, CHAR *output_string)	//RDKB
     if (NULL == output_string)
         return RETURN_ERR;
 
-    if (GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     sprintf(cmd, "iw %s info | grep channel | sed -e 's/[^0-9 ]//g'", interface_name);
     _syscmd(cmd, buf, sizeof(buf));
@@ -2667,7 +2675,7 @@ INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) 
     if (radio_enable != TRUE)
         return RETURN_OK;
 
-    if (GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     snprintf(cmd, sizeof(cmd),"iw dev %s info | grep 'width' | cut -d  ' ' -f6", interface_name);
     ret = _syscmd(cmd, buf, sizeof(buf));
@@ -2998,7 +3006,7 @@ INT wifi_getRadioTransmitPower(INT radioIndex, ULONG *output_ulong)	//RDKB
     if(output_ulong == NULL)
         return RETURN_ERR;
 
-    if (GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     snprintf(cmd, sizeof(cmd),  "iw %s info | grep txpower | awk '{print $2}' | cut -d '.' -f1 | tr -d '\\n'", interface_name);
     _syscmd(cmd, buf, sizeof(buf));
@@ -3024,7 +3032,7 @@ INT wifi_setRadioTransmitPower(INT radioIndex, ULONG TransmitPower)	//RDKB
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-    if (GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     snprintf(cmd, sizeof(cmd),  "hostapd_cli -i %s status | grep max_txpower | cut -d '=' -f2 | tr -d '\n'", interface_name);
     _syscmd(cmd, buf, sizeof(buf));
@@ -3146,7 +3154,7 @@ INT wifi_getRadioBeaconPeriod(INT radioIndex, UINT *output)
     if(output == NULL)
         return RETURN_ERR;
 
-    if (GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     snprintf(cmd, sizeof(cmd),  "hostapd_cli -i %s status | grep beacon_int | cut -d '=' -f2 | tr -d '\n'", interface_name);
     _syscmd(cmd, buf, sizeof(buf));
@@ -3325,7 +3333,7 @@ INT wifi_setRadioBasicDataTransmitRates(INT radioIndex, CHAR *TransmitRates)
 }
 
 //passing the hostapd configuration file and get the virtual interface of xfinity(2g)
-INT GetInterfaceName_virtualInterfaceName_2G(char interface_name[50])
+INT wifi_GetInterfaceName_virtualInterfaceName_2G(char interface_name[50])
 {
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
     FILE *fp = NULL;
@@ -3488,7 +3496,7 @@ INT wifi_getRadioTrafficStats2(INT radioIndex, wifi_radioTrafficStats2_t *output
     if (NULL == output_struct)
         return RETURN_ERR;
 
-    if (GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
 
     wifi_getApEnable(radioIndex, &iface_status);
@@ -3717,7 +3725,7 @@ INT wifi_applySSIDSettings(INT ssidIndex)
      * after calling setApEnable to false readd all enabled vaps */
     for(int i=0; i < MAX_APS/max_radio_num; i++) {
         apIndex = max_radio_num*i+radioIndex;
-        if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+        if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
             return RETURN_ERR;
         snprintf(cmd, sizeof(cmd), "cat %s | grep %s | cut -d'=' -f2", VAP_STATUS_FILE, interface_name);
         _syscmd(cmd, buf, sizeof(buf));
@@ -3744,7 +3752,7 @@ int get_noise(int radioIndex, struct channels_noise *channels_noise_arr, int cha
     ssize_t read = 0;
     int tmp = 0, arr_index = -1;
 
-    if (GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     sprintf(cmd, "iw dev %s survey dump | grep 'frequency\\|noise' | awk '{print $2}'", interface_name);
 
@@ -3795,7 +3803,7 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s: %d\n", __func__, __LINE__);
 
-    if (GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
 
     snprintf(file_name, sizeof(file_name), "%s%d.txt", ESSID_FILE, radioIndex);
@@ -4010,7 +4018,7 @@ INT wifi_getBasicTrafficStats(INT apIndex, wifi_basicTrafficStats_t *output_stru
     if (NULL == output_struct)
         return RETURN_ERR;
 
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
 
     memset(output_struct, 0, sizeof(wifi_basicTrafficStats_t));
@@ -4059,11 +4067,11 @@ INT wifi_getBasicTrafficStats(INT apIndex, wifi_basicTrafficStats_t *output_stru
     {
         if(apIndex == 0) //private_wifi for 2.4G
         {
-            GetInterfaceName(interface_name,"/nvram/hostapd0.conf");
+            wifi_GetInterfaceName(interface_name,"/nvram/hostapd0.conf");
         }
         else if(apIndex == 1) //private_wifi for 5G
         {
-            GetInterfaceName(interface_name,"/nvram/hostapd1.conf");
+            wifi_GetInterfaceName(interface_name,"/nvram/hostapd1.conf");
         }
         else if(apIndex == 4) //public_wifi for 2.4G
         {
@@ -4073,13 +4081,13 @@ INT wifi_getBasicTrafficStats(INT apIndex, wifi_basicTrafficStats_t *output_stru
                 return RETURN_ERR;
             }
             if(buf[0] == '#')//tp-link
-                GetInterfaceName(interface_name,"/nvram/hostapd4.conf");
+                wifi_GetInterfaceName(interface_name,"/nvram/hostapd4.conf");
             else//tenda
-                GetInterfaceName_virtualInterfaceName_2G(interface_name);
+                wifi_GetInterfaceName_virtualInterfaceName_2G(interface_name);
         }
         else if(apIndex == 5) //public_wifi for 5G
         {
-            GetInterfaceName(interface_name,"/nvram/hostapd5.conf");
+            wifi_GetInterfaceName(interface_name,"/nvram/hostapd5.conf");
         }
 
         GetIfacestatus(interface_name, interface_status);
@@ -4139,7 +4147,7 @@ INT wifi_getWifiTrafficStats(INT apIndex, wifi_trafficStats_t *output_struct)
 
     memset(output_struct, 0, sizeof(wifi_trafficStats_t));
 
-    if (GetInterfaceName(apIndex,interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex,interface_name) != RETURN_OK)
         return RETURN_ERR;
     GetIfacestatus(interface_name, interface_status);
 
@@ -4333,7 +4341,7 @@ INT wifi_getAssociatedDeviceDetail(INT apIndex, INT devIndex, wifi_device_t *out
     wifi_device_info_t info = {0};
     info.wifi_devIndex = devIndex;
 
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
 
     snprintf(if_name,sizeof(if_name),"%s", interface_name);
@@ -4389,7 +4397,7 @@ INT wifi_getAssociatedDeviceDetail(INT apIndex, INT devIndex, wifi_device_t *out
     char interface_name[16] = {0};
     int count = 0, device = 0;
 
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
 
     snprintf(if_name,sizeof(if_name),"%s", interface_name);
@@ -4641,7 +4649,7 @@ INT wifi_setRadioAMSDUEnable(INT radioIndex, BOOL amsduEnable)
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-    if (GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     sprintf(cmd, "mt76-vendor %s set ap_wireless amsdu=%d", interface_name, amsduEnable);
     _syscmd(cmd, buf, sizeof(buf));
@@ -4844,7 +4852,7 @@ INT wifi_getRadioIGMPSnoopingEnable(INT radioIndex, BOOL *output_bool)
     if (strncmp(buf, "1", 1) == 0)
         bridge = TRUE;
 
-    if (GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     snprintf(cmd, sizeof(cmd),  "cat /sys/devices/virtual/net/%s/brif/%s/multicast_to_unicast", BRIDGE_NAME, interface_name);
     _syscmd(cmd, buf, sizeof(buf));
@@ -4874,7 +4882,7 @@ INT wifi_setRadioIGMPSnoopingEnable(INT radioIndex, BOOL enable)
     wifi_getMaxRadioNumber(&max_num_radios);
     // mac80211
     for (int i = 0; i < max_num_radios; i++) {
-        if (GetInterfaceName(i, interface_name) != RETURN_OK)
+        if (wifi_GetInterfaceName(i, interface_name) != RETURN_OK)
             return RETURN_ERR;
         snprintf(cmd, sizeof(cmd),  "echo %d > /sys/devices/virtual/net/%s/brif/%s/multicast_to_unicast", enable, BRIDGE_NAME, interface_name);
         _syscmd(cmd, buf, sizeof(buf));
@@ -4911,7 +4919,7 @@ INT wifi_createAp(INT apIndex, INT radioIndex, CHAR *essid, BOOL hideSsid)
     if (NULL == essid)
         return RETURN_ERR;
 
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
 
     phyId = radio_index_to_phy(radioIndex);
@@ -4936,7 +4944,7 @@ INT wifi_deleteAp(INT apIndex)
     char buf[1024];
     char cmd[128];
 
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     snprintf(cmd,sizeof(cmd),  "wlanconfig %s destroy", interface_name);
     _syscmd(cmd, buf, sizeof(buf));
@@ -4953,7 +4961,7 @@ INT wifi_getApName(INT apIndex, CHAR *output_string)
     if(NULL == output_string)
         return RETURN_ERR;
 
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         snprintf(output_string, 16, "%s%d", AP_PREFIX, apIndex);    // For wifiagent generating data model.
     else
         snprintf(output_string, 16, "%s", interface_name);
@@ -4966,20 +4974,15 @@ INT wifi_getIndexFromName(CHAR *inputSsidString, INT *output_int)
     char cmd [128] = {0};
     char buf[32] = {0};
     char *apIndex_str = NULL;
-    INT apIndex = 0;
     bool enable = FALSE;
 
     snprintf(cmd, sizeof(cmd), "grep -rn ^interface=%s$ /nvram/hostapd*.conf | cut -d '.' -f1 | cut -d 'd' -f2 | tr -d '\\n'", inputSsidString);
     _syscmd(cmd, buf, sizeof(buf));
 
-    apIndex_str = strtok(buf, "\n");
-    while (apIndex_str != NULL) {
-        apIndex = strtoul(apIndex_str, NULL, 10);
-        if (enable == TRUE) {
-            *output_int = apIndex;
-            return RETURN_OK;
-        }
-        apIndex_str = strtok(NULL, "\n");
+    if (strlen(buf) != 0) {
+        apIndex_str = strtok(buf, "\n");
+        *output_int = strtoul(apIndex_str, NULL, 10);
+        return RETURN_OK;
     }
 
     // If interface name is not in hostapd config, the caller maybe wifi agent to generate data model.
@@ -5096,7 +5099,7 @@ INT wifi_setApRtsThreshold(INT apIndex, UINT threshold)
         return RETURN_ERR;
     }
 
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     snprintf(config_file, sizeof(config_file), "%s.conf", interface_name);
     snprintf(buf, sizeof(buf), "%u", threshold);
@@ -5346,7 +5349,7 @@ INT wifi_getApNumDevicesAssociated(INT apIndex, ULONG *output_ulong)
         return RETURN_OK;
 
     //sprintf(cmd, "iw dev %s station dump | grep Station | wc -l", interface_name);//alternate method
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     sprintf(cmd, "hostapd_cli -i %s list_sta | wc -l", interface_name);
     _syscmd(cmd, buf, sizeof(buf));
@@ -5361,7 +5364,7 @@ INT wifi_kickApAssociatedDevice(INT apIndex, CHAR *client_mac)
     char interface_name[16] = {0};
     char buf[126]={'\0'};
 
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     sprintf(buf,"hostapd_cli -i%s disassociate %s", interface_name, client_mac);
     system(buf);
@@ -5394,7 +5397,7 @@ INT wifi_getApAclDevices(INT apIndex, CHAR *macArray, UINT buf_size)
     char cmd[MAX_CMD_SIZE]={'\0'};
     int ret = 0;
 
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     sprintf(cmd, "hostapd_cli -i %s accept_acl SHOW | awk '{print $1}'", interface_name);
     ret = _syscmd(cmd,macArray,buf_size);
@@ -5410,7 +5413,7 @@ INT wifi_getApDenyAclDevices(INT apIndex, CHAR *macArray, UINT buf_size)
     char cmd[MAX_CMD_SIZE]={'\0'};
     int ret = 0;
 
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     sprintf(cmd, "hostapd_cli -i %s deny_acl SHOW | awk '{print $1}'", interface_name);
     ret = _syscmd(cmd,macArray,buf_size);
@@ -5429,7 +5432,7 @@ INT wifi_getApDevicesAssociated(INT apIndex, CHAR *macArray, UINT buf_size)
 
     if(apIndex > 3) //Currently supporting apIndex upto 3
         return RETURN_ERR;
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     sprintf(cmd, "hostapd_cli -i %s list_sta", interface_name);
     //sprintf(buf,"iw dev %s station dump | grep Station  | cut -d ' ' -f2", interface_name);//alternate method
@@ -5656,7 +5659,7 @@ INT wifi_setApMacAddressControlMode(INT apIndex, INT filterMode)
         list[0].value = buf;
 
         char cmd[128], rtn[128];
-        if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+        if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
             return RETURN_ERR;
         snprintf(cmd, sizeof(cmd), "hostapd_cli -i %s deny_acl CLEAR", interface_name);
         _syscmd(cmd, rtn, sizeof(rtn));
@@ -5876,7 +5879,7 @@ INT wifi_setApEnable(INT apIndex, BOOL enable)
     if (enable == status)
         return RETURN_OK;
 
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
 
     if (enable == TRUE) {
@@ -5916,7 +5919,7 @@ INT wifi_getApEnable(INT apIndex, BOOL *output_bool)
 
     if((apIndex >= 0) && (apIndex < MAX_APS))//Handling 6 APs
     {
-        if (GetInterfaceName(apIndex, interface_name) != RETURN_OK) {
+        if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK) {
             *output_bool = FALSE;
             return RETURN_OK;
         }
@@ -6154,7 +6157,7 @@ INT wifi_setApWmmOgAckPolicy(INT apIndex, INT class, BOOL ackPolicy)  //RDKB
     fprintf(f, "%hu", bitmap);
     fclose(f);
 
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     snprintf(cmd, sizeof(cmd), "iw dev %s set noack_map 0x%04x\n", interface_name, bitmap);
     _syscmd(cmd, buf, sizeof(buf));
@@ -6787,7 +6790,7 @@ INT wifi_getApWpsEnable(INT apIndex, BOOL *output_bool)
     char buf[MAX_BUF_SIZE] = {0}, cmd[MAX_CMD_SIZE] = {0}, *value;
     if(!output_bool)
         return RETURN_ERR;
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     sprintf(cmd,"hostapd_cli -i %s get_config | grep wps_state | cut -d '=' -f2", interface_name);
     _syscmd(cmd, buf, sizeof(buf));
@@ -6945,7 +6948,7 @@ INT wifi_getApWpsConfigurationState(INT apIndex, CHAR *output_string)
         return RETURN_ERR;
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     snprintf(output_string, 32, "Not configured");
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     snprintf(cmd, sizeof(cmd), "hostapd_cli -i %s get_config | grep wps_state | cut -d'=' -f2", interface_name);
     _syscmd(cmd, buf, sizeof(buf));
@@ -6972,7 +6975,7 @@ INT wifi_setApWpsEnrolleePin(INT apIndex, CHAR *pin)
     if (!enable)
         return RETURN_ERR;
 
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     snprintf(cmd, 64, "hostapd_cli -i%s wps_pin any %s", interface_name, pin);
     _syscmd(cmd, buf, sizeof(buf));
@@ -6998,7 +7001,7 @@ INT wifi_setApWpsButtonPush(INT apIndex)
     if (!enable)
         return RETURN_ERR;
 
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
 
     snprintf(cmd, sizeof(cmd), "hostapd_cli -i%s wps_cancel; hostapd_cli -i%s wps_pbc", interface_name, interface_name);
@@ -7016,7 +7019,7 @@ INT wifi_cancelApWPS(INT apIndex)
     char cmd[MAX_CMD_SIZE];
     char buf[MAX_BUF_SIZE]={0};
 
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     snprintf(cmd, sizeof(cmd), "hostapd_cli -i%s wps_cancel", interface_name);
     _syscmd(cmd,buf, sizeof(buf));
@@ -7041,7 +7044,7 @@ INT wifi_getApAssociatedDeviceDiagnosticResult(INT apIndex, wifi_associated_dev_
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     *associated_dev_array = NULL;
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     sprintf(cmd, "hostapd_cli -i%s all_sta | grep AUTHORIZED | wc -l", interface_name);
     _syscmd(cmd,buf,sizeof(buf));
@@ -7681,7 +7684,7 @@ INT wifi_getApAssociatedDeviceDiagnosticResult3(INT apIndex, wifi_associated_dev
     {
         sprintf(hostapdconf, "/nvram/hostapd%d.conf", apIndex);
 
-        GetInterfaceName(interface_name, hostapdconf);
+        wifi_GetInterfaceName(interface_name, hostapdconf);
 
         if(strlen(interface_name) > 1)
         {
@@ -7975,7 +7978,7 @@ INT wifi_ifConfigUp(INT apIndex)
     char cmd[128];
     char buf[1024];
 
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     snprintf(cmd, sizeof(cmd), "ifconfig %s up 2>/dev/null", interface_name);
     _syscmd(cmd, buf, sizeof(buf));
@@ -7996,7 +7999,7 @@ INT wifi_pushBridgeInfo(INT apIndex)
     wifi_getApBridgeInfo(apIndex,bridge,ip,subnet);
     wifi_getApVlanID(apIndex,&vlanId);
 
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     snprintf(cmd, sizeof(cmd), "cfgVlan %s %s %d %s ", interface_name, bridge, vlanId, ip);
     _syscmd(cmd,buf, sizeof(buf));
@@ -8012,7 +8015,7 @@ INT wifi_pushChannel(INT radioIndex, UINT channel)
     int  apIndex;
 
     apIndex=(radioIndex==0)?0:1;	
-    if (GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     snprintf(cmd, sizeof(cmd), "iwconfig %s freq %d",interface_name,channel);
     _syscmd(cmd,buf, sizeof(buf));
@@ -8609,7 +8612,7 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
 
     snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
 
-    if (GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
@@ -8739,7 +8742,7 @@ INT wifi_getNeighboringWiFiStatus(INT radio_index, wifi_neighbor_ap2_t **neighbo
         fclose(f);
     }
 
-    if (GetInterfaceName(radio_index, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(radio_index, interface_name) != RETURN_OK)
         return RETURN_ERR;
 
     phyId = radio_index_to_phy(radio_index);
@@ -8986,7 +8989,7 @@ INT wifi_getSSIDNameStatus(INT apIndex, CHAR *output_string)
     if (NULL == output_string)
         return RETURN_ERR;
 
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     snprintf(cmd, sizeof(cmd), "hostapd_cli  -i %s get_config | grep ^ssid | cut -d '=' -f2 | tr -d '\n'", interface_name);
     _syscmd(cmd, buf, sizeof(buf));
@@ -9226,7 +9229,7 @@ INT wifi_getSSIDTrafficStats2(INT ssidIndex,wifi_ssidTrafficStats2_t *output_str
         return RETURN_ERR;
 
     memset(out, 0, sizeof(wifi_ssidTrafficStats2_t));
-    if (GetInterfaceName(ssidIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(ssidIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     sprintf(pipeCmd, "cat /proc/net/dev | grep %s", interface_name);
 
@@ -9489,7 +9492,7 @@ INT wifi_getApAssociatedDeviceTidStatsResult(INT radioIndex,  mac_address_t *cli
     char  if_name[10];
     char interface_name[16] = {0};
 
-    if (GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
 
     snprintf(if_name, sizeof(if_name), "%s", interface_name);
@@ -9538,7 +9541,7 @@ INT wifi_getApAssociatedDeviceTidStatsResult(INT radioIndex,  mac_address_t *cli
     int lines,tid_index=0;
     char mac_addr[20] = {'\0'};
 
-    if (GetInterfaceName(radioIndex, if_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(radioIndex, if_name) != RETURN_OK)
         return RETURN_ERR;
 
     wifi_associated_dev_tid_entry_t *stats_entry;
@@ -9615,7 +9618,7 @@ INT wifi_startNeighborScan(INT apIndex, wifi_neighborScanMode_t scan_mode, INT d
     if (scan_mode != WIFI_RADIO_SCAN_MODE_FULL)
         ieee80211_channel_to_frequency(chan_list[0], &freq);
 
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
 
     if (freq)
@@ -9788,7 +9791,7 @@ INT wifi_getApAssociatedDeviceRxStatsResult(INT radioIndex, mac_address_t *clien
 #ifdef HAL_NETLINK_IMPL
     Netlink nl;
     char if_name[32];
-    if (GetInterfaceName(radioIndex, if_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(radioIndex, if_name) != RETURN_OK)
         return RETURN_ERR;
 
     *output_array_size = sizeof(wifi_associated_dev_rate_info_rx_stats_t);
@@ -9932,7 +9935,7 @@ INT wifi_getApAssociatedDeviceTxStatsResult(INT radioIndex, mac_address_t *clien
     Netlink nl;
     char if_name[10];
     char interface_name[16] = {0};
-    if (GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
 
     *output_array_size = sizeof(wifi_associated_dev_rate_info_tx_stats_t);
@@ -10197,7 +10200,7 @@ INT wifi_getRadioChannelStats(INT radioIndex,wifi_channelStats_t *input_output_c
 
     local[0].array_size = array_size;
 
-    if (GetInterfaceName(radioIndex, if_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(radioIndex, if_name) != RETURN_OK)
         return RETURN_ERR;
 
     nl.id = initSock80211(&nl);
@@ -10816,7 +10819,7 @@ INT wifi_getRadioPercentageTransmitPower(INT apIndex, ULONG *txpwr_pcntg)
     if(txpwr_pcntg == NULL)
         return RETURN_ERR;
 
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
 
     // Get the maximum tx power of the device
@@ -11166,7 +11169,7 @@ INT wifi_getMultiPskClientKey(INT apIndex, mac_address_t mac, wifi_key_multi_psk
     char cmd[256];
     char interface_name[16] = {0};
 
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
 
     sprintf(cmd, "hostapd_cli -i %s sta %x:%x:%x:%x:%x:%x |grep '^keyid' | cut -f 2 -d = | tr -d '\n'",
@@ -11208,7 +11211,7 @@ INT wifi_pushMultiPskKeys(INT apIndex, wifi_key_multi_psk_t *keys, INT keysNumbe
     fclose(fd);
 
     //reload file
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     sprintf(cmd, "hostapd_cli -i%s raw RELOAD_WPA_PSK", interface_name);
     _syscmd(cmd, out, 64);
@@ -11296,7 +11299,7 @@ INT wifi_setNeighborReports(UINT apIndex,
 
     /*rmeove all neighbors*/
     wifi_dbg_printf("\n[%s]: removing all neighbors from %s\n", __func__, interface_name);
-    if (GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     sprintf(cmd, "hostapd_cli show_neighbor -i %s | awk '{print $1 \" \" $2}' | xargs -n2 -r hostapd_cli remove_neighbor -i %s",interface_name,interface_name);
     system(cmd);
@@ -12299,7 +12302,7 @@ void checkVapStatus(int apIndex, bool *enable)
     char buf[128] = {0};
 
     *enable = FALSE;
-    if (GetInterfaceName(apIndex, if_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, if_name) != RETURN_OK)
         return;
 
     snprintf(cmd, sizeof(cmd), "cat %s | grep ^%s=1", VAP_STATUS_FILE, if_name);
@@ -13050,7 +13053,7 @@ INT wifi_getApAssociatedDevice(INT ap_index, mac_address_t *output_deviceMacAddr
     if (status == FALSE)
         return RETURN_OK;
 
-    if (GetInterfaceName(ap_index, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(ap_index, interface_name) != RETURN_OK)
         return RETURN_ERR;
     sprintf(cmd, "hostapd_cli -i %s list_sta", interface_name);
     _syscmd(cmd, buf, sizeof(buf));
@@ -13082,7 +13085,7 @@ INT wifi_getApAssociatedDevice(INT ap_index, CHAR *output_buf, INT output_buf_si
     if (!status)
         return RETURN_OK;
 
-    if (GetInterfaceName(ap_index, interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(ap_index, interface_name) != RETURN_OK)
         return RETURN_ERR;
     sprintf(cmd, "hostapd_cli -i %s list_sta | tr '\\n' ',' | sed 's/.$//'", interface_name);
     _syscmd(cmd, output_buf, output_buf_size);
