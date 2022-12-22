@@ -2243,9 +2243,9 @@ INT wifi_getRadioChannelsInUse(INT radioIndex, CHAR *output_string)	//RDKB
         memset(buf, 0, sizeof(buf));
         wifi_halgetRadioExtChannel(config_file, buf);       // read ht_capab for HT40+ or -
 
-        if (strncmp(buf, "AboveControlChannel", strlen("AboveControlChannel") == 0) && channel < 10) {
+        if (strncmp(buf, "AboveControlChannel", strlen("AboveControlChannel")) == 0 && channel < 10) {
             snprintf(output_string, 256, "%d,%d", channel, channel+4);
-        } else if (strncmp(buf, "BelowControlChannel", strlen("BelowControlChannel") == 0) && channel > 4) {
+        } else if (strncmp(buf, "BelowControlChannel", strlen("BelowControlChannel")) == 0 && channel > 4) {
             snprintf(output_string, 256, "%d,%d", channel-4, channel);
         } else {
             fprintf(stderr, "%s: invalid channel %d set with %s\n.", __func__, channel, buf);
