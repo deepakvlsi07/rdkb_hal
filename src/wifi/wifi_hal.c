@@ -78,7 +78,6 @@ Licensed under the ISC license
 #define DFS_ENABLE_FILE "/nvram/dfs_enable.txt"
 #define VLAN_FILE "/nvram/hostapd.vlan"
 #define PSK_FILE "/nvram/hostapd"
-#define AMSDU_FILE "/tmp/AMSDU"
 #define MCS_FILE "/tmp/MCS"
 #define NOACK_MAP_FILE "/tmp/NoAckMap"
 
@@ -4603,16 +4602,22 @@ INT wifi_setRadioSTBCEnable(INT radioIndex, BOOL STBC_Enable)
 // outputs A-MSDU enable status, 0 == not enabled, 1 == enabled
 INT wifi_getRadioAMSDUEnable(INT radioIndex, BOOL *output_bool)
 {
-    char AMSDU_file_path[64] = {0};
+    char cmd[128] = {0};
+    char buf[128] = {0};
+    char interface_name[16] = {0};
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
     if(output_bool == NULL)
         return RETURN_ERR;
 
-    sprintf(AMSDU_file_path, "%s%d.txt", AMSDU_FILE, radioIndex);
+    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+        return RETURN_ERR;
 
-    if (access(AMSDU_file_path, F_OK) == 0)
+    sprintf(cmd, "hostapd_cli -i %s get_amsdu | awk '{print $3}'", interface_name);
+    _syscmd(cmd, buf, sizeof(buf));
+
+    if (strncmp(buf, "1", 1) == 0)
         *output_bool = TRUE;
     else
         *output_bool = FALSE;
@@ -4624,25 +4629,24 @@ INT wifi_getRadioAMSDUEnable(INT radioIndex, BOOL *output_bool)
 // enables A-MSDU in the hardware, 0 == not enabled, 1 == enabled
 INT wifi_setRadioAMSDUEnable(INT radioIndex, BOOL amsduEnable)
 {
-    char interface_name[16] = {0};
-    char cmd[64]={0};
-    char buf[64]={0};
-    char AMSDU_file_path[64] = {0};
+    char config_file[128] = {0};
+    struct params list = {0};
+    BOOL enable;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+    if (wifi_getRadioAMSDUEnable(radioIndex, &enable) != RETURN_OK)
         return RETURN_ERR;
-    sprintf(cmd, "mt76-vendor %s set ap_wireless amsdu=%d", interface_name, amsduEnable);
-    _syscmd(cmd, buf, sizeof(buf));
 
-    sprintf(AMSDU_file_path, "%s%d.txt", AMSDU_FILE, radioIndex);
-    memset(cmd, 0, sizeof(cmd));
-    if (amsduEnable == TRUE)
-        sprintf(cmd, "touch %s", AMSDU_file_path);
-    else
-        sprintf(cmd, "rm %s 2> /dev/null", AMSDU_file_path);
-    _syscmd(cmd, buf, sizeof(buf));
+    if (amsduEnable == enable)
+        return RETURN_OK;
+
+    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
+    list.name = "amsdu";
+    list.value = amsduEnable? "1":"0";
+    wifi_hostapdWrite(config_file, &list, 1);
+    wifi_hostapdProcessUpdate(radioIndex, &list, 1);
+    wifi_reloadAp(radioIndex);
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
@@ -4658,7 +4662,7 @@ INT wifi_getRadioTxChainMask(INT radioIndex, INT *output_int)
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
     phyId = radio_index_to_phy(radioIndex);
-    sprintf(cmd, "iw phy%d info | grep 'Configured Antennas' | awk '{print $4}'", phyId);
+    snprintf(cmd, sizeof(cmd), "iw phy%d info | grep 'Configured Antennas' | awk '{print $4}'", phyId);
     _syscmd(cmd, buf, sizeof(buf));
 
     *output_int = (INT)strtol(buf, NULL, 16);
