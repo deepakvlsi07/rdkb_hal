@@ -63,10 +63,9 @@ Licensed under the ISC license
 #include <time.h>
 #define MAC_ALEN 6
 
-#define MAX_BUF_SIZE 128
-#define MAX_CMD_SIZE 1024
-#define MAX_POSSIBLE_CHANNEL_STRING_BUF 512
-#define IF_NAME_SIZE 50
+#define MAX_BUF_SIZE 256
+#define MAX_CMD_SIZE 256
+#define IF_NAME_SIZE 16
 #define CONFIG_PREFIX "/nvram/hostapd"
 #define ACL_PREFIX "/nvram/hostapd-acl"
 #define DENY_PREFIX "/nvram/hostapd-deny"
@@ -84,8 +83,6 @@ Licensed under the ISC license
 #define MCS_FILE "/tmp/MCS"
 #define NOACK_MAP_FILE "/tmp/NoAckMap"
 
-#define DRIVER_2GHZ "ath9k"
-#define DRIVER_5GHZ "ath10k_pci"
 #define BRIDGE_NAME "brlan0"
 
 /*
@@ -108,8 +105,6 @@ Licensed under the ISC license
 #define RADIO_PREFIX	"wlan"
 #endif
 
-#define MAX_BUF_SIZE 128
-#define MAX_CMD_SIZE 1024
 #define MAX_ASSOCIATED_STA_NUM 2007
 
 //Uncomment to enable debug logs
@@ -1297,9 +1292,7 @@ INT wifi_getSSIDNumberOfEntries(ULONG *output) //Tr181
 INT wifi_getRadioEnable(INT radioIndex, BOOL *output_bool)      //RDKB
 {
     char interface_name[16] = {0};
-    char interface_path[MAX_CMD_SIZE] = {0};
-    FILE *fp = NULL;
-    int phyId = 0;
+    char buf[128] = {0}, cmd[128] = {0};
 
     if (NULL == output_bool)
         return RETURN_ERR;
@@ -1308,17 +1301,6 @@ INT wifi_getRadioEnable(INT radioIndex, BOOL *output_bool)      //RDKB
     if (radioIndex >= MAX_NUM_RADIOS)// Target has two wifi radios
         return RETURN_ERR;
 
-    phyId = radio_index_to_phy(radioIndex);
-
-    snprintf(interface_path, sizeof(interface_path), "/sys/class/net/%s%d/address", RADIO_PREFIX, phyId);
-    fp = fopen(interface_path, "r");
-    if(!fp)
-    {
-		return RETURN_ERR;
-    }
-	fclose(fp);
-    //TODO: check if hostapd with config is running
-	char buf[MAX_BUF_SIZE] = {0}, cmd[MAX_CMD_SIZE] = {0};
 	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 	sprintf(cmd, "hostapd_cli -i %s status | grep state | cut -d '=' -f2", interface_name);
@@ -1335,7 +1317,6 @@ INT wifi_setRadioEnable(INT radioIndex, BOOL enable)
     char cmd[MAX_CMD_SIZE] = {0};
     char buf[MAX_CMD_SIZE] = {0};
     int apIndex, ret;
-    FILE *fp = NULL;
     int max_radio_num = 0; 
     int phyId = 0;
 
@@ -1359,19 +1340,9 @@ INT wifi_setRadioEnable(INT radioIndex, BOOL enable)
             snprintf(cmd, sizeof(cmd), "iw %s del", interface_name);
             _syscmd(cmd, buf, sizeof(buf));
         }
-        snprintf(cmd, sizeof(cmd), "ifconfig %s%d down 2>&1", RADIO_PREFIX, phyId);
-        _syscmd(cmd, buf, sizeof(buf));
-        if(strlen(buf))
-            fprintf(stderr, "Could not shut down the radio interface: %s%d", RADIO_PREFIX, phyId);
     }
     else
     {
-        snprintf(cmd, sizeof(cmd), "ifconfig %s%d up 2>&1", RADIO_PREFIX, phyId);
-        _syscmd(cmd, buf, sizeof(buf));
-        if(strlen(buf))
-            fprintf(stderr, "Could not up the radio interface: %s%d", RADIO_PREFIX, phyId);
-        sleep(1);
-
         for(apIndex=radioIndex; apIndex<MAX_APS; apIndex+=max_radio_num)
         {
             snprintf(cmd, sizeof(cmd), "iw phy%d interface add %s type __ap", phyId, interface_name);
@@ -1410,13 +1381,9 @@ INT wifi_getRadioStatus(INT radioIndex, BOOL *output_bool)	//RDKB
 //Get the Radio Interface name from platform, eg "wlan0"
 INT wifi_getRadioIfName(INT radioIndex, CHAR *output_string) //Tr181
 {
-    int phyId = 0;
     if (NULL == output_string || radioIndex>=MAX_NUM_RADIOS || radioIndex<0)
         return RETURN_ERR;
-    phyId = radio_index_to_phy(radioIndex);
-    snprintf(output_string, 64, "%s%d", RADIO_PREFIX, phyId);
-
-    return RETURN_OK;
+    return wifi_GetInterfaceName(radioIndex, output_string);
 }
 
 //Get the maximum PHY bit rate supported by this interface. eg: "216.7 Mb/s", "1.3 Gb/s"
@@ -4911,29 +4878,7 @@ INT wifi_getRadioResetCount(INT radioIndex, ULONG *output_int)
 // creates a new ap and pushes these parameters to the hardware
 INT wifi_createAp(INT apIndex, INT radioIndex, CHAR *essid, BOOL hideSsid)
 {
-    char interface_name[16] = {0};
-    char buf[1024];
-    char cmd[128];
-    int phyId = 0;
-
-    if (NULL == essid)
-        return RETURN_ERR;
-
-    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
-        return RETURN_ERR;
-
-    phyId = radio_index_to_phy(radioIndex);
-    snprintf(cmd,sizeof(cmd), "wlanconfig %s create wlandev %s%d wlanmode ap", interface_name, RADIO_PREFIX, phyId);
-    _syscmd(cmd, buf, sizeof(buf));
-
-    snprintf(cmd,sizeof(cmd), "iwconfig %s essid %s mode master", interface_name, essid);
-    _syscmd(cmd, buf, sizeof(buf));
-
-    wifi_pushSsidAdvertisementEnable(apIndex, !hideSsid);    
-
-    snprintf(cmd,sizeof(cmd), "ifconfig %s txqueuelen 1000", interface_name);
-    _syscmd(cmd, buf, sizeof(buf));
-
+    // Deprecated when use hal version 3, use wifi_createVap() instead.
     return RETURN_OK;
 }
 
@@ -4946,7 +4891,7 @@ INT wifi_deleteAp(INT apIndex)
 
     if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
-    snprintf(cmd,sizeof(cmd),  "wlanconfig %s destroy", interface_name);
+    snprintf(cmd,sizeof(cmd),  "iw %s del", interface_name);
     _syscmd(cmd, buf, sizeof(buf));
 
     wifi_removeApSecVaribles(apIndex);
@@ -10127,7 +10072,7 @@ static int get_survey_dump_buf(INT radioIndex, int channel, const char *buf, siz
 {
     int freqMHz = -1;
     char cmd[MAX_CMD_SIZE] = {'\0'};
-    int phyId = 0;
+    char interface_name[16] = {0};
 
     ieee80211_channel_to_frequency(channel, &freqMHz);
     if (freqMHz == -1) {
@@ -10135,8 +10080,8 @@ static int get_survey_dump_buf(INT radioIndex, int channel, const char *buf, siz
         return -1;
     }
 
-    phyId = radio_index_to_phy(radioIndex);
-    if (sprintf(cmd,"iw dev %s%d survey dump | grep -A5 %d | tr -d '\\t'", RADIO_PREFIX, phyId, freqMHz) < 0) {
+    wifi_GetInterfaceName(radioIndex, interface_name);
+    if (sprintf(cmd,"iw dev %s survey dump | grep -A5 %d | tr -d '\\t'", interface_name, freqMHz) < 0) {
         wifi_dbg_printf("%s: failed to build iw dev command for radioIndex=%d freq=%d\n", __FUNCTION__,
                          radioIndex, freqMHz);
         return -1;
@@ -12524,8 +12469,8 @@ static int getRadioCapabilities(int radioIndex, wifi_radio_capabilities_t *rcap)
     wifi_channels_list_t *chlistp;
     CHAR output_string[64];
     CHAR pchannels[128];
+    CHAR interface_name[16] = {0};
     wifi_band band;
-    int phyId = 0;
 
     if(rcap == NULL)
     {
@@ -12589,8 +12534,8 @@ static int getRadioCapabilities(int radioIndex, wifi_radio_capabilities_t *rcap)
     rcap->csi.maxDevices = 8;
     rcap->csi.soudingFrameSupported = TRUE;
 
-    phyId = radio_index_to_phy(radioIndex);
-    snprintf(rcap->ifaceName, 64, "%s%d", RADIO_PREFIX, phyId);
+    wifi_GetInterfaceName(radioIndex, interface_name);
+    snprintf(rcap->ifaceName, sizeof(interface_name), "%s",interface_name);
 
     /* channelWidth - all supported bandwidths */
     int i=0;
@@ -12653,6 +12598,7 @@ INT wifi_getHalCapability(wifi_hal_capability_t *cap)
     char cmd[MAX_BUF_SIZE] = {0}, output[MAX_BUF_SIZE] = {0};
     int iter = 0;
     unsigned int j = 0;
+    int max_num_radios;
     wifi_interface_name_idex_map_t *iface_info = NULL;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
@@ -12664,9 +12610,8 @@ INT wifi_getHalCapability(wifi_hal_capability_t *cap)
     cap->version.minor = WIFI_HAL_MINOR_VERSION;
 
     /* number of radios platform property */
-    snprintf(cmd, sizeof(cmd), "ls -d /sys/class/net/wlan* | wc -l");
-    _syscmd(cmd, output, sizeof(output));
-    cap->wifi_prop.numRadios = atoi(output) > MAX_NUM_RADIOS ? MAX_NUM_RADIOS: atoi(output) ;
+    wifi_getMaxRadioNumber(&max_num_radios);
+    cap->wifi_prop.numRadios = max_num_radios;
 
     for(radioIndex=0; radioIndex < cap->wifi_prop.numRadios; radioIndex++)
     {
@@ -12696,7 +12641,7 @@ INT wifi_getHalCapability(wifi_hal_capability_t *cap)
             // TODO: primary
             iface_info->index = array_index_to_vap_index(radioIndex, j);
             memset(output, 0, sizeof(output));
-            if (iface_info->index >= 0 && wifi_getApName(iface_info->index, output) == RETURN_OK)
+            if (wifi_getApName(iface_info->index, output) == RETURN_OK)
             {
                  strncpy(iface_info->vap_name, output, sizeof(iface_info->vap_name) - 1);
             }
