@@ -52,7 +52,7 @@ void *ethsw_thread_main(void *context __attribute__((unused)));
 #define  ETHSWITCHTOOL   "switch"
 #define  MIITOOL         "mii_mgr_cl45"
 #define  WANLINKUP       "0x796D"
-#define  MAX_LAN_PORT     4
+#define  MAX_LAN_PORT     6
 /**********************************************************************
                             MAIN ROUTINES
 **********************************************************************/
@@ -78,7 +78,7 @@ int is_interface_link(const char *fname)
         char buf[32] = {0};
         fgets(buf,sizeof(buf),file);
         fclose(file);
-        if(atoi(buf))
+        if(strtol(buf, NULL, 10))
             return 1;
     }
     return 0;
@@ -120,11 +120,202 @@ CcspHalEthSwInit
     }
 
     hal_init_done = 1;
-#endif	
+#endif
+    return  RETURN_OK;
+}
+#ifdef THREE_GMACS_SUPPORT
+INT
+EthSwGetExtPortStatus
+    (
+        CCSP_HAL_ETHSW_PORT         PortId,
+        PCCSP_HAL_ETHSW_LINK_RATE   pLinkRate,
+        PCCSP_HAL_ETHSW_DUPLEX_MODE pDuplexMode,
+        PCCSP_HAL_ETHSW_LINK_STATUS pStatus
+    )
+{
+    char path[32] = {0};
+    FILE *fp = NULL;
+    char cmd[64] = {0};
+    char filepath[32] = {0};
+    char buf[32] = {0};
+    char duplex[6] = {0};
+    int link = 0;
+    int speed = 0;
+
+    if(PortId == NULL || pLinkRate == NULL || pDuplexMode == NULL || pStatus == NULL)
+        return  RETURN_ERR;
+
+
+    sprintf(path, "/sys/class/net/eth3/carrier");
+    link = is_interface_link(path);
+
+    if(link){
+        *pStatus  = CCSP_HAL_ETHSW_LINK_Up;
+    }else{
+        *pStatus   = CCSP_HAL_ETHSW_LINK_Down;
+        *pLinkRate      = CCSP_HAL_ETHSW_LINK_NULL;
+        *pDuplexMode    = CCSP_HAL_ETHSW_DUPLEX_Auto;
+        return  RETURN_OK; 
+    }
+    sprintf(cmd, "ethtool eth3 | grep -i speed > /tmp/eth3_speed");
+    system(cmd);
+    sprintf(filepath, "/tmp/eth3_speed");
+    fp = fopen(filepath, "r");
+    if(fp != NULL)
+    {
+        fgets(buf,sizeof(buf),fp);
+        if(strstr(buf,"Unknown") == NULL){
+            sscanf(buf,"       Speed: %dMb/s", &speed);
+        }        
+        fclose(fp);
+    }else{
+        *pLinkRate      = CCSP_HAL_ETHSW_LINK_NULL;
+        *pDuplexMode    = CCSP_HAL_ETHSW_DUPLEX_Auto;
+        return  RETURN_OK;        
+    }
+    
+    if(speed)
+    {
+        memset(buf,0,sizeof(buf));
+        memset(cmd,0,sizeof(cmd));
+        memset(filepath,0,sizeof(filepath));
+        sprintf(cmd, "ethtool eth3 | grep -i duplex > /tmp/eth3_duplex");
+        system(cmd);
+        sprintf(filepath, "/tmp/eth3_duplex");
+        fp = fopen(filepath, "r");
+        if(fp != NULL)
+        {
+            fgets(buf,sizeof(buf),fp);
+            if(strstr(buf,"Unknown") == NULL){
+                sscanf(buf,"        Duplex: %s", duplex);
+            }
+            fclose(fp);
+            if(!strcmp(duplex,"Full")) 
+                *pDuplexMode    = CCSP_HAL_ETHSW_DUPLEX_Full;
+            else
+                *pDuplexMode    = CCSP_HAL_ETHSW_DUPLEX_Half;         
+        }
+    }
+    switch (speed)
+    {
+        case 0:
+        {
+            *pLinkRate      = CCSP_HAL_ETHSW_LINK_Auto;
+            *pDuplexMode    = CCSP_HAL_ETHSW_DUPLEX_Auto;
+            break;
+        }
+
+        case 10:
+        {
+            *pLinkRate      = CCSP_HAL_ETHSW_LINK_10Mbps;
+            break;
+        }
+
+        case 100:
+        {
+            *pLinkRate      = CCSP_HAL_ETHSW_LINK_100Mbps;
+            break;
+        }
+
+        case 1000:
+        {
+            *pLinkRate      = CCSP_HAL_ETHSW_LINK_1Gbps;
+            break;
+        }
+
+        case 2500:
+        {
+            *pLinkRate      = CCSP_HAL_ETHSW_LINK_2_5Gbps;
+            break;
+        }
+
+        case 5000:
+        {
+            *pLinkRate      = CCSP_HAL_ETHSW_LINK_5Gbps;
+            break;
+        }
+
+        case 10000:
+        {
+            *pLinkRate      = CCSP_HAL_ETHSW_LINK_10Gbps;
+            break;
+        }
+
+        default:
+        {
+            CcspHalEthSwTrace(("Unsupported link rate %d port id %d\n",speed, PortId));
+            return  RETURN_ERR;
+        }
+    }
+
     return  RETURN_OK;
 }
 
+INT
+EthSwSetExtPortCfg
+    (
+        CCSP_HAL_ETHSW_PORT         PortId,
+        CCSP_HAL_ETHSW_LINK_RATE    LinkRate,
+        CCSP_HAL_ETHSW_DUPLEX_MODE  DuplexMode
+    )
+{
+    CcspHalEthSwTrace(("set port %d LinkRate to %d, DuplexMode to %d", PortId, LinkRate, DuplexMode));
+    
+    if(PortId < 1 || PortId > MAX_LAN_PORT)
+        return  RETURN_ERR;
 
+    char cmd[128] = {0};
+    char setduplex[6] = {0}; 
+
+    if(DuplexMode == 2 || DuplexMode == 0)
+        strcpy(setduplex,"full");
+    else if (DuplexMode == 1)
+        strcpy(setduplex,"half");
+    else
+        return  RETURN_ERR;
+
+
+    switch (LinkRate)
+    {
+        case CCSP_HAL_ETHSW_LINK_10Mbps:
+        {
+            sprintf(cmd,"ethtool -s eth3 speed %d duplex %s", 10, setduplex);
+            system(cmd);
+            break;
+        }
+
+        case CCSP_HAL_ETHSW_LINK_100Mbps:
+        {
+            sprintf(cmd,"ethtool -s eth3 speed %d duplex %s", 100, setduplex);
+            system(cmd);
+            break;
+        }
+
+        case CCSP_HAL_ETHSW_LINK_1Gbps:
+        {
+            sprintf(cmd,"ethtool -s eth3 speed %d duplex full", 1000);
+            system(cmd);
+            break;
+        }
+        case CCSP_HAL_ETHSW_LINK_2_5Gbps:
+        case CCSP_HAL_ETHSW_LINK_5Gbps:
+        case CCSP_HAL_ETHSW_LINK_10Gbps:
+        case CCSP_HAL_ETHSW_LINK_Auto:
+        {
+            sprintf(cmd,"ethtool -s eth3 autoneg on");
+            system(cmd);
+            break;
+        }
+        default:
+        {
+            CcspHalEthSwTrace(("Unsupported link rate %d port id %d\n",LinkRate, PortId));
+            return  RETURN_ERR;
+        }
+    }
+
+    return  RETURN_OK;
+}
+#endif
 /* CcspHalEthSwGetPortStatus :  */
 /**
 * @description Retrieve the current port status -- link speed, duplex mode, etc.
@@ -170,6 +361,17 @@ CcspHalEthSwGetPortStatus
     if(PortId < 1 || PortId > MAX_LAN_PORT)
         return  RETURN_ERR;
 
+#ifdef THREE_GMACS_SUPPORT
+    if(PortId == 5){
+        return  EthSwGetExtPortStatus(PortId, pLinkRate, pDuplexMode, pStatus);
+    }else if (PortId == 6){
+        *pStatus   = CCSP_HAL_ETHSW_LINK_Down;
+        *pLinkRate      = CCSP_HAL_ETHSW_LINK_NULL;
+        *pDuplexMode    = CCSP_HAL_ETHSW_DUPLEX_Auto;
+        return  RETURN_OK;          
+    }    
+#endif
+
     sprintf(cmd, "%s reg r 3%d08 | awk '/Read/ {print $3}'", ETHSWITCHTOOL, (PortId-1));
 
 	fp = popen(cmd, "r");
@@ -179,7 +381,7 @@ CcspHalEthSwGetPortStatus
         sscanf(buf,"value=%x", &status);        
         pclose(fp);
     }else{
-    	*pStatus   = CCSP_HAL_ETHSW_LINK_Down;
+        *pStatus   = CCSP_HAL_ETHSW_LINK_Down;
         *pLinkRate      = CCSP_HAL_ETHSW_LINK_NULL;
         *pDuplexMode    = CCSP_HAL_ETHSW_DUPLEX_Auto;
         return  RETURN_OK;        
@@ -188,7 +390,7 @@ CcspHalEthSwGetPortStatus
 	link = status & 1;
 	duplex = (status >> 1) & 1;
 	speed = (status >> 2) & 3;
-	fprintf(stderr,"===>status %x , link %d ,duplex %d, speed %d\n", status, link, duplex, speed);
+	fprintf(stderr,"===>portid %d status %x , link %d ,duplex %d, speed %d\n", PortId, status, link, duplex, speed);
 
 
     if(link)
@@ -290,12 +492,25 @@ CcspHalEthSwGetPortCfg
 	int link = 0;
 	int speed = 0;
 	int status = 0;
+#ifdef THREE_GMACS_SUPPORT
+	CCSP_HAL_ETHSW_LINK_STATUS  LinkStatus;
+#endif
 
 	if(PortId == NULL || pLinkRate == NULL || pDuplexMode == NULL)
 		return	RETURN_ERR;
 
 	if(PortId < 1 || PortId > MAX_LAN_PORT)
 		return	RETURN_ERR;
+
+#ifdef THREE_GMACS_SUPPORT
+    if(PortId == 5){
+        return  EthSwGetExtPortStatus(PortId, pLinkRate, pDuplexMode, &LinkStatus);
+    }else if (PortId == 6){
+		*pLinkRate		= CCSP_HAL_ETHSW_LINK_NULL;
+		*pDuplexMode	= CCSP_HAL_ETHSW_DUPLEX_Auto;
+		return	RETURN_OK;    
+    }    
+#endif
 
 	sprintf(cmd, "%s reg r 3%d08 | awk '/Read/ {print $3}'", ETHSWITCHTOOL, (PortId-1));
 
@@ -416,6 +631,13 @@ CcspHalEthSwSetPortCfg
 
     if(DuplexMode < 0 || DuplexMode > 2)
         return  RETURN_ERR;
+
+#ifdef THREE_GMACS_SUPPORT
+    if(PortId == 5)
+        return  EthSwSetExtPortCfg(PortId, LinkRate, DuplexMode);
+    else if (PortId == 6)
+        return  RETURN_OK;
+#endif
 
 	sprintf(cmd,"%s phy cl22 w %d 0x1f 0x0", ETHSWITCHTOOL, (PortId-1));
 	system(cmd);
@@ -583,12 +805,11 @@ CcspHalEthSwSetPortAdminStatus
     if(PortId < 1 || PortId > MAX_LAN_PORT)
         return  RETURN_ERR;
     
-    char cmd1[50];
-    char cmd2[50];
-    char *interface = NULL;
-    char *path = NULL;
-    interface = (char *)malloc(5);
-    path = (char *)malloc(20);
+    char cmd1[32] = {0};
+    char cmd2[32] = {0};
+    char interface[8] = {0};
+    char path[32] = {0};
+
     strcpy(path,"/sys/class/net/eth1");
 
     int eth_if=is_interface_exists(path);
@@ -721,7 +942,7 @@ CcspHalEthSwLocatePortByMacAddress
 		{
 			pclose(fp);
 
-			port = atoi(buf);
+			port = strtol(buf, NULL, 10);
 			*pPortId = port+1;
 			return RETURN_OK;
 		}             
@@ -759,7 +980,7 @@ void GetInterfaceName(char *interface_name, char *conf_file)
                         interface = strchr(path,'=');
 
                         if(interface != NULL)
-                                strcpy(output_string, interface+1);
+                                strncpy(output_string, interface+1, sizeof(output_string));
         }
 
         for(count = 0;output_string[count]!='\n';count++)
@@ -799,9 +1020,9 @@ INT CcspHalExtSw_getAssociatedDevice(ULONG *output_array_size, eth_device_t **ou
 		printf("\nNot enough memory\n");
 		return RETURN_ERR;
 	}
-	if( access( "/tmp/ethernetmac.txt", F_OK ) != -1 ) {
-		remove("/tmp/ethernetmac.txt");
-	}
+
+	system("echo -n  > /tmp/ethernetmac.txt");
+
 	system("cat /nvram/dnsmasq.leases | cut -d ' ' -f2 > /tmp/connected_mac.txt"); //storing the all associated device information in tmp folder
 	//storing the private wifi  associated device iformation in tmp folder
 	GetInterfaceName(interface_name,"/nvram/hostapd0.conf");
@@ -818,7 +1039,7 @@ INT CcspHalExtSw_getAssociatedDevice(ULONG *output_array_size, eth_device_t **ou
 	else
 	{
 		fgets(buf,MAX_BUF_SIZE,fp);
-		maccount = atol(buf);
+		maccount = strtol(buf, NULL, 10);
 		fprintf(stderr,"ethernet umac is %d \n",maccount);
 	}
 	pclose(fp);
@@ -834,6 +1055,7 @@ INT CcspHalExtSw_getAssociatedDevice(ULONG *output_array_size, eth_device_t **ou
 	{
 		*output_struct = NULL;
 		*output_array_size = 0;
+		free(temp);
 		return RETURN_ERR;
 	}
 	else
@@ -846,9 +1068,11 @@ INT CcspHalExtSw_getAssociatedDevice(ULONG *output_array_size, eth_device_t **ou
 			macAddr[str_count] = '\0';
 			system("ip nei show | grep brlan0 > /tmp/arp_cache");
 			fp1=fopen("/tmp/arp_cache","r");
-			if(fp1 == NULL)
+			if(fp1 == NULL){
+				fclose(fp);
+				free(temp);
 				return RETURN_ERR;
-
+			}
 			while(fgets(buf,sizeof(buf),fp1) != NULL)
 			{
 				if ( strstr(buf, "FAILED") != 0 )
@@ -909,6 +1133,7 @@ Sample:
 	{
 		*output_struct = NULL;
 		*output_array_size = 0;
+		free(temp);
 		return RETURN_OK;
 	}
 	else
@@ -934,24 +1159,42 @@ Sample:
 			char buffer[32] = {0};
 			int status =0;
 			int speed =0 ;
-			sprintf(cmd, "%s reg r 3%d08 | awk '/Read/ {print $3}'", ETHSWITCHTOOL, (temp[count].eth_port-1));
-			
+
+#ifdef THREE_GMACS_SUPPORT
+			if(temp[count].eth_port > 4){
+				sprintf(cmd, "cat /sys/class/net/eth3/speed");
+				temp[count].eth_port = 5;
+			}else
+#endif
+			{	 
+				sprintf(cmd, "%s reg r 3%d08 | awk '/Read/ {print $3}'", ETHSWITCHTOOL, (temp[count].eth_port-1));
+			}
 			fp2 = popen(cmd, "r");
 			if(fp2 != NULL)
 			{
 				fgets(buffer,sizeof(buffer),fp2);
-				sscanf(buffer,"value=%x", &status);
+#ifdef THREE_GMACS_SUPPORT
+				if(temp[count].eth_port > 4){
+					speed = strtol(buffer, NULL, 10);
+				}else
+#endif				
+				{
+					sscanf(buffer,"value=%x", &status);
+					speed = (status >> 2) & 3;
+				}	
 				pclose(fp2);
 				
-				speed = (status >> 2) & 3;
+
 				
 				if(speed == 0)
 					temp[count].eth_devTxRate = 10;
 				else if (speed == 1)
 					temp[count].eth_devTxRate = 100;
 				else if (speed == 2)
-					temp[count].eth_devTxRate = 1000
-					;
+					temp[count].eth_devTxRate = 1000;
+				else
+					temp[count].eth_devTxRate = speed;
+
 				temp[count].eth_Active=1;
 			}else{
 				temp[count].eth_devTxRate= -1;
@@ -1077,29 +1320,17 @@ INT CcspHalExtSw_setEthWanPort(UINT Port)
 
 INT GWP_GetEthWanLinkStatus()
 {
-	FILE *fp = NULL;
-	char command[128] = {0};
-	char buff[64] = {0};
-	int wanport = 0;
+    int link = 0;
+    char path[32] = {0};
 
-	CcspHalExtSw_getEthWanPort (&wanport);
-	
-	snprintf(command,128, "%s -g -p %d -d 0x0 -r 0x1 -i %s", MIITOOL, wanport, ETH_WAN_INTERFACE);
-	fp = popen(command, "r");
-	if (fp == NULL)
-	{
-		return 0;
-	}
-	if (fgets(buff, sizeof(buff), fp) != NULL)
-	{
-		pclose(fp);
+    sprintf(path, "/sys/class/net/erouter0/carrier");
+    link = is_interface_link(path);
 
-		/* wan link up =>0x796D , wan link down => 0x7949 */
-		if (strstr(buff, WANLINKUP) != NULL)
-			return 1;  
-		else
-			return 0;
-	}  
+    if(link){
+        return 1;
+    }else{
+        return 0; 
+    }
 }
 
 #if defined(FEATURE_RDKB_WAN_MANAGER)
