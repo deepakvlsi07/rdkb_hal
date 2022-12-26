@@ -78,7 +78,6 @@ Licensed under the ISC license
 #define DFS_ENABLE_FILE "/nvram/dfs_enable.txt"
 #define VLAN_FILE "/nvram/hostapd.vlan"
 #define PSK_FILE "/nvram/hostapd"
-#define CHAIN_MASK_FILE "/tmp/chain_mask"
 #define AMSDU_FILE "/tmp/AMSDU"
 #define MCS_FILE "/tmp/MCS"
 #define NOACK_MAP_FILE "/tmp/NoAckMap"
@@ -4525,12 +4524,15 @@ INT wifi_setRadioFragmentationThreshold(INT apIndex, UINT threshold)
 INT wifi_setRadioSTBCEnable(INT radioIndex, BOOL STBC_Enable)
 {
     char config_file[64] = {'\0'};
-    char cmd[128] = {'\0'};
-    char buf[64] = {'\0'};
+    char cmd[512] = {'\0'};
+    char buf[512] = {'\0'};
     char stbc_config[16] = {'\0'};
     wifi_band band;
     int iterator = 0;
     BOOL current_stbc = FALSE;
+    int ant_count = 0;
+    int ant_bitmap = 0;
+    struct params list;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -4545,6 +4547,15 @@ INT wifi_setRadioSTBCEnable(INT radioIndex, BOOL STBC_Enable)
     else
         return RETURN_OK;
 
+    wifi_getRadioTxChainMask(radioIndex, &ant_bitmap);
+    for (; ant_bitmap > 0; ant_bitmap >>= 1)
+        ant_count += ant_bitmap & 1;
+
+    if (ant_count == 1 && STBC_Enable == TRUE) {
+        fprintf(stderr, "%s: can not enable STBC when using only one antenna\n", __func__);
+        return RETURN_OK;
+    }
+
     snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
 
     // set ht and vht config
@@ -4552,7 +4563,8 @@ INT wifi_setRadioSTBCEnable(INT radioIndex, BOOL STBC_Enable)
         memset(stbc_config, 0, sizeof(stbc_config));
         memset(cmd, 0, sizeof(cmd));
         memset(buf, 0, sizeof(buf));
-        snprintf(stbc_config, sizeof(stbc_config), "%sht_capab", (i == 0)?"":"v");
+        list.name = (i == 0)?"ht_capab":"vht_capab";
+        snprintf(stbc_config, sizeof(stbc_config), "%s", list.name);
         snprintf(cmd, sizeof(cmd), "cat %s | grep -E '^%s' | grep 'STBC'", config_file, stbc_config);
         _syscmd(cmd, buf, sizeof(buf));
         if (strlen(buf) != 0)
@@ -4577,6 +4589,9 @@ INT wifi_setRadioSTBCEnable(INT radioIndex, BOOL STBC_Enable)
             snprintf(cmd, sizeof(cmd), "sed -r -i 's/\\[RX-STBC-?[1-3]*\\]//' %s", config_file);
             _syscmd(cmd, buf, sizeof(buf));
         }
+        wifi_hostapdRead(config_file, list.name, buf, sizeof(buf));
+        list.value = buf;
+        wifi_hostapdProcessUpdate(radioIndex, &list, 1);
     }
 
     wifi_reloadAp(radioIndex);
@@ -4642,21 +4657,95 @@ INT wifi_getRadioTxChainMask(INT radioIndex, INT *output_int)
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-    sprintf(cmd, "cat %s%d.txt 2> /dev/null", CHAIN_MASK_FILE, radioIndex);
+    phyId = radio_index_to_phy(radioIndex);
+    sprintf(cmd, "iw phy%d info | grep 'Configured Antennas' | awk '{print $4}'", phyId);
     _syscmd(cmd, buf, sizeof(buf));
 
-    phyId = radio_index_to_phy(radioIndex);
-    // if there is no record, output the max number of spatial streams
-    if (strlen(buf) == 0) {
-        sprintf(cmd, "iw phy%d info | grep 'TX MCS and NSS set' -A8 | head -n8 | grep 'streams: MCS' | wc -l", phyId);
-        _syscmd(cmd, buf, sizeof(buf));
-    }
-
-    *output_int = (INT)strtol(buf, NULL, 10);
+    *output_int = (INT)strtol(buf, NULL, 16);
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
     return RETURN_OK;
+}
+
+INT fitChainMask(INT radioIndex, int antcount)
+{
+    char buf[128] = {0};
+    char cmd[128] = {0};
+    char config_file[64] = {0};
+    wifi_band band;
+    struct params list[2] = {0};
+
+    band = wifi_index_to_band(radioIndex);
+    if (band == band_invalid)
+        return RETURN_ERR;
+
+    list[0].name = "he_mu_beamformer";
+    list[1].name = "he_su_beamformer";
+
+    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
+    if (antcount == 1) {
+        // remove config about multiple antennas
+        snprintf(cmd, sizeof(cmd), "sed -r -i 's/\\[TX-STBC(-2BY1)?*\\]//' %s", config_file);
+        _syscmd(cmd, buf, sizeof(buf));
+
+        snprintf(cmd, sizeof(cmd), "sed -r -i 's/\\[SOUNDING-DIMENSION-.\\]//' %s", config_file);
+        _syscmd(cmd, buf, sizeof(buf));
+
+        snprintf(cmd, sizeof(cmd), "sed -r -i 's/\\[SU-BEAMFORMER\\]//' %s", config_file);
+        _syscmd(cmd, buf, sizeof(buf));
+
+        snprintf(cmd, sizeof(cmd), "sed -r -i 's/\\[MU-BEAMFORMER\\]//' %s", config_file);
+        _syscmd(cmd, buf, sizeof(buf));
+
+        list[0].value = "0";
+        list[1].value = "0";
+    } else {
+        // If we only set RX STBC means STBC is enable and TX STBC is disable when last time set one antenna. so we need to add it back.
+        if (band == band_2_4 || band == band_5) {
+            snprintf(cmd, sizeof(cmd), "cat %s | grep '^ht_capab=.*RX-STBC' | grep -v 'TX-STBC'", config_file);
+            _syscmd(cmd, buf, sizeof(buf));
+            if (strlen(buf) > 0) {
+                snprintf(cmd, sizeof(cmd), "sed -r -i '/^ht_capab=.*/s/$/[TX-STBC]/' %s", config_file);
+                _syscmd(cmd, buf, sizeof(buf));
+            }
+        }
+        if (band == band_5) {
+            snprintf(cmd, sizeof(cmd), "cat %s | grep '^vht_capab=.*RX-STBC' | grep -v 'TX-STBC'", config_file);
+            _syscmd(cmd, buf, sizeof(buf));
+            if (strlen(buf) > 0) {
+                snprintf(cmd, sizeof(cmd), "sed -r -i '/^vht_capab=.*/s/$/[TX-STBC-2BY1]/' %s", config_file);
+                _syscmd(cmd, buf, sizeof(buf));
+            }
+        }
+
+        snprintf(cmd, sizeof(cmd), "cat %s | grep '\\[SU-BEAMFORMER\\]'", config_file);
+        _syscmd(cmd, buf, sizeof(buf));
+        if (strlen(buf) == 0) {
+            snprintf(cmd, sizeof(cmd), "sed -r -i '/^vht_capab=.*/s/$/[SU-BEAMFORMER]/' %s", config_file);
+            _syscmd(cmd, buf, sizeof(buf));
+        }
+
+        snprintf(cmd, sizeof(cmd), "cat %s | grep '\\[MU-BEAMFORMER\\]'", config_file);
+        _syscmd(cmd, buf, sizeof(buf));
+        if (strlen(buf) == 0) {
+            snprintf(cmd, sizeof(cmd), "sed -r -i '/^vht_capab=.*/s/$/[MU-BEAMFORMER]/' %s", config_file);
+            _syscmd(cmd, buf, sizeof(buf));
+        }
+
+        snprintf(cmd, sizeof(cmd), "cat %s | grep '\\[SOUNDING-DIMENSION-.\\]'", config_file);
+        _syscmd(cmd, buf, sizeof(buf));
+        if (strlen(buf) == 0) {
+            snprintf(cmd, sizeof(cmd), "sed -r -i '/^vht_capab=.*/s/$/[SOUNDING-DIMENSION-%d]/' %s", antcount, config_file);
+        } else {
+            snprintf(cmd, sizeof(cmd), "sed -r -i 's/(SOUNDING-DIMENSION-)./\\1%d/' %s", antcount, config_file);
+        }
+        _syscmd(cmd, buf, sizeof(buf));
+
+        list[0].value = "1";
+        list[1].value = "1";
+    }
+    wifi_hostapdWrite(config_file, list, 2);
 }
 
 //P2  // sets the number of Tx streams to an enviornment variable
@@ -4664,16 +4753,22 @@ INT wifi_setRadioTxChainMask(INT radioIndex, INT numStreams)
 {
     char cmd[128] = {0};
     char buf[128] = {0};
-    char chain_mask_file[128] = {0};
-    FILE *f = NULL;
     int phyId = 0;
+    int cur_mask = 0;
+    int antcount = 0;
+    wifi_band band;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-    if (numStreams == 0) {
-        fprintf(stderr, "The mask did not support 0 (auto).\n");
+    if (numStreams <= 0) {
+        fprintf(stderr, "%s: chainmask is not supported %d.\n", __func__, numStreams);
         return RETURN_ERR;
     }
+
+    wifi_getRadioTxChainMask(radioIndex, &cur_mask);
+    if (cur_mask == numStreams)
+        return RETURN_OK;
+
     wifi_setRadioEnable(radioIndex, FALSE);
 
     phyId = radio_index_to_phy(radioIndex);
@@ -4684,16 +4779,15 @@ INT wifi_setRadioTxChainMask(INT radioIndex, INT numStreams)
         fprintf(stderr, "%s: cmd %s error, output: %s\n", __func__, cmd, buf);
         return RETURN_ERR;
     }
+
+    // if chain mask changed, we need to make the hostapd config valid.
+    for (cur_mask = numStreams; cur_mask > 0; cur_mask >>= 1) {
+        antcount += cur_mask & 1;
+    }
+    fitChainMask(radioIndex, antcount);
+
     wifi_setRadioEnable(radioIndex, TRUE);
 
-    sprintf(chain_mask_file, "%s%d.txt", CHAIN_MASK_FILE, radioIndex);
-    f = fopen(chain_mask_file, "w");
-    if (f == NULL) {
-        fprintf(stderr, "%s: fopen failed.\n", __func__);
-        return RETURN_ERR;
-    }
-    fprintf(f, "%d", numStreams);
-    fclose(f);
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
@@ -4701,12 +4795,20 @@ INT wifi_setRadioTxChainMask(INT radioIndex, INT numStreams)
 //P2  // outputs the number of Rx streams
 INT wifi_getRadioRxChainMask(INT radioIndex, INT *output_int)
 {
+    char buf[8] = {0};
+    char cmd[128] = {0};
+    int phyId = 0;
+
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    if (wifi_getRadioTxChainMask(radioIndex, output_int) == RETURN_ERR) {
-        fprintf(stderr, "%s: wifi_getRadioTxChainMask return error.\n", __func__);
-        return RETURN_ERR;
-    }
+
+    phyId = radio_index_to_phy(radioIndex);
+    sprintf(cmd, "iw phy%d info | grep 'Configured Antennas' | awk '{print $6}'", phyId);
+    _syscmd(cmd, buf, sizeof(buf));
+
+    *output_int = (INT)strtol(buf, NULL, 16);
+
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
     return RETURN_OK;
 }
 
