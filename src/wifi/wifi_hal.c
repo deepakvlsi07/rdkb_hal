@@ -1324,17 +1324,19 @@ INT wifi_setRadioEnable(INT radioIndex, BOOL enable)
 
     wifi_getMaxRadioNumber(&max_radio_num);
 
-    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
-        return RETURN_ERR;
     if(enable==FALSE)
     {
         for(apIndex=radioIndex; apIndex<MAX_APS; apIndex+=max_radio_num)
         {
+            if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+                return RETURN_ERR;
+
             //Detaching %s%d from hostapd daemon
             snprintf(cmd, sizeof(cmd), "hostapd_cli -i global raw REMOVE %s", interface_name);
             _syscmd(cmd, buf, sizeof(buf));
             if(strncmp(buf, "OK", 2))
                 fprintf(stderr, "Could not detach %s from hostapd daemon", interface_name);
+
             snprintf(cmd, sizeof(cmd), "iw %s del", interface_name);
             _syscmd(cmd, buf, sizeof(buf));
         }
@@ -1343,6 +1345,9 @@ INT wifi_setRadioEnable(INT radioIndex, BOOL enable)
     {
         for(apIndex=radioIndex; apIndex<MAX_APS; apIndex+=max_radio_num)
         {
+            if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+                return RETURN_ERR;
+
             snprintf(cmd, sizeof(cmd), "iw phy%d interface add %s type __ap", phyId, interface_name);
             ret = _syscmd(cmd, buf, sizeof(buf));
             if ( ret == RETURN_ERR)

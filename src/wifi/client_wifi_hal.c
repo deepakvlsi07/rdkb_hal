@@ -693,7 +693,7 @@ INT wifi_setSTAEnabled(INT ssidIndex, BOOL enable)
     return ret == 0 ? RETURN_OK : RETURN_ERR;
 }
 
-INT wifi_createSTAInterface(INT ssidIndex, char *bssid)
+INT wifi_createSTAInterface(INT ssidIndex, char *bssid, BOOL wds_flag)
 {
     char cmd[128] = {0};
     char buf[128] = {0};
@@ -712,7 +712,7 @@ INT wifi_createSTAInterface(INT ssidIndex, char *bssid)
         fprintf(stderr, "%s: Invalid radio index %d.\n", __func__, radioIndex);
         return RETURN_ERR;
     }
-    snprintf(cmd, sizeof(cmd), "iw phy phy%d interface add %s type managed 4addr on", phyIndex, ssid_ifname);
+    snprintf(cmd, sizeof(cmd), "iw phy phy%d interface add %s type managed %s", phyIndex, ssid_ifname, wds_flag?"4addr on":"");
     _syscmd(cmd, buf, sizeof(buf));
     snprintf(cmd, sizeof(cmd), "ip link set dev %s address %s && ip link set dev %s up", ssid_ifname, bssid, ssid_ifname);
     _syscmd(cmd, buf, sizeof(buf));
