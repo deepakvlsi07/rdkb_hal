@@ -192,6 +192,8 @@ typedef struct {
     intptr_t        data;
 } wifi_secur_list;
 
+static int util_unii_5g_centerfreq(const char *ht_mode, int channel);
+static int util_unii_6g_centerfreq(const char *ht_mode, int channel);
 wifi_secur_list *       wifi_get_item_by_key(wifi_secur_list *list, int list_sz, int key);
 wifi_secur_list *       wifi_get_item_by_str(wifi_secur_list *list, int list_sz, const char *str);
 char *                  wifi_get_str_by_key(wifi_secur_list *list, int list_sz, int key);
@@ -2630,9 +2632,11 @@ INT wifi_setRadioDfsRefreshPeriod(INT radioIndex, ULONG seconds) //Tr181
 INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) //Tr181
 {
     char cmd[128] = {0}, buf[64] = {0};
+    char extchannel[128] = {0};
     char interface_name[64] = {0};
     int ret = 0, len=0;
     BOOL radio_enable = FALSE;
+    wifi_band band;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -2647,52 +2651,23 @@ INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) 
 
     if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
-    snprintf(cmd, sizeof(cmd),"iw dev %s info | grep 'width' | cut -d  ' ' -f6", interface_name);
+    snprintf(cmd, sizeof(cmd),"iw dev %s info | grep 'width' | cut -d  ' ' -f6 | tr -d '\\n'", interface_name);
     ret = _syscmd(cmd, buf, sizeof(buf));
     len = strlen(buf);
     if((ret != 0) || (len == 0))
     {
-         WIFI_ENTRY_EXIT_DEBUG("failed with Command %s %s:%d\n",cmd,__func__, __LINE__);
-         return RETURN_ERR;
+        WIFI_ENTRY_EXIT_DEBUG("failed with Command %s %s:%d\n",cmd,__func__, __LINE__);
+        return RETURN_ERR;
     }
 
-    buf[len-1] = '\0';
+    band = wifi_index_to_band(radioIndex);
+    if (band == band_2_4 && strncmp(buf, "20", 2) == 0) {
+        wifi_getRadioExtChannel(radioIndex, extchannel);
+        if (strncmp(extchannel, "Auto", 4) != 0)    // not auto means we have set HT40+/-
+            snprintf(buf, sizeof(buf), "40");
+    }
     snprintf(output_string, 64, "%sMHz", buf);
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
-
-#if 0
-    //TODO: revisit below implementation
-    char output_buf[8]={0};
-    char bw_value[10];
-    char config_file[MAX_BUF_SIZE] = {0};
-
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,radioIndex);
-    wifi_hostapdRead(config_file, "vht_oper_chwidth", output_buf, sizeof(output_buf));
-    readBandWidth(radioIndex,bw_value);
-
-    if(strstr (output_buf,"0") != NULL )
-    {
-        strcpy(output_string,bw_value);
-    }
-    else if (strstr (output_buf,"1") != NULL)
-    {
-        strcpy(output_string,"80MHz");
-    }
-    else if (strstr (output_buf,"2") != NULL)
-    {
-        strcpy(output_string,"160MHz");
-    }
-    else if (strstr (output_buf,"3") != NULL)
-    {
-        strcpy(output_string,"80+80");
-    }
-    else
-    {
-        strcpy(output_string,"Auto");
-    }
-    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
-#endif
 
     return RETURN_OK;
 }
@@ -2710,9 +2685,7 @@ INT wifi_setRadioOperatingChannelBandwidth(INT radioIndex, CHAR *bandwidth) //Tr
     if(NULL == bandwidth)
         return RETURN_ERR;
 
-    if(strstr(bandwidth,"80+80") != NULL)
-        strcpy(set_value, "3");
-    else if(strstr(bandwidth,"160") != NULL)
+    if(strstr(bandwidth,"160") != NULL)
         strcpy(set_value, "2");
     else if(strstr(bandwidth,"80") != NULL)
         strcpy(set_value, "1");
@@ -2758,26 +2731,43 @@ INT wifi_halgetRadioExtChannel(CHAR *file,CHAR *Value)
 //The output_string is a max length 64 octet string that is allocated by the RDKB code.  Implementations must ensure that strings are not longer than this.
 INT wifi_getRadioExtChannel(INT radioIndex, CHAR *output_string) //Tr181
 {
-    if (NULL == output_string)
+    char config_file[64] = {0};
+    char mode_str[16] = {0};
+    char buf[64] = {0};
+    wifi_band band;
+    int channel = 0, centr_channel = 0;
+    UINT mode_map = 0;
+
+    if (output_string == NULL)
         return RETURN_ERR;
 
-    snprintf(output_string, 64, (radioIndex==0)?"":"BelowControlChannel");
-#if 0
-    CHAR Value[100] = {0};
-    if (NULL == output_string)
+    wifi_getRadioMode(radioIndex, mode_str, &mode_map);
+
+    band = wifi_index_to_band(radioIndex);
+    if (band == band_invalid)
         return RETURN_ERR;
-    if(radioIndex == 0)
-        strcpy(Value,"Auto"); //so far rpi(2G) supports upto 150Mbps (i,e 20MHZ)
-    else if(radioIndex == 1)//so far rpi(5G) supports upto 300mbps (i,e 20MHz/40MHz)
-    {
-        wifi_getRadioOperatingChannelBandwidth(radioIndex,Value);
-        if(strcmp(Value,"40MHz") == 0)
-            wifi_halgetRadioExtChannel("/nvram/hostapd1.conf",Value);
+
+    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
+
+    snprintf(output_string, 64, "Auto");
+    if (band == band_2_4 || (!mode_map&WIFI_MODE_AC && !mode_map&WIFI_MODE_AX)) {
+        // 2G band or ac and ax mode is disable, we will check ht_capab
+        wifi_halgetRadioExtChannel(config_file, output_string);
+        if (!mode_map&WIFI_MODE_N)
+            snprintf(output_string, 64, "Auto");
+    } else {
+        // 5G and 6G band with ac or ax mode.
+        wifi_getRadioChannel(radioIndex, &channel);
+        if (mode_map&WIFI_MODE_AX)
+            wifi_hostapdRead(config_file, "he_oper_centr_freq_seg0_idx", buf, sizeof(buf));
         else
-            strcpy(Value,"Auto");
+            wifi_hostapdRead(config_file, "vht_oper_centr_freq_seg0_idx", buf, sizeof(buf));
+        centr_channel = strtol(buf, NULL, 10);
+        if (centr_channel > channel)
+            snprintf(output_string, 64, "AboveControlChannel");
+        else
+            snprintf(output_string, 64, "BelowControlChannel");
     }
-    strcpy(output_string,Value);
-#endif
 
     return RETURN_OK;
 }
@@ -2786,19 +2776,54 @@ INT wifi_getRadioExtChannel(INT radioIndex, CHAR *output_string) //Tr181
 INT wifi_setRadioExtChannel(INT radioIndex, CHAR *string) //Tr181	//AP only
 {        
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    struct params params={'\0'};
-    char config_file[MAX_BUF_SIZE] = {0};
-    char ext_channel[127]={'\0'};
-    int max_radio_num =0;
+    struct params params={0};
+    char config_file[64] = {0};
+    char ext_channel[128]={0};
+    char buf[128] = {0};
+    char cmd[128] = {0};
+    int max_radio_num =0, ret = 0, bandwidth = 0;
+    unsigned long channel = 0, centr_channel = 0;
+    bool stbcEnable = FALSE;
     params.name = "ht_capab";
+    wifi_band band;
 
-    if(NULL!= strstr(string,"Above"))
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radioIndex);
+    snprintf(cmd, sizeof(cmd), "cat %s | grep STBC", config_file);
+    _syscmd(cmd, buf, sizeof(buf));
+    if (strlen(buf) != 0)
+        stbcEnable = TRUE;
+    if (wifi_getRadioOperatingChannelBandwidth(radioIndex, buf) != RETURN_OK)
+        return RETURN_ERR;
+    bandwidth = strtol(buf, NULL, 10);
+    // TDK expected to get error with 20MHz
+    if (bandwidth == 20 || strstr(buf, "80+80") != NULL)
+        return RETURN_ERR;
+
+    band = wifi_index_to_band(radioIndex);
+    if (band == band_invalid)
+        return RETURN_ERR;
+
+    if (wifi_getRadioChannel(radioIndex, &channel) != RETURN_OK)
+        return RETURN_ERR;
+
+    if (band == band_5) {
+        snprintf(buf, sizeof(buf), "HT%d", bandwidth);
+        centr_channel = util_unii_5g_centerfreq(buf, channel);
+        if (centr_channel == 0)
+            return RETURN_ERR;
+    }
+
+    if(NULL!= strstr(string,"Above")) {
+        if ((band == band_2_4 && channel > 9) || (band == band_5 && channel > centr_channel))
+            return RETURN_ERR;
         strcpy(ext_channel, HOSTAPD_HT_CAPAB "[HT40+]");
-    else if(NULL!= strstr(string,"Below"))
+    } else if(NULL!= strstr(string,"Below")) {
+        if ((band == band_2_4 && channel < 5) || (band == band_5 && channel < centr_channel))
+            return RETURN_ERR;
         strcpy(ext_channel, HOSTAPD_HT_CAPAB "[HT40-]");
-    else
+    } else {
         strcpy(ext_channel, HOSTAPD_HT_CAPAB);
-    
+    }
 
     params.value = ext_channel;
 
@@ -2807,6 +2832,7 @@ INT wifi_setRadioExtChannel(INT radioIndex, CHAR *string) //Tr181	//AP only
     {
         sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,radioIndex+(max_radio_num*i));
         wifi_hostapdWrite(config_file, &params, 1);
+        wifi_setRadioSTBCEnable(radioIndex+(max_radio_num*i), stbcEnable);
     }
 
     //Set to wifi config only. Wait for wifi reset or wifi_pushRadioChannel to apply.
@@ -8732,6 +8758,7 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
             sec_chan_offset_str, center_freq1_str, opt_chan_info_str);
         wifi_dbg_printf("execute: '%s'\n", cmd);
         ret = _syscmd(cmd, buf, sizeof(buf));
+        wifi_reloadAp(radioIndex);
 
         ret = wifi_setRadioChannel(radioIndex, channel);
         if (ret != RETURN_OK) {
@@ -8748,14 +8775,8 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
         if (channel_width_MHz > 20)
             ext_str = "Above";
     }
-    snprintf(cmd, sizeof(cmd), "cat %s | grep STBC", config_file);
-    _syscmd(cmd, buf, sizeof(buf));
-    if (strlen(buf) != 0)
-        stbcEnable = TRUE;
 
     wifi_setRadioExtChannel(radioIndex, ext_str);
-
-    wifi_setRadioSTBCEnable(radioIndex, stbcEnable);
 
     char mhz_str[16];
     snprintf(mhz_str, sizeof(mhz_str), "%dMHz", width);
@@ -12019,7 +12040,6 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
     else if (!strcmp(buf, "40MHz")) operationParam->channelWidth = WIFI_CHANNELBANDWIDTH_40MHZ;
     else if (!strcmp(buf, "80MHz")) operationParam->channelWidth = WIFI_CHANNELBANDWIDTH_80MHZ;
     else if (!strcmp(buf, "160MHz")) operationParam->channelWidth = WIFI_CHANNELBANDWIDTH_160MHZ;
-    else if (!strcmp(buf, "80+80MHz")) operationParam->channelWidth = WIFI_CHANNELBANDWIDTH_80_80MHZ;
     else
     {
         fprintf(stderr, "Unknown channel bandwidth: %s\n", buf);
