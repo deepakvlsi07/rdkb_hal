@@ -10998,20 +10998,31 @@ INT wifi_isZeroDFSSupported(UINT radioIndex, BOOL *supported)
     return RETURN_OK;
 }
 
+bool check_is_hemu_vendor_new_patch() {
+    char cmd[128] = {0};
+    char buf[128] = {0};
+
+    snprintf(cmd, sizeof(cmd), "hostapd_cli -h 2>&1 | grep set_hemu");
+    _syscmd(cmd, buf, sizeof(buf));
+
+    if (strlen(buf) > 0)
+        return FALSE;
+    else
+        return TRUE;
+}
+
 INT wifi_setDownlinkMuType(INT radio_index, wifi_dl_mu_type_t mu_type)
 {
     // hemu onoff=<val> (bitmap- UL MU-MIMO(bit3), DL MU-MIMO(bit2), UL OFDMA(bit1), DL OFDMA(bit0))
     struct params params = {0};
     char config_file[64] = {0};
     char buf[64] = {0};
+    char hemu_vendor_cmd[16] = {0};
     unsigned int set_mu_type = 0;
+    bool new_vendor_patch = FALSE;
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radio_index);
-    wifi_hostapdRead(config_file, "hemu_onoff", buf, sizeof(buf));
-
-    if (strlen(buf) > 0)
-        set_mu_type = strtol(buf, NULL, 10);
+    wifi_getDownlinkMuType(radio_index, &set_mu_type);
 
     if (mu_type == WIFI_DL_MU_TYPE_NONE) {
         set_mu_type &= ~0x05;   // unset bit 0, 2
@@ -11025,12 +11036,19 @@ INT wifi_setDownlinkMuType(INT radio_index, wifi_dl_mu_type_t mu_type)
         set_mu_type |= 0x05;    // set bit 0, 2
     }
 
-    params.name = "hemu_onoff";
+    new_vendor_patch = check_is_hemu_vendor_new_patch();
+    if (new_vendor_patch)
+        snprintf(hemu_vendor_cmd, sizeof(hemu_vendor_cmd), "mu_onoff");
+    else
+        snprintf(hemu_vendor_cmd, sizeof(hemu_vendor_cmd), "hemu_onoff");
+
+    params.name = hemu_vendor_cmd;
     sprintf(buf, "%u", set_mu_type);
     params.value = buf;
     sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radio_index);
     wifi_hostapdWrite(config_file, &params, 1);
     wifi_hostapdProcessUpdate(radio_index, &params, 1);
+    wifi_reloadAp(radio_index);
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
@@ -11042,14 +11060,23 @@ INT wifi_getDownlinkMuType(INT radio_index, wifi_dl_mu_type_t *mu_type)
     char config_file[64] = {0};
     char buf[64] = {0};
     unsigned int get_mu_type = 0;
+    bool new_vendor_patch = FALSE;
+    char hemu_vendor_cmd[16] = {0};
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
     if (mu_type == NULL)
         return RETURN_ERR;
 
+    new_vendor_patch = check_is_hemu_vendor_new_patch();
+
+    if (new_vendor_patch)
+        snprintf(hemu_vendor_cmd, sizeof(hemu_vendor_cmd), "mu_onoff");
+    else
+        snprintf(hemu_vendor_cmd, sizeof(hemu_vendor_cmd), "hemu_onoff");
+
     sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radio_index);
-    wifi_hostapdRead(config_file, "hemu_onoff", buf, sizeof(buf));
+    wifi_hostapdRead(config_file, hemu_vendor_cmd, buf, sizeof(buf));
     get_mu_type = strtol(buf, NULL, 10);
 
     if (get_mu_type & 0x04 && get_mu_type & 0x01)
@@ -11072,13 +11099,11 @@ INT wifi_setUplinkMuType(INT radio_index, wifi_ul_mu_type_t mu_type)
     char config_file[64] = {0};
     char buf[64] = {0};
     unsigned int set_mu_type = 0;
+    bool new_vendor_patch = FALSE;
+    char hemu_vendor_cmd[16] = {0};
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radio_index);
-    wifi_hostapdRead(config_file, "hemu_onoff", buf, sizeof(buf));
-
-    if (strlen(buf) > 0)
-        set_mu_type = strtol(buf, NULL, 10);
+    wifi_getUplinkMuType(radio_index, &set_mu_type);
 
     // wifi hal only define up link type none and OFDMA, there is NO MU-MIMO.
     if (mu_type == WIFI_UL_MU_TYPE_NONE) {
@@ -11088,12 +11113,20 @@ INT wifi_setUplinkMuType(INT radio_index, wifi_ul_mu_type_t mu_type)
         set_mu_type &= ~0x08;
     }
 
-    params.name = "hemu_onoff";
+    new_vendor_patch = check_is_hemu_vendor_new_patch();
+
+    if (new_vendor_patch)
+        snprintf(hemu_vendor_cmd, sizeof(hemu_vendor_cmd), "mu_onoff");
+    else
+        snprintf(hemu_vendor_cmd, sizeof(hemu_vendor_cmd), "hemu_onoff");
+
+    params.name = hemu_vendor_cmd;
     sprintf(buf, "%u", set_mu_type);
     params.value = buf;
     sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radio_index);
     wifi_hostapdWrite(config_file, &params, 1);
     wifi_hostapdProcessUpdate(radio_index, &params, 1);
+    wifi_reloadAp(radio_index);
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
@@ -11105,14 +11138,23 @@ INT wifi_getUplinkMuType(INT radio_index, wifi_ul_mu_type_t *mu_type)
     char config_file[64] = {0};
     char buf[64] = {0};
     unsigned int get_mu_type = 0;
+    bool new_vendor_patch = FALSE;
+    char hemu_vendor_cmd[16] = {0};
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    new_vendor_patch = check_is_hemu_vendor_new_patch();
+
+    if (new_vendor_patch)
+        snprintf(hemu_vendor_cmd, sizeof(hemu_vendor_cmd), "mu_onoff");
+    else
+        snprintf(hemu_vendor_cmd, sizeof(hemu_vendor_cmd), "hemu_onoff");
 
     if (mu_type == NULL)
     return RETURN_ERR;
 
     sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radio_index);
-    wifi_hostapdRead(config_file, "hemu_onoff", buf, sizeof(buf));
+    wifi_hostapdRead(config_file, hemu_vendor_cmd, buf, sizeof(buf));
 
     get_mu_type = strtol(buf, NULL, 10);
     if (get_mu_type & 0x02)
