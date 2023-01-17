@@ -621,7 +621,7 @@ INT wifi_setSTANetworks(INT apIndex, wifi_sta_network_t **staNetworks_array, INT
         if (sta->psk_len > 7 && sta->psk_len < 128)
             fprintf(fd, "\tpsk=\"%s\"\n", sta->psk);
         fprintf(fd, "\tkey_mgmt=%s\n", sta->key_mgmt);
-        if (!strncmp(sta->key_mgmt, "SAE", 3)) {                    // wpa3-personal must use with ieee80211w
+        if (!strncmp(sta->key_mgmt, "SAE", 3) || !strncmp(sta->key_mgmt, "OWE", 3)) {                    // wpa3-personal must use with ieee80211w
             fprintf(fd, "\tieee80211w=2\n");
         }
         fprintf(fd, "\tpairwise=%s\n", sta->pairwise);

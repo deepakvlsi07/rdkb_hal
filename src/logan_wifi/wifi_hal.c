@@ -5376,6 +5376,8 @@ INT wifi_setApBasicAuthenticationMode(INT apIndex, CHAR *authMode)
         params.value = "WPA-EAP-SUITE-B-192";
     else if (strcmp(authMode, "PSK-SAEAuthentication") == 0)
         params.value = "WPA-PSK WPA-PSK-SHA256 SAE";
+    else if (strcmp(authMode, "Enhanced_Open") == 0)
+        params.value = "OWE";
     else if(strcmp(authMode,"None") == 0) //Donot change in case the authMode is None
         return RETURN_OK;			  //This is taken careof in beaconType
 
@@ -6496,6 +6498,11 @@ INT wifi_setApSecurityModeEnabled(INT apIndex, CHAR *encMode)
     {
         strcpy(securityType,"11i");
         strcpy(authMode,"EAP_192-bit_Authentication");
+    }
+    else if (strcmp(encMode, "OWE") == 0)
+    {
+        strcpy(securityType,"11i");
+        strcpy(authMode,"Enhanced_Open");
     }
     else
     {
@@ -12910,6 +12917,11 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
         sae_MFP = TRUE;
         sae_pwe = 2;
         disable_EAPOL_retries = FALSE;
+    } else if (security->mode == wifi_security_mode_owe) {
+        strcpy(wpa_mode, "OWE");
+        sae_MFP = TRUE;
+        sae_pwe = 2;
+        disable_EAPOL_retries = FALSE;
     }
 
     band = wifi_index_to_band(ap_index);
@@ -12924,7 +12936,7 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
     wifi_setSAEpwe(ap_index, sae_pwe);
     wifi_setDisable_EAPOL_retries(ap_index, disable_EAPOL_retries);
 
-    if (security->mode != wifi_security_mode_none) {
+    if (security->mode != wifi_security_mode_none || security->mode != wifi_security_mode_owe) {
         if (security->u.key.type == wifi_security_key_type_psk || security->u.key.type == wifi_security_key_type_psk_sae) {
             strncpy(password, security->u.key.key, 63);     // 8 to 63 characters
             password[63] = '\0';
@@ -13025,6 +13037,8 @@ INT wifi_getApSecurity(INT ap_index, wifi_vap_security_t *security)
             security->mode = wifi_security_mode_wpa3_transition;
         else if (!strcmp(buf, "WPA3-Enterprise"))
             security->mode = wifi_security_mode_wpa3_enterprise;
+        else if (!strcmp(buf, "OWE"))
+            security->mode = wifi_security_mode_owe;
     }
 
     wifi_hostapdRead(config_file,"wpa_pairwise",buf,sizeof(buf));
