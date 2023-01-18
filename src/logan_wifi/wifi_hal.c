@@ -2750,10 +2750,10 @@ INT wifi_getRadioExtChannel(INT radioIndex, CHAR *output_string) //Tr181
     snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
 
     snprintf(output_string, 64, "Auto");
-    if (band == band_2_4 || (!mode_map&WIFI_MODE_AC && !mode_map&WIFI_MODE_AX)) {
+    if (band == band_2_4 || (!(mode_map&WIFI_MODE_AC) && !(mode_map&WIFI_MODE_AX))) {
         // 2G band or ac and ax mode is disable, we will check ht_capab
         wifi_halgetRadioExtChannel(config_file, output_string);
-        if (!mode_map&WIFI_MODE_N)
+        if (!(mode_map&WIFI_MODE_N))
             snprintf(output_string, 64, "Auto");
     } else {
         // 5G and 6G band with ac or ax mode.
@@ -5171,7 +5171,6 @@ INT wifi_getApRtsThresholdSupported(INT apIndex, BOOL *output_bool)
 // sets the packet size threshold in bytes to apply RTS/CTS backoff rules.
 INT wifi_setApRtsThreshold(INT apIndex, UINT threshold)
 {
-    char interface_name[16] = {0};
     char buf[16] = {0};
     char config_file[128] = {0};
     struct params param = {0};
@@ -5181,9 +5180,7 @@ INT wifi_setApRtsThreshold(INT apIndex, UINT threshold)
         return RETURN_ERR;
     }
 
-    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
-        return RETURN_ERR;
-    snprintf(config_file, sizeof(config_file), "%s.conf", interface_name);
+    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, apIndex);
     snprintf(buf, sizeof(buf), "%u", threshold);
     param.name = "rts_threshold";
     param.value = buf;
@@ -5972,6 +5969,10 @@ INT wifi_setApEnable(INT apIndex, BOOL enable)
         sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,apIndex);
         //Hostapd will bring up this interface
         sprintf(cmd, "hostapd_cli -i global raw REMOVE %s", interface_name);
+        _syscmd(cmd, buf, sizeof(buf));
+        sprintf(cmd, "iw %s del", interface_name);
+        _syscmd(cmd, buf, sizeof(buf));
+        sprintf(cmd, "iw phy phy%d interface add %s type __ap", phyId, interface_name);
         _syscmd(cmd, buf, sizeof(buf));
         sprintf(cmd, "hostapd_cli -i global raw ADD bss_config=phy%d:%s", phyId, config_file);
         _syscmd(cmd, buf, sizeof(buf));
@@ -12561,16 +12562,17 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
             return RETURN_ERR;
         }
 
-        wifi_setApEnable(vap_info->vap_index, TRUE);
-        multiple_set = FALSE;
-
-        // If config use hostapd_cli to set, we calling these type of functions after enable the ap.
         ret = wifi_setApSecurity(vap_info->vap_index, &vap_info->u.bss_info.security);
         if (ret != RETURN_OK) {
             fprintf(stderr, "%s: wifi_setApSecurity return error\n", __func__);
             return RETURN_ERR;
         }
 
+        wifi_setApEnable(vap_info->vap_index, FALSE);
+        wifi_setApEnable(vap_info->vap_index, TRUE);
+        multiple_set = FALSE;
+
+        // If config use hostapd_cli to set, we calling these type of functions after enable the ap.
         ret = wifi_setApMacAddressControlMode(vap_info->vap_index, acl_mode);
         if (ret != RETURN_OK) {
             fprintf(stderr, "%s: wifi_setApMacAddressControlMode return error\n", __func__);
@@ -12936,7 +12938,7 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
     wifi_setSAEpwe(ap_index, sae_pwe);
     wifi_setDisable_EAPOL_retries(ap_index, disable_EAPOL_retries);
 
-    if (security->mode != wifi_security_mode_none || security->mode != wifi_security_mode_owe) {
+    if (security->mode != wifi_security_mode_none && security->mode != wifi_security_mode_owe) {
         if (security->u.key.type == wifi_security_key_type_psk || security->u.key.type == wifi_security_key_type_psk_sae) {
             strncpy(password, security->u.key.key, 63);     // 8 to 63 characters
             password[63] = '\0';
@@ -12999,8 +13001,10 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
     params.value = security->disable_pmksa_caching?"1":"0";
     wifi_hostapdWrite(config_file, &params, 1);
 
-    wifi_setApEnable(ap_index, FALSE);
-    wifi_setApEnable(ap_index, TRUE);
+    if (multiple_set == FALSE) {
+        wifi_setApEnable(ap_index, FALSE);
+        wifi_setApEnable(ap_index, TRUE);
+    }
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
