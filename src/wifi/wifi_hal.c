@@ -479,44 +479,6 @@ INT wifi_getMaxRadioNumber(INT *max_radio_num)
     return RETURN_OK;
 }
 
-wifi_band wifi_index_to_band(int apIndex)
-{
-    char cmd[128] = {0};
-    char buf[64] = {0};
-    int nl80211_band = 0;
-    int i = 0;
-    int phyIndex = 0;
-    int radioIndex = 0;
-    int max_radio_num = 0;
-    wifi_band band = band_invalid;
-
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-
-    wifi_getMaxRadioNumber(&max_radio_num);
-    radioIndex = apIndex % max_radio_num;
-    phyIndex = radio_index_to_phy(radioIndex);
-    while(i < 10){
-        snprintf(cmd, sizeof(cmd), "iw phy%d info | grep 'Band .:' | tail -n 1 | tr -d ':\\n' | awk '{print $2}'", phyIndex);
-        _syscmd(cmd, buf, sizeof(buf));
-        nl80211_band = strtol(buf, NULL, 10);
-        if (nl80211_band == 1)
-            band = band_2_4;
-        else if (nl80211_band == 2)
-            band = band_5;
-        else if (nl80211_band == 4)     // band == 3 is 60GHz
-            band = band_6;
-
-        if(band != band_invalid)
-            break;
-            
-        i++;
-        sleep(1);
-    }
-
-    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
-    return band;
-}
-
 static int wifi_hostapdRead(char *conf_file, char *param, char *output, int output_size)
 {
     char cmd[MAX_CMD_SIZE]={'\0'};
@@ -544,12 +506,61 @@ static int wifi_hostapdWrite(char *conf_file, struct params *list, int item_coun
             snprintf(cmd, sizeof(cmd), "echo \"%s=%s\" >> %s", list[i].name, list[i].value, conf_file);
         else //Update
             snprintf(cmd, sizeof(cmd), "sed -i \"s/^%s=.*/%s=%s/\" %s", list[i].name, list[i].name, list[i].value, conf_file);
- 
+
         if(_syscmd(cmd, buf, sizeof(buf)))
             return -1;
     }
 
     return 0;
+}
+
+wifi_band wifi_index_to_band(int apIndex)
+{
+    char cmd[128] = {0};
+    char buf[64] = {0};
+    char config_file[128] = {0};
+    int nl80211_band = 0;
+    int i = 0;
+    int phyIndex = 0;
+    int radioIndex = 0;
+    int max_radio_num = 0;
+    wifi_band band = band_invalid;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    wifi_getMaxRadioNumber(&max_radio_num);
+    radioIndex = apIndex % max_radio_num;
+    phyIndex = radio_index_to_phy(radioIndex);
+    snprintf(cmd, sizeof(cmd), "cat /sys/class/ieee80211/phy%d/device/device 2> /dev/null", phyIndex);
+    _syscmd(cmd, buf, sizeof(buf));
+    if (strncmp(buf, "0x7915", 6) == 0) {   // harrier have two bands, consider as a special case.
+        snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, apIndex);
+        wifi_hostapdRead(config_file, "hw_mode", buf, sizeof(buf));
+        if (strncmp(buf, "a", 1) == 0)
+            return band_5;
+        else
+            return band_2_4;
+    }
+    while(i < 10){
+        snprintf(cmd, sizeof(cmd), "iw phy%d info | grep 'Band .:' | tr -d ':\\n' | awk '{print $2}'", phyIndex);
+        _syscmd(cmd, buf, sizeof(buf));
+        nl80211_band = strtol(buf, NULL, 10);
+        if (nl80211_band == 1)
+            band = band_2_4;
+        else if (nl80211_band == 2)
+            band = band_5;
+        else if (nl80211_band == 4)     // band == 3 is 60GHz
+            band = band_6;
+
+        if(band != band_invalid)
+            break;
+            
+        i++;
+        sleep(1);
+    }
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return band;
 }
 
 //For Getting Current Interface Name from corresponding hostapd configuration
@@ -2130,8 +2141,6 @@ INT wifi_setNoscan(INT radioIndex, CHAR *noscan)
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
 
     band = wifi_index_to_band(radioIndex);
-    if (band != band_2_4)
-        return RETURN_OK;
 
     sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radioIndex);
     params.name = "noscan";
