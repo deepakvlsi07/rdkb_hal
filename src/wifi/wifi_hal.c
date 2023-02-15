@@ -6531,9 +6531,8 @@ INT wifi_setApSecurityModeEnabled(INT apIndex, CHAR *encMode)
 }   
 
 
+// Get PreSharedKey associated with a Access Point.
 //A literal PreSharedKey (PSK) expressed as a hexadecimal string.
-// output_string must be pre-allocated as 64 character string by caller
-// PSK Key of 8 to 63 characters is considered an ASCII string, and 64 characters are considered as HEX value
 INT wifi_getApSecurityPreSharedKey(INT apIndex, CHAR *output_string)
 {
     char buf[16] = {0};
@@ -6553,14 +6552,14 @@ INT wifi_getApSecurityPreSharedKey(INT apIndex, CHAR *output_string)
 
     wifi_dbg_printf("\nFunc=%s\n",__func__);
     sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,apIndex);
-    wifi_hostapdRead(config_file,"wpa_passphrase",output_string,64);
+    wifi_hostapdRead(config_file,"wpa_psk",output_string,65);
     wifi_dbg_printf("\noutput_string=%s\n",output_string);
 
     return RETURN_OK;
 }
 
-// sets an enviornment variable for the psk. Input string preSharedKey must be a maximum of 64 characters
-// PSK Key of 8 to 63 characters is considered an ASCII string, and 64 characters are considered as HEX value
+// Set PreSharedKey associated with a Access Point.
+// A literal PreSharedKey (PSK) expressed as a hexadecimal string.
 INT wifi_setApSecurityPreSharedKey(INT apIndex, CHAR *preSharedKey)
 {
     //save to wifi config and hotapd config. wait for wifi reset or hostapd restet to apply
@@ -6571,19 +6570,20 @@ INT wifi_setApSecurityPreSharedKey(INT apIndex, CHAR *preSharedKey)
     if(NULL == preSharedKey)
         return RETURN_ERR;
 
-    params.name = "wpa_passphrase";
+    params.name = "wpa_psk";
 
-    if(strlen(preSharedKey)<8 || strlen(preSharedKey)>63)
+    if(strlen(preSharedKey) != 64)
     {
-        wifi_dbg_printf("\nCannot Set Preshared Key length of preshared key should be 8 to 63 chars\n");
+        wifi_dbg_printf("\nCannot Set Preshared Key length of preshared key should be 64 chars\n");
         return RETURN_ERR;
     }
     params.value = preSharedKey;
     sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,apIndex);
     ret = wifi_hostapdWrite(config_file, &params, 1);
-    if(!ret)
+    if(!ret) {
         ret = wifi_hostapdProcessUpdate(apIndex, &params, 1);
-
+        wifi_reloadAp(apIndex);
+    }
     return ret;
     //TODO: call hostapd_cli for dynamic_config_control
 }
@@ -6632,8 +6632,10 @@ INT wifi_setApSecurityKeyPassphrase(INT apIndex, CHAR *passPhrase)
     params.value = passPhrase;
     sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,apIndex);
     ret=wifi_hostapdWrite(config_file,&params,1);
-    if(!ret)
+    if(!ret) {
         wifi_hostapdProcessUpdate(apIndex, &params, 1);
+        wifi_reloadAp(apIndex);
+    }
 
     return ret;
 }
@@ -6748,6 +6750,11 @@ INT wifi_setApSecurityRadiusServer(INT apIndex, CHAR *IPAddress, UINT port, CHAR
     char buf[128] = {0};
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    if (wifi_getApSecurityModeEnabled(apIndex, buf) != RETURN_OK)
+        return RETURN_ERR;
+
+    if (strstr(buf, "Enterprise") == NULL)  // non Enterprise mode sould not set radius server info
+        return RETURN_ERR;
 
     snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, apIndex);
 
@@ -6823,6 +6830,11 @@ INT wifi_setApSecuritySecondaryRadiusServer(INT apIndex, CHAR *IPAddress, UINT p
     char buf[128] = {0};
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    if (wifi_getApSecurityModeEnabled(apIndex, buf) != RETURN_OK)
+        return RETURN_ERR;
+
+    if (strstr(buf, "Enterprise") == NULL)  // non Enterprise mode sould not set radius server info
+        return RETURN_ERR;
 
     snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, apIndex);
 
@@ -10777,107 +10789,64 @@ INT wifi_setRMBeaconRequest(UINT apIndex, CHAR *peer, wifi_BeaconRequest_t *in_r
 INT wifi_getRadioChannels(INT radioIndex, wifi_channelMap_t *outputMap, INT outputMapSize)
 {
     int i;
-    char cmd[256];
-    char channel_numbers_buf[256];
-    char dfs_state_buf[256];
-    char line[256];
+    int phyId = -1;
+    char cmd[256] = {0};
+    char channel_numbers_buf[256] = {0};
+    char dfs_state_buf[256] = {0};
+    char line[256] = {0};
     const char *ptr;
+    BOOL dfs_enable = false;
 
-    memset(cmd, 0, sizeof(cmd));
-    memset(channel_numbers_buf, 0, sizeof(channel_numbers_buf));
-    memset(line, 0, sizeof(line));
-    memset(dfs_state_buf, 0, sizeof(dfs_state_buf));
-    memset(outputMap, 0, outputMapSize); // all unused entries should be zero
+    memset(outputMap, 0, outputMapSize*sizeof(wifi_channelMap_t)); // all unused entries should be zero
 
-    if (radioIndex == 0) { // 2.4G - all allowed
-        if (outputMapSize < 11) {
-            wifi_dbg_printf("%s: outputMapSize too small (%d)\n", __FUNCTION__, outputMapSize);
-            return RETURN_ERR;
-        }
+    wifi_getRadioDfsEnable(radioIndex, &dfs_enable);
+    phyId = radio_index_to_phy(radioIndex);
 
-        for (i = 0; i < 11; i++) {
-            outputMap[i].ch_number = i + 1;
-            outputMap[i].ch_state = CHAN_STATE_AVAILABLE;
-        }
+    snprintf(cmd, sizeof (cmd), "iw phy phy%d info | grep -e '\\*.*MHz .*dBm' | grep -v '%sno IR\\|5340\\|5480' | awk '{print $4}' | tr -d '[]'", phyId, dfs_enable?"":"radar\\|");
 
-        return RETURN_OK;
+    if (_syscmd(cmd, channel_numbers_buf, sizeof(channel_numbers_buf)) == RETURN_ERR) {
+        wifi_dbg_printf("%s: failed to execute '%s'\n", __FUNCTION__, cmd);
+        return RETURN_ERR;
     }
 
-    if (radioIndex == 1) { // 5G
-//  Example output of iw list:
-//
-//    		Frequencies:
-//		* 5180 MHz [36] (17.0 dBm)
-//		* 5200 MHz [40] (17.0 dBm)
-//		* 5220 MHz [44] (17.0 dBm)
-//		* 5240 MHz [48] (17.0 dBm)
-//		* 5260 MHz [52] (23.0 dBm) (radar detection)
-//		  DFS state: usable (for 78930 sec)
-//		  DFS CAC time: 60000 ms
-//		* 5280 MHz [56] (23.0 dBm) (radar detection)
-//		  DFS state: usable (for 78930 sec)
-//		  DFS CAC time: 60000 ms
-//		* 5300 MHz [60] (23.0 dBm) (radar detection)
-//		  DFS state: usable (for 78930 sec)
-//		  DFS CAC time: 60000 ms
-//		* 5320 MHz [64] (23.0 dBm) (radar detection)
-//		  DFS state: usable (for 78930 sec)
-//		  DFS CAC time: 60000 ms
-//		* 5500 MHz [100] (disabled)
-//		* 5520 MHz [104] (disabled)
-//		* 5540 MHz [108] (disabled)
-//		* 5560 MHz [112] (disabled)
-//
-//		Below command should fetch channel numbers of each enabled channel in 5GHz band:
-        if (sprintf(cmd,"iw list | grep MHz | tr -d '\\t' | grep -v disabled | tr -d '*' | grep '^ 5' | awk '{print $3}' | tr -d '[]'") < 0) {
-            wifi_dbg_printf("%s: failed to build iw list command\n", __FUNCTION__);
+    ptr = channel_numbers_buf;
+    i = 0;
+    while (ptr = get_line_from_str_buf(ptr, line)) {
+        if (i >= outputMapSize) {
+                wifi_dbg_printf("%s: DFS map size too small\n", __FUNCTION__);
+                return RETURN_ERR;
+        }
+        sscanf(line, "%d", &outputMap[i].ch_number);
+
+        memset(cmd, 0, sizeof(cmd));
+        // Below command should fetch string for DFS state (usable, available or unavailable)
+        // Example line: "DFS state: usable (for 78930 sec)"
+        if (sprintf(cmd,"iw list | grep -A 2 '\\[%d\\]' | tr -d '\\t' | grep 'DFS state' | awk '{print $3}' | tr -d '\\n'", outputMap[i].ch_number) < 0) {
+            wifi_dbg_printf("%s: failed to build dfs state command\n", __FUNCTION__);
             return RETURN_ERR;
         }
 
-        if (_syscmd(cmd, channel_numbers_buf, sizeof(channel_numbers_buf)) == RETURN_ERR) {
+        memset(dfs_state_buf, 0, sizeof(dfs_state_buf));
+        if (_syscmd(cmd, dfs_state_buf, sizeof(dfs_state_buf)) == RETURN_ERR) {
             wifi_dbg_printf("%s: failed to execute '%s'\n", __FUNCTION__, cmd);
             return RETURN_ERR;
         }
 
-        ptr = channel_numbers_buf;
-        i = 0;
-        while (ptr = get_line_from_str_buf(ptr, line)) {
-            if (i >= outputMapSize) {
-                 wifi_dbg_printf("%s: DFS map size too small\n", __FUNCTION__);
-                 return RETURN_ERR;
-            }
-            sscanf(line, "%d", &outputMap[i].ch_number);
+        wifi_dbg_printf("DFS state = '%s'\n", dfs_state_buf);
 
-            memset(cmd, 0, sizeof(cmd));
-            // Below command should fetch string for DFS state (usable, available or unavailable)
-            // Example line: "DFS state: usable (for 78930 sec)"
-            if (sprintf(cmd,"iw list | grep -A 2 '\\[%d\\]' | tr -d '\\t' | grep 'DFS state' | awk '{print $3}' | tr -d '\\n'", outputMap[i].ch_number) < 0) {
-                wifi_dbg_printf("%s: failed to build dfs state command\n", __FUNCTION__);
-                return RETURN_ERR;
-            }
-
-            memset(dfs_state_buf, 0, sizeof(dfs_state_buf));
-            if (_syscmd(cmd, dfs_state_buf, sizeof(dfs_state_buf)) == RETURN_ERR) {
-                wifi_dbg_printf("%s: failed to execute '%s'\n", __FUNCTION__, cmd);
-                return RETURN_ERR;
-            }
-
-            wifi_dbg_printf("DFS state = '%s'\n", dfs_state_buf);
-
-            if (!strcmp(dfs_state_buf, "usable")) {
-                outputMap[i].ch_state = CHAN_STATE_DFS_NOP_FINISHED;
-            } else if (!strcmp(dfs_state_buf, "available")) {
-                outputMap[i].ch_state = CHAN_STATE_DFS_CAC_COMPLETED;
-            } else if (!strcmp(dfs_state_buf, "unavailable")) {
-                outputMap[i].ch_state = CHAN_STATE_DFS_NOP_START;
-            } else {
-                outputMap[i].ch_state = CHAN_STATE_AVAILABLE;
-            }
-            i++;
+        if (!strcmp(dfs_state_buf, "usable")) {
+            outputMap[i].ch_state = CHAN_STATE_DFS_NOP_FINISHED;
+        } else if (!strcmp(dfs_state_buf, "available")) {
+            outputMap[i].ch_state = CHAN_STATE_DFS_CAC_COMPLETED;
+        } else if (!strcmp(dfs_state_buf, "unavailable")) {
+            outputMap[i].ch_state = CHAN_STATE_DFS_NOP_START;
+        } else {
+            outputMap[i].ch_state = CHAN_STATE_AVAILABLE;
         }
-
-        return RETURN_OK;
+        i++;
     }
+
+    return RETURN_OK;
 
     wifi_dbg_printf("%s: wrong radio index (%d)\n", __FUNCTION__, radioIndex);
     return RETURN_ERR;
@@ -12930,6 +12899,7 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
 {
     char buf[128] = {0};
     char config_file[128] = {0};
+    char cmd[128] = {0};
     char password[64] = {0};
     char mfp[32] = {0};
     char wpa_mode[32] = {0};
@@ -12995,15 +12965,30 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
     wifi_setDisable_EAPOL_retries(ap_index, disable_EAPOL_retries);
 
     if (security->mode != wifi_security_mode_none && security->mode != wifi_security_mode_owe) {
-        if (security->u.key.type == wifi_security_key_type_psk || security->u.key.type == wifi_security_key_type_psk_sae) {
-            strncpy(password, security->u.key.key, 63);     // 8 to 63 characters
-            password[63] = '\0';
-            wifi_setApSecurityKeyPassphrase(ap_index, password);
+        if (security->u.key.type == wifi_security_key_type_psk || security->u.key.type == wifi_security_key_type_pass || security->u.key.type == wifi_security_key_type_psk_sae) {
+            int key_len = strlen(security->u.key.key);
+            // wpa_psk and wpa_passphrase cann;t use at the same time, the command replace one with the other.
+            if (key_len == 64) {    // set wpa_psk
+                strncpy(password, security->u.key.key, 64);     // 64 characters
+                password[64] = '\0';
+                wifi_setApSecurityPreSharedKey(ap_index, password);
+                snprintf(cmd, sizeof(cmd), "sed -i -n -e '/^wpa_passphrase=/!p' %s", config_file);
+            } else if (key_len >= 8 && key_len < 64) {  // set wpa_passphrase
+                strncpy(password, security->u.key.key, 63);
+                password[63] = '\0';
+                wifi_setApSecurityKeyPassphrase(ap_index, password);
+                snprintf(cmd, sizeof(cmd), "sed -i -n -e '/^wpa_psk=/!p' %s", config_file);
+            } else
+                return RETURN_ERR;
+            _syscmd(cmd, buf, sizeof(buf));
         }
         if (security->u.key.type == wifi_security_key_type_sae || security->u.key.type == wifi_security_key_type_psk_sae) {
             params.name = "sae_password";
             params.value = security->u.key.key;
             wifi_hostapdWrite(config_file, &params, 1);
+        } else {    // remove sae_password
+            snprintf(cmd, sizeof(cmd), "sed -i -n -e '/^sae_password=/!p' %s", config_file);
+            _syscmd(cmd, buf, sizeof(buf));
         }
     }
 
@@ -13048,6 +13033,8 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
 
     memset(&params, 0, sizeof(params));
     params.name = "wpa_pairwise_update_count";
+    if (security->eapol_key_retries == 0)
+        security->eapol_key_retries = 4;    // 0 is invalid, set to default value.
     snprintf(buf, sizeof(buf), "%u", security->eapol_key_retries);
     params.value = buf;
     wifi_hostapdWrite(config_file, &params, 1);
@@ -13072,7 +13059,7 @@ INT wifi_getApSecurity(INT ap_index, wifi_vap_security_t *security)
     char buf[256] = {0};
     char config_file[128] = {0};
     int disable = 0;
-    // struct params params = {0};
+    bool set_sae = FALSE;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, ap_index);
@@ -13117,13 +13104,22 @@ INT wifi_getApSecurity(INT ap_index, wifi_vap_security_t *security)
         memset(buf, 0, sizeof(buf));
         // wpa3 can use one or both configs as password, so we check sae_password first.
         wifi_hostapdRead(config_file, "sae_password", buf, sizeof(buf));
-        if (security->mode == wifi_security_mode_wpa3_personal && strlen(buf) != 0) {
-            security->u.key.type = wifi_security_key_type_sae;
-        } else {
-            security->u.key.type = wifi_security_key_type_psk;
-            wifi_hostapdRead(config_file, "wpa_passphrase", buf, sizeof(buf));
+        if (strlen(buf) != 0) {
+            if (security->mode == wifi_security_mode_wpa3_personal || security->mode == wifi_security_mode_wpa3_transition)
+                security->u.key.type = wifi_security_key_type_sae;
+            set_sae = TRUE;
+            strncpy(security->u.key.key, buf, sizeof(buf));
         }
-        strncpy(security->u.key.key, buf, sizeof(buf));
+        wifi_hostapdRead(config_file, "wpa_passphrase", buf, sizeof(buf));
+        if (strlen(buf) != 0){
+            if (set_sae == TRUE)
+                security->u.key.type = wifi_security_key_type_psk_sae;
+            else if (strlen(buf) == 64)
+                security->u.key.type = wifi_security_key_type_psk;
+            else
+                security->u.key.type = wifi_security_key_type_pass;
+            strncpy(security->u.key.key, buf, sizeof(security->u.key.key));
+        }
         security->u.key.key[255] = '\0';
     }
 
