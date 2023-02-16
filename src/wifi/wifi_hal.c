@@ -103,7 +103,7 @@ Licensed under the ISC license
 #define RADIO_PREFIX	"wlan"
 #endif
 
-#define MAX_ASSOCIATED_STA_NUM 63
+#define MAX_ASSOCIATED_STA_NUM 2007     // hostapd default
 
 //Uncomment to enable debug logs
 //#define WIFI_DEBUG
@@ -2463,6 +2463,7 @@ INT wifi_factoryResetAP(int apIndex)
     char ap_config_file[64] = {0};
     char cmd[128] = {0};
     char buf[128] = {0};
+    int max_radio_num = 0;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -2470,7 +2471,9 @@ INT wifi_factoryResetAP(int apIndex)
     sprintf(ap_config_file, "%s%d.conf", CONFIG_PREFIX, apIndex);
     sprintf(cmd, "rm %s && sh /lib/rdk/hostapd-init.sh", ap_config_file);
     _syscmd(cmd, buf, sizeof(buf));
-    wifi_setApEnable(apIndex, TRUE);
+    wifi_getMaxRadioNumber(&max_radio_num);
+    if (apIndex <= max_radio_num)       // The ap is default radio interface, we should default up it.
+        wifi_setApEnable(apIndex, TRUE);
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
@@ -3667,7 +3670,7 @@ INT wifi_setSSIDName(INT apIndex, CHAR *ssid_string)
     char config_file[MAX_BUF_SIZE] = {0};
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    if(NULL == ssid_string || strlen(ssid_string) >= 32 || strlen(ssid_string) == 0 )
+    if(NULL == ssid_string || strlen(ssid_string) > 32 || strlen(ssid_string) == 0 )
         return RETURN_ERR;
 
     params.name = "ssid";
@@ -5048,17 +5051,19 @@ INT wifi_createAp(INT apIndex, INT radioIndex, CHAR *essid, BOOL hideSsid)
 INT wifi_deleteAp(INT apIndex)
 {
     char interface_name[16] = {0};
-    char buf[1024];
-    char cmd[128];
+    char buf[128] = {0};
+    char cmd[128] = {0};
 
     if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+        return RETURN_ERR;
+
+    if (wifi_setApEnable(apIndex, FALSE) != RETURN_OK)
         return RETURN_ERR;
 
     snprintf(cmd,sizeof(cmd),  "iw %s del", interface_name);
     _syscmd(cmd, buf, sizeof(buf));
 
     wifi_removeApSecVaribles(apIndex);
-
     return RETURN_OK;
 }
 
