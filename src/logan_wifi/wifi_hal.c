@@ -1029,19 +1029,7 @@ void macfilter_init()
 // Initializes the wifi subsystem (all radios)
 INT wifi_init()                            //RDKB
 {
-    char interface[MAX_BUF_SIZE]={'\0'};
-    char bridge_name[MAX_BUF_SIZE]={'\0'};
-    INT len=0;
-
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    //Not intitializing macfilter for Turris-Omnia Platform for now
-    //macfilter_init();
-
-    system("/usr/sbin/iw reg set US");
-    // system("systemctl start hostapd.service");
-    sleep(2);//sleep to wait for hostapd to start
-
-    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    system("/usr/sbin/wifi up");
 
     return RETURN_OK;
 }
@@ -1066,11 +1054,7 @@ INT wifi_init()                            //RDKB
 */
 INT wifi_reset()
 {
-    //TODO: resets the wifi subsystem, deletes all APs
-    system("systemctl stop hostapd.service");
-    sleep(2);
-    system("systemctl start hostapd.service");
-    sleep(5);
+    system("/usr/sbin/wifi restart");
     return RETURN_OK;
 }
 
@@ -1095,9 +1079,7 @@ INT wifi_reset()
 */
 INT wifi_down()
 {
-    //TODO: turns off transmit power for the entire Wifi subsystem, for all radios
-    system("systemctl stop hostapd.service");
-    sleep(2);
+    system("/usr/sbin/wifi down");
     return RETURN_OK;
 }
 
