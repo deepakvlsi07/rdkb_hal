@@ -94,7 +94,7 @@ Licensed under the ISC license
 */
 
 
-#define MAX_APS MAX_NUM_RADIOS*5
+#define MAX_APS ((MAX_NUM_RADIOS)*(MAX_NUM_VAP_PER_RADIO))
 #ifndef AP_PREFIX
 #define AP_PREFIX	"wifi"
 #endif
@@ -1316,21 +1316,34 @@ INT wifi_getRadioEnable(INT radioIndex, BOOL *output_bool)      //RDKB
 {
     char interface_name[16] = {0};
     char buf[128] = {0}, cmd[128] = {0};
+    int apIndex;
+    int max_radio_num = 0;
 
     if (NULL == output_bool)
         return RETURN_ERR;
 
     *output_bool = FALSE;
-    if (radioIndex >= MAX_NUM_RADIOS)// Target has two wifi radios
+
+    wifi_getMaxRadioNumber(&max_radio_num);
+
+    if (radioIndex >= max_radio_num)
         return RETURN_ERR;
 
-	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
-		return RETURN_ERR;
-	sprintf(cmd, "hostapd_cli -i %s status | grep state | cut -d '=' -f2", interface_name);
-	_syscmd(cmd, buf, sizeof(buf));
+	/* loop all interface in radio, if any is enable, reture true, else return false */
+	for(apIndex=radioIndex; apIndex<MAX_APS; apIndex+=max_radio_num)
+	{
+		if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+			continue;
+		sprintf(cmd, "hostapd_cli -i %s status | grep state | cut -d '=' -f2", interface_name);
+		_syscmd(cmd, buf, sizeof(buf));
 
-	if(strncmp(buf, "ENABLED", 7) == 0 || strncmp(buf, "ACS", 3) == 0 || strncmp(buf, "HT_SCAN", 7) == 0 || strncmp(buf, "DFS", 3) == 0)
-		*output_bool = TRUE;
+		if(strncmp(buf, "ENABLED", 7) == 0 || strncmp(buf, "ACS", 3) == 0 ||
+			strncmp(buf, "HT_SCAN", 7) == 0 || strncmp(buf, "DFS", 3) == 0) {
+			/* return true if any interface is eanble */
+			*output_bool = TRUE;
+			break;
+		}
+	}
     return RETURN_OK;
 }
 
@@ -1351,7 +1364,8 @@ INT wifi_setRadioEnable(INT radioIndex, BOOL enable)
 
     if(enable==FALSE)
     {
-        for(apIndex=radioIndex; apIndex<MAX_APS; apIndex+=max_radio_num)
+        /* disable from max apindex to min, to avoid fail in mbss case */
+		for(apIndex=(MAX_APS-max_radio_num+radioIndex); apIndex>=0; apIndex-=max_radio_num)
         {
             if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
                 continue;
@@ -1373,17 +1387,16 @@ INT wifi_setRadioEnable(INT radioIndex, BOOL enable)
             if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
                 continue;
 
-            snprintf(cmd, sizeof(cmd), "iw phy%d interface add %s type __ap", phyId, interface_name);
-            ret = _syscmd(cmd, buf, sizeof(buf));
-            if ( ret == RETURN_ERR)
-            {
-                fprintf(stderr, "VAP interface creation failed\n");
-                continue;
-            }
             snprintf(cmd, sizeof(cmd), "cat %s | grep %s | cut -d'=' -f2", VAP_STATUS_FILE, interface_name);
             _syscmd(cmd, buf, sizeof(buf));
-            if(*buf == '1')
-            {
+            if(*buf == '1') {
+                snprintf(cmd, sizeof(cmd), "iw phy%d interface add %s type __ap", phyId, interface_name);
+                ret = _syscmd(cmd, buf, sizeof(buf));
+                if ( ret == RETURN_ERR) {
+					fprintf(stderr, "VAP interface creation failed\n");
+                    continue;
+                }
+
                 snprintf(cmd, sizeof(cmd), "hostapd_cli -i global raw ADD bss_config=phy%d:/nvram/hostapd%d.conf",
                               phyId, apIndex);
                 _syscmd(cmd, buf, sizeof(buf));
@@ -5040,6 +5053,7 @@ INT wifi_deleteAp(INT apIndex)
 
     if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
+
     snprintf(cmd,sizeof(cmd),  "iw %s del", interface_name);
     _syscmd(cmd, buf, sizeof(buf));
 
@@ -5996,6 +6010,7 @@ INT wifi_setApEnable(INT apIndex, BOOL enable)
         sprintf(cmd, "ip link set %s down", interface_name);
         _syscmd(cmd, buf, sizeof(buf));
     }
+
     snprintf(cmd, sizeof(cmd), "sed -i -n -e '/^%s=/!p' -e '$a%s=%d' %s",
                   interface_name, interface_name, enable, VAP_STATUS_FILE);
     _syscmd(cmd, buf, sizeof(buf));
@@ -12258,12 +12273,12 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
     BOOL enabled = FALSE;
     char buf[256] = {0};
     wifi_vap_security_t security = {0};
-    map->num_vaps = 5;      // Hardcoded
+
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     printf("Entering %s index = %d\n", __func__, (int)index);
 
-    for (i = 0; i < 5; i++)
+    for (i = 0; i < MAX_NUM_VAP_PER_RADIO; i++)
     {
         map->vap_array[i].radio_index = index;
 
@@ -12278,7 +12293,8 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
         memset(buf, 0, sizeof(buf));
         ret = wifi_getApName(vap_index, buf);
         if (ret != RETURN_OK) {
-            printf("%s: wifi_getApName return error\n", __func__);
+            printf("%s: wifi_getApName return error. vap_index=%d\n", __func__, vap_index);
+
             return RETURN_ERR;
         }
         snprintf(map->vap_array[i].vap_name, sizeof(map->vap_array[i].vap_name), "%s", buf);
@@ -12397,7 +12413,7 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
             return RETURN_ERR;
         }
         map->vap_array[i].u.bss_info.mcast2ucast = enabled;
-
+        map->num_vaps++;
         // TODO: wps, noack
     }
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
