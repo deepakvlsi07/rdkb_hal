@@ -133,6 +133,8 @@ Licensed under the ISC license
 
 #define PS_MAX_TID 16
 
+#define MAX_CARD_INDEX 3
+
 static wifi_radioQueueType_t _tid_ac_index_get[PS_MAX_TID] = {
     WIFI_RADIO_QUEUE_TYPE_BE,      /* 0 */
     WIFI_RADIO_QUEUE_TYPE_BK,      /* 1 */
@@ -254,6 +256,81 @@ wifi_secur_list * wifi_get_item_by_str(wifi_secur_list *list, int list_sz, const
     return NULL;
 }
 #endif /* WIFI_HAL_VERSION_3 */
+
+
+static char l1profile[32] = "/etc/wireless/l1profile.dat";
+
+static int
+get_value(const char *conf_file, const char *param, char *value, int len)
+{
+    FILE *fp;
+    int ret = -1;
+    int param_len = strlen(param);
+    int buf_len;
+    char buf[256];
+
+    fp = fopen(conf_file, "r");
+    if (!fp) {
+        return -1;
+    }
+
+    while (fgets(buf, sizeof(buf), fp)) {
+        buf_len = strlen(buf);
+        if (buf[buf_len - 1] == '\n') {
+            buf_len--;
+            buf[buf_len] = '\0';
+        }
+        if ((buf_len > param_len) &&
+            (strncmp(buf, param, param_len) == 0) &&
+            (buf[param_len] == '=')) {
+
+            if (buf_len == (param_len + 1)) {
+                value[0] = '\0';
+                ret = 0;
+            } else {
+                ret = snprintf(value, len, "%s", buf + (param_len + 1));
+            }
+            fclose(fp);
+            return ret;
+        }
+    }
+    fclose(fp);
+    return -1;
+}
+
+static int
+get_value_by_idx(const char *conf_file, const char *param, int idx, char *value, int len)
+{
+    char buf[256];
+    int ret;
+    char *save_ptr = NULL;
+    char *tok = NULL;
+
+    ret = get_value(conf_file, param, buf, sizeof(buf));
+    if (ret < 0)
+        return ret;
+
+    tok = strtok_r(buf, ";", &save_ptr);
+    do {
+        if (idx == 0 || tok == NULL)
+            break;
+        else
+            idx--;
+
+        tok = strtok_r(NULL, ";", &save_ptr);
+    } while (tok != NULL);
+
+    if (tok) {
+        ret = snprintf(value, len, "%s", tok);
+    } else {
+        ret = 0;
+        value[0] = '\0';
+    }
+
+    return ret;
+}
+
+
 
 #ifdef HAL_NETLINK_IMPL
 typedef struct {
@@ -1029,7 +1106,19 @@ void macfilter_init()
 // Initializes the wifi subsystem (all radios)
 INT wifi_init()                            //RDKB
 {
-    system("/usr/sbin/wifi up");
+    char interface[MAX_BUF_SIZE]={'\0'};
+    char bridge_name[MAX_BUF_SIZE]={'\0'};
+    INT len=0;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    //Not intitializing macfilter for Turris-Omnia Platform for now
+    //macfilter_init();
+
+    system("/usr/sbin/iw reg set US");
+    // system("systemctl start hostapd.service");
+    sleep(2);//sleep to wait for hostapd to start
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
     return RETURN_OK;
 }
@@ -1054,7 +1143,11 @@ INT wifi_init()                            //RDKB
 */
 INT wifi_reset()
 {
-    system("/usr/sbin/wifi restart");
+    //TODO: resets the wifi subsystem, deletes all APs
+    system("systemctl stop hostapd.service");
+    sleep(2);
+    system("systemctl start hostapd.service");
+    sleep(5);
     return RETURN_OK;
 }
 
@@ -1079,7 +1172,9 @@ INT wifi_reset()
 */
 INT wifi_down()
 {
-    system("/usr/sbin/wifi down");
+    //TODO: turns off transmit power for the entire Wifi subsystem, for all radios
+    system("systemctl stop hostapd.service");
+    sleep(2);
     return RETURN_OK;
 }
 
@@ -12147,6 +12242,22 @@ static int array_index_to_vap_index(UINT radioIndex, int arrayIndex)
 
     return (arrayIndex * max_radio_num) + radioIndex;
 }
+
+static int vap_index_to_array_index(int vapIndex, int *radioIndex, int *arrayIndex)
+{
+    int max_radio_num = 0;
+
+    if ((vapIndex < 0) || (vapIndex >  MAX_NUM_VAP_PER_RADIO*MAX_NUM_RADIOS))
+	return -1;
+
+    wifi_getMaxRadioNumber(&max_radio_num);
+
+    (*radioIndex) = vapIndex % max_radio_num;
+    (*arrayIndex) = vapIndex / max_radio_num;
+
+    return 0;
+}
+
 
 wifi_bitrate_t beaconRate_string_to_enum(char *beaconRate) {
     if (strncmp(beaconRate, "1Mbps", 5) == 0)
