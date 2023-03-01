@@ -170,6 +170,7 @@ typedef enum {
     WIFI_MODE_N = 0x08,
     WIFI_MODE_AC = 0x10,
     WIFI_MODE_AX = 0x20,
+    WIFI_MODE_BE = 0x40,
 } wifi_ieee80211_Mode;
 
 #ifdef WIFI_HAL_VERSION_3
@@ -1812,6 +1813,13 @@ INT wifi_getRadioSupportedStandards(INT radioIndex, CHAR *output_string) //Tr181
         strcat(temp_output, "ax,");
     }
 
+    // eht capabilities
+    snprintf(cmd, sizeof(cmd),  "iw phy%d info | grep 'EHT MAC Capabilities' | head -n 2 | tail -n 1 | cut -d '(' -f2 | cut -c1-6 | tr -d '\\n'", phyId);
+    _syscmd(cmd, buf, sizeof(buf));
+    if (strlen(buf) >= 6 && strncmp (buf, "0x0000", 6) != 0) {
+        strcat(temp_output, "be,");
+    }
+
     // Remove the last comma
     if (strlen(temp_output) != 0)
         temp_output[strlen(temp_output)-1] = '\0';
@@ -1921,7 +1929,7 @@ INT wifi_getRadioMode(INT radioIndex, CHAR *output_string, UINT *pureMode)
 
     // grep all of the ieee80211 protocol config set to 1
     snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
-    snprintf(cmd, sizeof(cmd), "cat %s | grep -E \"ieee.*=1\" | cut -d '=' -f1 | tr -d 'ieee80211'", config_file);
+    snprintf(cmd, sizeof(cmd), "cat %s | grep -E \"ieee.*=1\" | cut -d '=' -f1 | sed \"s/ieee80211\\.*/\1/\"", config_file);
     _syscmd(cmd, buf, sizeof(buf));
 
     band = wifi_index_to_band(radioIndex);
@@ -1938,6 +1946,10 @@ INT wifi_getRadioMode(INT radioIndex, CHAR *output_string, UINT *pureMode)
             strcat(output_string, ",ax");
             *pureMode |= WIFI_MODE_AX;
         }
+        if (strstr(buf, "be") != NULL) {
+            strcat(output_string, ",be");
+            *pureMode |= WIFI_MODE_BE;
+        }
     } else if (band == band_5) {
         strcat(output_string, "a");
         *pureMode |= WIFI_MODE_A;
@@ -1953,10 +1965,18 @@ INT wifi_getRadioMode(INT radioIndex, CHAR *output_string, UINT *pureMode)
             strcat(output_string, ",ax");
             *pureMode |= WIFI_MODE_AX;
         }
+        if (strstr(buf, "be") != NULL) {
+            strcat(output_string, ",be");
+            *pureMode |= WIFI_MODE_BE;
+        }
     } else if (band == band_6) {
         if (strstr(buf, "ax") != NULL) {
             strcat(output_string, "ax");
             *pureMode |= WIFI_MODE_AX;
+        }
+        if (strstr(buf, "be") != NULL) {
+            strcat(output_string, ",be");
+            *pureMode |= WIFI_MODE_BE;
         }
     }
 
@@ -2062,18 +2082,20 @@ INT wifi_setRadioChannelMode(INT radioIndex, CHAR *channelMode, BOOL gOnlyFlag, 
 // Set the radio operating mode, and pure mode flag.
 INT wifi_setRadioMode(INT radioIndex, CHAR *channelMode, UINT pureMode)
 {
-    int num_hostapd_support_mode = 3;   // n, ac, ax
+    int num_hostapd_support_mode = 4;   // n, ac, ax, be
     struct params list[num_hostapd_support_mode];
     char config_file[64] = {0};
     char bandwidth[16] = {0};
+    char supported_mode[32] = {0};
     int mode_check_bit = 1 << 3;    // n mode
-    
+    bool eht_support = FALSE;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s_%d:%d\n", __func__, channelMode, pureMode, __LINE__);
     // Set radio mode
     list[0].name = "ieee80211n";
     list[1].name = "ieee80211ac";
     list[2].name = "ieee80211ax";
+    list[3].name = "ieee80211be";
     snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
 
     // check the bit map from n to ax, and set hostapd config
@@ -2089,7 +2111,19 @@ INT wifi_setRadioMode(INT radioIndex, CHAR *channelMode, UINT pureMode)
         list[2].value = "1";
     else
         list[2].value = "0";
-    wifi_hostapdWrite(config_file, list, num_hostapd_support_mode);
+    if (pureMode & WIFI_MODE_BE)
+        list[3].value = "1";
+    else
+        list[3].value = "0";
+
+    wifi_getRadioSupportedStandards(radioIndex, supported_mode);
+    if (strstr(supported_mode, "be") != NULL)
+        eht_support = TRUE;
+
+    if (eht_support)
+        wifi_hostapdWrite(config_file, list, num_hostapd_support_mode);
+    else
+        wifi_hostapdWrite(config_file, list, num_hostapd_support_mode-1);
 
     if (channelMode == NULL || strlen(channelMode) == 0)
         return RETURN_OK;
@@ -2100,6 +2134,8 @@ INT wifi_setRadioMode(INT radioIndex, CHAR *channelMode, UINT pureMode)
         strcpy(bandwidth, "80MHz");
     else if (strstr(channelMode, "160") != NULL)
         strcpy(bandwidth, "160MHz");
+    else if (strstr(channelMode, "320") != NULL)
+        strcpy(bandwidth, "320MHz");
     else    // 11A, 11B, 11G....
         strcpy(bandwidth, "20MHz");
 
@@ -2375,28 +2411,36 @@ INT wifi_setRadioChannel(INT radioIndex, ULONG channel)	//RDKB	//AP only
 
 INT wifi_setRadioCenterChannel(INT radioIndex, ULONG channel)
 {
-    struct params list[2];
-    char str_idx[16];
-    char config_file[64];
+    struct params list[3];
+    char str_idx[16] = {0};
+    char supported_mode[32] = {0};
+    char config_file[64] = {0};
     int max_num_radios = 0;
     wifi_band band = band_invalid;
+    bool eht_support = FALSE;
 
     band = wifi_index_to_band(radioIndex);
     if (band == band_2_4)
         return RETURN_OK;
+
+    wifi_getRadioSupportedStandards(radioIndex, supported_mode);
+    if (strstr(supported_mode, "be") != NULL)
+        eht_support = TRUE;
 
     snprintf(str_idx, sizeof(str_idx), "%lu", channel);
     list[0].name = "vht_oper_centr_freq_seg0_idx";
     list[0].value = str_idx;
     list[1].name = "he_oper_centr_freq_seg0_idx";
     list[1].value = str_idx;
+    list[2].name = "eht_oper_centr_freq_seg0_idx";
+    list[2].value = str_idx;
 
     wifi_getMaxRadioNumber(&max_num_radios);
     for(int i=0; i<=MAX_APS/max_num_radios; i++)
     {
         snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex+(max_num_radios*i));
-        if (band == band_6)
-            wifi_hostapdWrite(config_file, &list[1], 1);
+        if (eht_support)
+            wifi_hostapdWrite(config_file, list, 3);
         else
             wifi_hostapdWrite(config_file, list, 2);
     }
@@ -2671,6 +2715,26 @@ INT wifi_setRadioDfsRefreshPeriod(INT radioIndex, ULONG seconds) //Tr181
     return RETURN_ERR;
 }
 
+INT getEHT320ChannelBandwidthSet(int radioIndex, int *BandwidthSet)
+{
+    int center_channel = 0;
+    char config_file[32] = {0};
+    char buf[32] = {0};
+
+    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
+    wifi_hostapdRead(config_file, "eht_oper_centr_freq_seg0_idx", buf, sizeof(buf));
+
+    center_channel = strtoul(buf, NULL, 10);
+    center_channel += 1;   // Add 1 to become muiltiple of 16
+    if (center_channel % 64 == 32)
+        *BandwidthSet = WIFI_CHANNELBANDWIDTH_320_1MHZ;
+    else if (center_channel % 64 == 0)
+        *BandwidthSet = WIFI_CHANNELBANDWIDTH_320_2MHZ;
+    else
+        return RETURN_ERR;
+    return RETURN_OK;
+}
+
 //Get the Operating Channel Bandwidth. eg "20MHz", "40MHz", "80MHz", "80+80", "160"
 //The output_string is a max length 64 octet string that is allocated by the RDKB code.  Implementations must ensure that strings are not longer than this.
 INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) //Tr181
@@ -2712,8 +2776,19 @@ INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) 
 
         } else if (strncmp(buf, "1", 1) == 0)
             snprintf(output_string, 64, "80MHz");
-        else if (strncmp(buf, "2", 1) == 0)
+        else if (strncmp(buf, "2", 1) == 0) {
             snprintf(output_string, 64, "160MHz");
+            wifi_hostapdRead(config_file, "eht_oper_chwidth", buf, sizeof(buf));
+            if (strncmp(buf, "9", 1) == 0) {
+                int BandwidthSet = 0;
+                if (getEHT320ChannelBandwidthSet(radioIndex, &BandwidthSet) != RETURN_OK)
+                    return RETURN_ERR;
+                if (BandwidthSet == WIFI_CHANNELBANDWIDTH_320_1MHZ)
+                    snprintf(output_string, 64, "320-1MHz");
+                else if (BandwidthSet == WIFI_CHANNELBANDWIDTH_320_2MHZ)
+                    snprintf(output_string, 64, "320-2MHz");
+            }
+        }
     }
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
@@ -2726,15 +2801,17 @@ INT wifi_setRadioOperatingChannelBandwidth(INT radioIndex, CHAR *bandwidth) //Tr
 {
     char config_file[128];
     char set_value[16];
-    struct params params[2];
+    char supported_mode[32] = {0};
+    struct params params[3];
     int max_radio_num = 0;
+    bool eht_support = FALSE;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
     if(NULL == bandwidth)
         return RETURN_ERR;
 
-    if(strstr(bandwidth,"160") != NULL)
+    if(strstr(bandwidth,"160") != NULL || strstr(bandwidth,"320") != NULL)
         strcpy(set_value, "2");
     else if(strstr(bandwidth,"80") != NULL)
         strcpy(set_value, "1");
@@ -2747,16 +2824,28 @@ INT wifi_setRadioOperatingChannelBandwidth(INT radioIndex, CHAR *bandwidth) //Tr
         return RETURN_ERR;
     }
 
+    wifi_getRadioSupportedStandards(radioIndex, supported_mode);
+    if (strstr(supported_mode, "be") != NULL)
+        eht_support = TRUE;
+
     params[0].name = "vht_oper_chwidth";
     params[0].value = set_value;
     params[1].name = "he_oper_chwidth";
     params[1].value = set_value;
+    params[2].name = "eht_oper_chwidth";
+    if (strstr(bandwidth,"320") != NULL)     // We set oper_chwidth to 9 for EHT320
+        params[2].value = "9";
+    else
+        params[2].value = set_value;
 
     wifi_getMaxRadioNumber(&max_radio_num);
     for(int i=0; i<=MAX_APS/max_radio_num; i++)
     {
-       snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex+(max_radio_num*i));
-       wifi_hostapdWrite(config_file, params, 2);
+        snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex+(max_radio_num*i));
+        if (eht_support == TRUE)
+            wifi_hostapdWrite(config_file, params, 3);
+        else
+            wifi_hostapdWrite(config_file, params, 2);
     }
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
@@ -8510,7 +8599,8 @@ static int util_get_sec_chan_offset(int channel, const char* ht_mode)
 {
     if (0 == strcmp(ht_mode, "HT40") ||
         0 == strcmp(ht_mode, "HT80") ||
-        0 == strcmp(ht_mode, "HT160")) {
+        0 == strcmp(ht_mode, "HT160") ||
+        0 == strcmp(ht_mode, "HT320")) {
         switch (channel) {
             case 1 ... 7:
             case 36:
@@ -8553,7 +8643,8 @@ static int util_get_6g_sec_chan_offset(int channel, const char* ht_mode)
     int idx = channel%8;
     if (0 == strcmp(ht_mode, "HT40") ||
         0 == strcmp(ht_mode, "HT80") ||
-        0 == strcmp(ht_mode, "HT160")) {
+        0 == strcmp(ht_mode, "HT160") ||
+        0 == strcmp(ht_mode, "HT320")) {
         switch (idx) {
             case 1:
                 return 1;
@@ -8760,6 +8851,23 @@ static int util_unii_6g_centerfreq(const char *ht_mode, int channel)
             default:
                 return -EINVAL;
         }        
+    }else if (width == 320){
+        switch (channel) {
+            case 1 ... 29:
+                centerchan = 31;
+                break;
+            case 33 ... 93:
+                centerchan = 63;
+                break;
+            case 97 ... 157:
+                centerchan = 127;
+                break;
+            case 161 ... 221:
+                centerchan = 191;
+                break;
+            default:
+                return -EINVAL;
+        }
     }
     return centerchan;
 }
@@ -8793,6 +8901,7 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
     int width;
     char config_file[64] = {0};
     BOOL stbcEnable = FALSE;
+    BOOL setEHT320 = FALSE;
     char *ext_str = "None";
     wifi_band band = band_invalid;
     int center_chan = 0;
@@ -8815,6 +8924,10 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
             freq = util_6G_chan_to_freq(channel);
         }else{
             freq = util_chan_to_freq(channel);
+        }
+        if (width == 320) {
+            width = 160;    // We should set HE central channel as 160, and additionally modify EHT central channel with 320
+            setEHT320 = TRUE;
         }
         snprintf(ht_mode, sizeof(ht_mode), "HT%d", width);
 
@@ -8886,7 +8999,10 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
 
     char mhz_str[16];
     snprintf(mhz_str, sizeof(mhz_str), "%dMHz", width);
-    wifi_setRadioOperatingChannelBandwidth(radioIndex, mhz_str);
+    if (setEHT320 == TRUE)
+        wifi_setRadioOperatingChannelBandwidth(radioIndex, "320MHz");
+    else
+        wifi_setRadioOperatingChannelBandwidth(radioIndex, mhz_str);
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
@@ -11275,7 +11391,7 @@ INT wifi_getGuardInterval(INT radio_index, wifi_guard_interval_t *guard_interval
     if (guard_interval == NULL)
         return RETURN_ERR;
 
-    snprintf(cmd, sizeof(cmd), "cat %s%d.txt", GUARD_INTERVAL_FILE, radio_index);
+    snprintf(cmd, sizeof(cmd), "cat %s%d.txt 2> /dev/null", GUARD_INTERVAL_FILE, radio_index);
     _syscmd(cmd, buf, sizeof(buf));
 
     if (strncmp(buf, "0.4", 3) == 0)
@@ -11940,6 +12056,76 @@ INT TransmitRatesToBitMap (char *BasicRatesList, UINT *basicRateBitMap)
     return RETURN_OK;
 }
 
+INT setEHT320CentrlChannel(UINT radioIndex, int channel, wifi_channelBandwidth_t bandwidth)
+{
+    int center_channel = 0;
+    char central_channel_str[16] = {0};
+    char config_file[32] = {0};
+    struct params param = {0};
+
+    center_channel = util_unii_6g_centerfreq("HT320", channel);
+    if (bandwidth == WIFI_CHANNELBANDWIDTH_320_1MHZ) {
+        if (channel >= 193)
+            return RETURN_ERR;
+        if (channel >= 33) {
+            if (channel > center_channel)
+                center_channel += 32;
+            else
+                center_channel -= 32;
+        }
+    } else if (bandwidth == WIFI_CHANNELBANDWIDTH_320_2MHZ) {
+        if (channel <= 29)
+            return RETURN_ERR;
+    }
+    snprintf(central_channel_str, sizeof(central_channel_str), "%d", center_channel);
+    param.name = "eht_oper_centr_freq_seg0_idx";
+    param.value = central_channel_str;
+    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
+    wifi_hostapdWrite(config_file, &param, 1);
+
+    return RETURN_OK;
+}
+
+INT wifi_setRadioOpclass(INT radioIndex, INT bandwidth)
+{
+    int op_class = 0;
+    char config_file[32] = {0};
+    char op_class_str[8] = {0};
+    struct params param = {0};
+
+    if (bandwidth == 20)
+        op_class = 131;
+    else if (bandwidth == 40)
+        op_class = 132;
+    else if (bandwidth == 80)
+        op_class = 133;
+    else if (bandwidth == 160)
+        op_class = 134;
+    else if (bandwidth == 320)
+        op_class = 137;
+    else
+        return RETURN_ERR;
+    snprintf(op_class_str, sizeof(op_class_str), "%d", op_class);
+    param.name = "op_class";
+    param.value = op_class_str;
+    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
+    wifi_hostapdWrite(config_file, &param, 1);
+    return RETURN_OK;
+}
+
+INT wifi_getRadioOpclass(INT radioIndex, UINT *class)
+{
+    char config_file[32] = {0};
+    char buf [16] = {0};
+
+    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
+    if (wifi_hostapdRead(config_file, "op_class", buf, sizeof(buf)) != 0)
+        return RETURN_ERR;      // 6g band should set op_class
+    *class = (UINT)strtoul(buf, NULL, 10);
+
+    return RETURN_OK;
+}
+
 // This API is used to configured all radio operation parameter in a single set. it includes channel number, channelWidth, mode and auto chammel configuration.
 INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operationParam_t *operationParam)
 {
@@ -11972,6 +12158,8 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
         bandwidth = 80;
     else if (operationParam->channelWidth == WIFI_CHANNELBANDWIDTH_160MHZ || operationParam->channelWidth == WIFI_CHANNELBANDWIDTH_80_80MHZ)
         bandwidth = 160;
+    else if (operationParam->channelWidth == WIFI_CHANNELBANDWIDTH_320_1MHZ || operationParam->channelWidth == WIFI_CHANNELBANDWIDTH_320_2MHZ)
+        bandwidth = 320;
     if (operationParam->autoChannelEnabled){
         if (wifi_pushRadioChannel2(index, 0, bandwidth, operationParam->csa_beacon_count) != RETURN_OK) {
             fprintf(stderr, "%s: wifi_pushRadioChannel2 return error.\n", __func__);
@@ -11980,6 +12168,22 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
     }else{    
         if (wifi_pushRadioChannel2(index, operationParam->channel, bandwidth, operationParam->csa_beacon_count) != RETURN_OK) {
             fprintf(stderr, "%s: wifi_pushRadioChannel2 return error.\n", __func__);
+            return RETURN_ERR;
+        }
+    }
+
+    // if set EHT 320. We need to overide the central channel config set by wifi_pushRadioChannel2.
+    if (operationParam->channelWidth == WIFI_CHANNELBANDWIDTH_320_1MHZ || operationParam->channelWidth == WIFI_CHANNELBANDWIDTH_320_2MHZ) {
+        if (setEHT320CentrlChannel(index, operationParam->channel, operationParam->channelWidth) != RETURN_OK) {
+            fprintf(stderr, "%s: failed to set EHT 320 bandwidth with channel %d and %s setting\n", __func__, operationParam->channel, \
+                (operationParam->channelWidth == WIFI_CHANNELBANDWIDTH_320_1MHZ) ? "EHT320-1" : "EHT320-2");
+            return RETURN_ERR;
+        }
+    }
+
+    if (operationParam->band == WIFI_FREQUENCY_6_BAND) {
+        if (wifi_setRadioOpclass(index, bandwidth) != RETURN_OK) {
+            fprintf(stderr, "%s: wifi_setRadioOpclass return error.\n", __func__);
             return RETURN_ERR;
         }
     }
@@ -11998,6 +12202,8 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
             set_mode |= WIFI_MODE_AC;
         if (operationParam->variant & WIFI_80211_VARIANT_AX)
             set_mode |= WIFI_MODE_AX;
+        if (operationParam->variant & WIFI_80211_VARIANT_BE)
+            set_mode |= WIFI_MODE_BE;
         // Second parameter is to set channel band width, it is done by wifi_pushRadioChannel2 if changed.
         memset(buf, 0, sizeof(buf));
         if (wifi_setRadioMode(index, buf, set_mode) != RETURN_OK) {
@@ -12136,10 +12342,19 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
     else if (!strcmp(buf, "40MHz")) operationParam->channelWidth = WIFI_CHANNELBANDWIDTH_40MHZ;
     else if (!strcmp(buf, "80MHz")) operationParam->channelWidth = WIFI_CHANNELBANDWIDTH_80MHZ;
     else if (!strcmp(buf, "160MHz")) operationParam->channelWidth = WIFI_CHANNELBANDWIDTH_160MHZ;
+    else if (!strcmp(buf, "320-1MHz")) operationParam->channelWidth = WIFI_CHANNELBANDWIDTH_320_1MHZ;
+    else if (!strcmp(buf, "320-2MHz")) operationParam->channelWidth = WIFI_CHANNELBANDWIDTH_320_2MHZ;
     else
     {
         fprintf(stderr, "Unknown channel bandwidth: %s\n", buf);
         return false;
+    }
+
+    if (operationParam->band == WIFI_FREQUENCY_6_BAND) {
+        if (wifi_getRadioOpclass(index, &operationParam->op_class) != RETURN_OK) {
+            fprintf(stderr, "%s: op_class is not set.\n", __func__);
+            return RETURN_ERR;
+        }
     }
 
     if (wifi_getRadioMode(index, buf, &mode) != RETURN_OK) {
@@ -12159,6 +12374,8 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
         operationParam->variant |= WIFI_80211_VARIANT_AC;
     if (mode & WIFI_MODE_AX)
         operationParam->variant |= WIFI_80211_VARIANT_AX;
+    if (mode & WIFI_MODE_BE)
+        operationParam->variant |= WIFI_80211_VARIANT_BE;
     if (wifi_getRadioDCSEnable(index, &operationParam->DCSEnabled) != RETURN_OK) {
         fprintf(stderr, "%s: wifi_getRadioDCSEnable return error.\n", __func__);
         return RETURN_ERR;
@@ -12770,29 +12987,48 @@ static int getRadioCapabilities(int radioIndex, wifi_radio_capabilities_t *rcap)
     /* channelWidth - all supported bandwidths */
     int i=0;
     rcap->channelWidth[i] = 0;
-    if (rcap->band[i] & WIFI_FREQUENCY_2_4_BAND) {
-        rcap->channelWidth[i] |= (WIFI_CHANNELBANDWIDTH_20MHZ |
-                                WIFI_CHANNELBANDWIDTH_40MHZ);
-
-    }
-    else if (rcap->band[i] & (WIFI_FREQUENCY_5_BAND ) || rcap->band[i] & (WIFI_FREQUENCY_6_BAND)) {
-        rcap->channelWidth[i] |= (WIFI_CHANNELBANDWIDTH_20MHZ |
-                                WIFI_CHANNELBANDWIDTH_40MHZ |
-                                WIFI_CHANNELBANDWIDTH_80MHZ | WIFI_CHANNELBANDWIDTH_160MHZ);
-    }
-
 
     /* mode - all supported variants */
     // rcap->mode[i] = WIFI_80211_VARIANT_H;
-    if (rcap->band[i] & WIFI_FREQUENCY_2_4_BAND ) {
-        rcap->mode[i] = ( WIFI_80211_VARIANT_B | WIFI_80211_VARIANT_G | WIFI_80211_VARIANT_N | WIFI_80211_VARIANT_AX );
-    }
-    else if (rcap->band[i] & WIFI_FREQUENCY_5_BAND ) {
-        rcap->mode[i] = ( WIFI_80211_VARIANT_A | WIFI_80211_VARIANT_N | WIFI_80211_VARIANT_AC | WIFI_80211_VARIANT_AX );
-    }
-    else if (rcap->band[i] & WIFI_FREQUENCY_6_BAND) {
+    wifi_getRadioSupportedStandards(radioIndex, output_string);
+
+    if (rcap->band[i] & WIFI_FREQUENCY_2_4_BAND) {
+        rcap->channelWidth[i] |= (WIFI_CHANNELBANDWIDTH_20MHZ |
+                                WIFI_CHANNELBANDWIDTH_40MHZ);
+        rcap->mode[i] = ( WIFI_80211_VARIANT_B | WIFI_80211_VARIANT_G);
+
+        if (strstr(output_string, "n") != NULL)
+            rcap->mode[i] |= WIFI_80211_VARIANT_N;
+        if (strstr(output_string, "ax") != NULL)
+            rcap->mode[i] |= WIFI_80211_VARIANT_AX;
+        if (strstr(output_string, "be") != NULL)
+            rcap->mode[i] |= WIFI_80211_VARIANT_BE;
+    } else if (rcap->band[i] & WIFI_FREQUENCY_5_BAND) {
+        rcap->channelWidth[i] |= (WIFI_CHANNELBANDWIDTH_20MHZ |
+                                WIFI_CHANNELBANDWIDTH_40MHZ |
+                                WIFI_CHANNELBANDWIDTH_80MHZ | WIFI_CHANNELBANDWIDTH_160MHZ);
+        rcap->mode[i] = ( WIFI_80211_VARIANT_A);
+
+        if (strstr(output_string, "n") != NULL)
+            rcap->mode[i] |= WIFI_80211_VARIANT_N;
+        if (strstr(output_string, "ac") != NULL)
+            rcap->mode[i] |= WIFI_80211_VARIANT_AC;
+        if (strstr(output_string, "ax") != NULL)
+            rcap->mode[i] |= WIFI_80211_VARIANT_AX;
+        if (strstr(output_string, "be") != NULL)
+            rcap->mode[i] |= WIFI_80211_VARIANT_BE;
+    } else if (rcap->band[i] & WIFI_FREQUENCY_6_BAND) {
+        rcap->channelWidth[i] |= (WIFI_CHANNELBANDWIDTH_20MHZ |
+                                WIFI_CHANNELBANDWIDTH_40MHZ |
+                                WIFI_CHANNELBANDWIDTH_80MHZ | WIFI_CHANNELBANDWIDTH_160MHZ);
         rcap->mode[i] = ( WIFI_80211_VARIANT_AX );
+
+        if (strstr(output_string, "be") != NULL) {
+            rcap->mode[i] |= WIFI_80211_VARIANT_BE;
+            rcap->channelWidth[i] |= WIFI_CHANNELBANDWIDTH_320_1MHZ | WIFI_CHANNELBANDWIDTH_320_2MHZ;
+        }
     }
+
     rcap->maxBitRate[i] = ( rcap->band[i] & WIFI_FREQUENCY_2_4_BAND ) ? 300 :
         ((rcap->band[i] & WIFI_FREQUENCY_5_BAND) ? 1734 : 0);
 
