@@ -5536,7 +5536,6 @@ INT wifi_getApDenyAclDevices(INT apIndex, CHAR *macArray, UINT buf_size)
     return RETURN_OK;
 }
 
-
 // Get the list of stations associated per AP
 INT wifi_getApDevicesAssociated(INT apIndex, CHAR *macArray, UINT buf_size)
 {
@@ -5554,6 +5553,22 @@ INT wifi_getApDevicesAssociated(INT apIndex, CHAR *macArray, UINT buf_size)
     return RETURN_OK;
 }
 
+INT getAddressControlMode(INT apIndex, INT *mode)
+{
+    char buf [16] = {0};
+    char config_file[64] = {0};
+
+    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, apIndex);
+    wifi_hostapdRead(config_file, "macaddr_acl", buf, sizeof(buf));
+
+    *mode = -1;
+    // 0 use deny file, 1 use accept file
+    if (strncmp(buf, "0", 1) == 0 || strncmp(buf, "1", 1) == 0)
+        *mode = (INT)strtol(buf, NULL, 10);
+
+    return RETURN_OK;
+}
+
 // adds the mac address to the filter list
 //DeviceMacAddress is in XX:XX:XX:XX:XX:XX format
 INT wifi_addApAclDevice(INT apIndex, CHAR *DeviceMacAddress)
@@ -5561,12 +5576,25 @@ INT wifi_addApAclDevice(INT apIndex, CHAR *DeviceMacAddress)
     char cmd[MAX_CMD_SIZE]={'\0'};
     char buf[MAX_BUF_SIZE]={'\0'};
 
-#if 0
-    sprintf(cmd, "hostapd_cli -i %s accept_acl ADD_MAC %s", interface_name,DeviceMacAddress);
+    if (wifi_delApAclDevice(apIndex, DeviceMacAddress) != RETURN_OK)
+        return RETURN_ERR;
+
+    sprintf(cmd, "echo '%s' >> %s%d", DeviceMacAddress, ACL_PREFIX, apIndex);
     if(_syscmd(cmd,buf,sizeof(buf)))
         return RETURN_ERR;
-#endif
-    sprintf(cmd, "echo '%s' >> %s%d", DeviceMacAddress, ACL_PREFIX, apIndex);
+
+    return RETURN_OK;
+}
+
+INT wifi_addApDenyAclDevice(INT apIndex, CHAR *DeviceMacAddress)
+{
+    char cmd[MAX_CMD_SIZE]={'\0'};
+    char buf[MAX_BUF_SIZE]={'\0'};
+
+    if (wifi_delApAclDevice(apIndex, DeviceMacAddress) != RETURN_OK)
+        return RETURN_ERR;
+
+    sprintf(cmd, "echo '%s' >> %s%d", DeviceMacAddress, DENY_PREFIX, apIndex);
     if(_syscmd(cmd,buf,sizeof(buf)))
         return RETURN_ERR;
 
@@ -5586,7 +5614,10 @@ INT wifi_delApAclDevice(INT apIndex, CHAR *DeviceMacAddress)
         return RETURN_ERR;
 
 #endif
-    sprintf(cmd, "sed -i '/%s/d' %s%d ", DeviceMacAddress, ACL_PREFIX, apIndex);
+    sprintf(cmd, "sed -i '/%s/d' %s%d", DeviceMacAddress, ACL_PREFIX, apIndex);
+    if(_syscmd(cmd,buf,sizeof(buf)))
+        return RETURN_ERR;
+    sprintf(cmd, "sed -i '/%s/d' %s%d", DeviceMacAddress, DENY_PREFIX, apIndex);
     if(_syscmd(cmd,buf,sizeof(buf)))
         return RETURN_ERR;
 
@@ -5598,15 +5629,23 @@ INT wifi_getApAclDeviceNum(INT apIndex, UINT *output_uint)
 {
     char cmd[MAX_BUF_SIZE]={0};
     char buf[MAX_CMD_SIZE]={0};
+    int mode = -1;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     if(output_uint == NULL)
         return RETURN_ERR;
 
-    snprintf(cmd, sizeof(cmd), "cat %s%d | wc -l | tr -d '\\n'", ACL_PREFIX, apIndex);
+    getAddressControlMode(apIndex, &mode);
+    if (mode == -1)
+        return RETURN_OK;
+
+    if (mode == 0)
+        snprintf(cmd, sizeof(cmd), "cat %s%d | wc -l | tr -d '\\n'", DENY_PREFIX, apIndex);
+    else if (mode == 1)
+        snprintf(cmd, sizeof(cmd), "cat %s%d | wc -l | tr -d '\\n'", ACL_PREFIX, apIndex);
     _syscmd(cmd, buf, sizeof(buf));
 
-    *output_uint = atoi(buf);
+    *output_uint = strtol(buf, NULL, 10);
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
@@ -5771,15 +5810,15 @@ INT wifi_setApMacAddressControlMode(INT apIndex, INT filterMode)
         sprintf(buf, "%d", 0);
         list[0].value = buf;
 
-        char cmd[128], rtn[128];
+        char cmd[128] = {0};
         if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
             return RETURN_ERR;
-        snprintf(cmd, sizeof(cmd), "hostapd_cli -i %s deny_acl CLEAR", interface_name);
-        _syscmd(cmd, rtn, sizeof(rtn));
+        snprintf(cmd, sizeof(cmd), "hostapd_cli -i %s deny_acl CLEAR 2> /dev/null", interface_name);
+        _syscmd(cmd, cmd, sizeof(cmd));
         memset(cmd,0,sizeof(cmd));
         // Delete deny_mac_file in hostapd configuration
         snprintf(cmd, sizeof(cmd), "sed -i '/deny_mac_file=/d' %s%d.conf ", CONFIG_PREFIX, apIndex);
-        _syscmd(cmd, rtn, sizeof(rtn));
+        _syscmd(cmd, cmd, sizeof(cmd));
     }
     else if (filterMode == 1) {
         sprintf(buf, "%d", filterMode);
@@ -5802,6 +5841,10 @@ INT wifi_setApMacAddressControlMode(INT apIndex, INT filterMode)
 
     sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,apIndex);
     wifi_hostapdWrite(config_file, list, items);
+    if (multiple_set == FALSE) {
+        wifi_setApEnable(apIndex, FALSE);
+        wifi_setApEnable(apIndex, TRUE);
+    }
 
     return RETURN_OK;
 
@@ -12614,16 +12657,17 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
             return RETURN_ERR;
         }
 
-        wifi_setApEnable(vap_info->vap_index, FALSE);
-        wifi_setApEnable(vap_info->vap_index, TRUE);
-        multiple_set = FALSE;
-
-        // If config use hostapd_cli to set, we calling these type of functions after enable the ap.
         ret = wifi_setApMacAddressControlMode(vap_info->vap_index, acl_mode);
         if (ret != RETURN_OK) {
             fprintf(stderr, "%s: wifi_setApMacAddressControlMode return error\n", __func__);
             return RETURN_ERR;
         }
+
+        wifi_setApEnable(vap_info->vap_index, FALSE);
+        wifi_setApEnable(vap_info->vap_index, TRUE);
+        multiple_set = FALSE;
+
+        // If config use hostapd_cli to set, we calling these type of functions after enable the ap.
 
         // TODO mgmtPowerControl, interworking, wps
     }
