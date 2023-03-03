@@ -165,6 +165,12 @@ typedef enum
     band_6 = 2,
 } wifi_band;
 
+char* wifi_band_str[] = {
+    "2G",
+    "5G",
+    "6G",
+};
+
 typedef enum {
     WIFI_MODE_A = 0x01,
     WIFI_MODE_B = 0x02,
@@ -259,6 +265,14 @@ wifi_secur_list * wifi_get_item_by_str(wifi_secur_list *list, int list_sz, const
 
 
 static char l1profile[32] = "/etc/wireless/l1profile.dat";
+char main_prefix[MAX_NUM_RADIOS][IFNAMSIZ];
+char ext_prefix[MAX_NUM_RADIOS][IFNAMSIZ];
+#define MAX_SSID_LEN  64
+char default_ssid[MAX_NUM_RADIOS][MAX_SSID_LEN];;
+
+static int array_index_to_vap_index(UINT radioIndex, int arrayIndex);
+static int vap_index_to_array_index(int vapIndex, int *radioIndex, int *arrayIndex);
+
 
 static int
 get_value(const char *conf_file, const char *param, char *value, int len)
@@ -329,7 +343,6 @@ get_value_by_idx(const char *conf_file, const char *param, int idx, char *value,
 
     return ret;
 }
-
 
 
 #ifdef HAL_NETLINK_IMPL
@@ -525,19 +538,8 @@ static int _syscmd(char *cmd, char *retBuf, int retBufSize)
 
 INT radio_index_to_phy(int radioIndex)
 {
-    char cmd[128] = {0};
-    char buf[64] = {0};
-    int phyIndex = 0;
-    snprintf(cmd, sizeof(cmd), "ls /tmp | grep wifi%d | cut -d '-' -f1 | tr -d '\n'", radioIndex);
-    _syscmd(cmd, buf, sizeof(buf));
-
-    if (strlen(buf) == 0 || strstr(buf, "phy") == NULL) {
-        fprintf(stderr, "%s: failed to get phy index with: %d\n", __func__, radioIndex);
-        return RETURN_ERR;
-    }
-    sscanf(buf, "phy%d", &phyIndex);
-    
-    return phyIndex;      
+    /* TODO */
+    return radioIndex;
 }
 
 INT wifi_getMaxRadioNumber(INT *max_radio_num)
@@ -554,6 +556,30 @@ INT wifi_getMaxRadioNumber(INT *max_radio_num)
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
     return RETURN_OK;
+}
+
+wifi_band radio_index_to_band(int radioIndex)
+{
+    char cmd[128] = {0};
+    char buf[64] = {0};
+    int nl80211_band = 0;
+    int i = 0;
+    int phyIndex = 0;
+    int max_radio_num = 0;
+    wifi_band band = band_invalid;
+
+    phyIndex = radio_index_to_phy(radioIndex);
+    snprintf(cmd, sizeof(cmd), "iw phy%d info | grep 'Band .:' | tail -n 1 | tr -d ':\\n' | awk '{print $2}'", phyIndex);
+    _syscmd(cmd, buf, sizeof(buf));
+    nl80211_band = strtol(buf, NULL, 10);
+    if (nl80211_band == 1)
+        return band_2_4;
+    else if (nl80211_band == 2)
+        return band_5;
+    else if (nl80211_band == 4)     // band == 3 is 60GHz
+        return band_6;
+    else
+        return band_invalid;
 }
 
 wifi_band wifi_index_to_band(int apIndex)
@@ -648,13 +674,6 @@ static int wifi_GetInterfaceName(int apIndex, char *interface_name)
     return RETURN_OK;
 }
 
-// wifi agent will call this function, do not change the parameter
-void GetInterfaceName(char *interface_name, char *conf_file)
-{
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    wifi_hostapdRead(conf_file,"interface",interface_name, IF_NAME_SIZE);
-    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
-}
 
 static int wifi_hostapdProcessUpdate(int apIndex, struct params *list, int item_count)
 {
@@ -1048,7 +1067,7 @@ void macfilter_init()
     fp=fopen(acl_file_path,"w+");
     if (fp == NULL) {
         fprintf(stderr, "%s: failed to open file %s.\n", __func__, acl_file_path);
-        return RETURN_ERR;
+        return;
     }
     sprintf(buf,"#!/bin/sh \n");
     fprintf(fp,"%s\n",buf);
@@ -1103,20 +1122,215 @@ void macfilter_init()
     fclose(fp);
 }
 
+
+static void
+wifi_ParseProfile(void)
+{
+    int i;
+    int max_radio_num = 0;
+    int card_idx;
+    int band_idx;
+    int phy_idx = 0;
+    char buf[MAX_BUF_SIZE] = {0};
+    char chip_name[12];
+    char card_profile[MAX_BUF_SIZE] = {0};
+    char band_profile[MAX_BUF_SIZE] = {0};
+    FILE* fp;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    memset(main_prefix, 0, sizeof(main_prefix));
+    memset(ext_prefix, 0, sizeof(ext_prefix));
+    memset(default_ssid, 0, sizeof(default_ssid));
+
+    if (wifi_getMaxRadioNumber(&max_radio_num) != RETURN_OK) {
+        /* LOG */
+	return;
+    }
+
+    for (card_idx = 0; card_idx < 3; card_idx++) {
+        snprintf(buf, sizeof(buf), "INDEX%d", card_idx);
+        if (get_value(l1profile, buf, chip_name, sizeof(chip_name)) < 0) {
+            break;
+        }
+        snprintf(buf, sizeof(buf), "INDEX%d_profile_path", card_idx);
+        if (get_value(l1profile, buf, card_profile, sizeof(card_profile)) < 0) {
+            break;
+        }
+        for (band_idx = 0; band_idx < 3; band_idx++) {
+            snprintf(buf, sizeof(buf), "BN%d_profile_path", band_idx);
+            if (get_value(card_profile, buf, band_profile, sizeof(band_profile)) < 0) {
+                /* LOG */
+                break;
+            }
+
+            snprintf(buf, sizeof(buf), "INDEX%d_main_ifname", card_idx);
+            if (get_value_by_idx(l1profile, buf, band_idx, main_prefix[phy_idx], IFNAMSIZ) < 0) {
+                /* LOG */
+            }
+
+            snprintf(buf, sizeof(buf), "INDEX%d_ext_ifname", card_idx);
+            if (get_value_by_idx(l1profile, buf, band_idx, ext_prefix[phy_idx], IFNAMSIZ) < 0) {
+                /* LOG */
+            }
+
+            if (get_value(band_profile, "SSID1", default_ssid[phy_idx], sizeof(default_ssid[phy_idx])) < 0) {
+                /* LOG */
+            }
+            phy_idx++;
+        }
+    }
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+}
+
+static void
+wifi_PrepareDefaultHostapdConfigs(void)
+{
+    int radio_idx;
+    int bss_idx;
+    int ap_idx;
+    int band_idx;
+    char buf[MAX_BUF_SIZE] = {0};
+    char config_file[MAX_BUF_SIZE] = {0};
+    char ssid[MAX_BUF_SIZE] = {0};
+    char interface[32] = {0};
+    char ret_buf[MAX_BUF_SIZE] = {0};
+    struct params params[2];
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    for (radio_idx = 0; radio_idx < MAX_NUM_RADIOS; radio_idx++) {
+        band_idx = radio_index_to_band(radio_idx);
+        if (band_idx < 0) {
+            break;
+        }
+        for (bss_idx = 0; bss_idx < 5; bss_idx++) {
+            ap_idx = array_index_to_vap_index(radio_idx, bss_idx);
+
+            snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, ap_idx);
+            snprintf(buf, sizeof(buf), "cp /etc/hostapd-%s.conf %s", wifi_band_str[band_idx], config_file);
+            _syscmd(buf, ret_buf, sizeof(ret_buf));
+
+            if (bss_idx == 0) {
+                snprintf(ssid, sizeof(ssid), "%s", default_ssid[radio_idx]);
+                snprintf(interface, sizeof(interface), "%s", main_prefix[radio_idx]);
+            } else {
+                snprintf(ssid, sizeof(ssid), "%s_%d", default_ssid[radio_idx], bss_idx);
+                snprintf(interface, sizeof(interface), "%s%d", ext_prefix[radio_idx], bss_idx);
+            }
+
+            params[0].name = "ssid";
+            params[0].value = ssid;
+            params[1].name = "interface";
+            params[1].value = interface;
+
+            wifi_hostapdWrite(config_file, params, 2);
+        }
+    }
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+}
+
+static void
+wifiBringUpInterfacesForRadio(int radio_idx)
+{
+    int bss_idx;
+    int ap_idx;
+    int band_idx;
+    char cmd[MAX_BUF_SIZE] = {0};
+    char config_file[MAX_BUF_SIZE] = {0};
+    char ret_buf[MAX_BUF_SIZE]={'\0'};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    for (bss_idx = 0; bss_idx < 5; bss_idx++) {
+        ap_idx = array_index_to_vap_index(radio_idx, bss_idx);
+
+        snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, ap_idx);
+        snprintf(cmd, sizeof(cmd), "hostapd_cli -i global raw ADD bss_config=%s:%s", main_prefix[radio_idx], config_file);
+        _syscmd(cmd, ret_buf, sizeof(ret_buf));
+    }
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+}
+
+static void
+wifi_BringUpInterfaces(void)
+{
+    int radio_idx;
+    int bss_idx;
+    int ap_idx;
+    int band_idx;
+    char cmd[MAX_BUF_SIZE] = {0};
+    char config_file[MAX_BUF_SIZE] = {0};
+    char ret_buf[MAX_BUF_SIZE]={'\0'};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    for (radio_idx = 0; radio_idx < MAX_NUM_RADIOS; radio_idx++) {
+        band_idx = radio_index_to_band(radio_idx);
+        if (band_idx < 0) {
+            break;
+        }
+        wifiBringUpInterfacesForRadio(radio_idx);
+    }
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+}
+
+static void
+wifi_BringDownInterfacesForRadio(int radio_idx)
+{
+    int bss_idx;
+    int ap_idx;
+    int band_idx;
+    char cmd[MAX_BUF_SIZE] = {0};
+    char config_file[MAX_BUF_SIZE] = {0};
+    char ret_buf[MAX_BUF_SIZE]={'\0'};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    for (bss_idx = 0; bss_idx < 5; bss_idx++) {
+        ap_idx = array_index_to_vap_index(radio_idx, bss_idx);
+
+        snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, ap_idx);
+        snprintf(cmd, sizeof(cmd), "hostapd_cli -i global raw REMOVE %s", main_prefix[radio_idx]);
+        _syscmd(cmd, ret_buf, sizeof(ret_buf));
+    }
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+}
+
+
+static void
+wifi_BringDownInterfaces(void)
+{
+    int radio_idx;
+    int bss_idx;
+    int ap_idx;
+    int band_idx;
+    char cmd[MAX_BUF_SIZE] = {0};
+    char config_file[MAX_BUF_SIZE] = {0};
+    char ret_buf[MAX_BUF_SIZE]={'\0'};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    for (radio_idx = 0; radio_idx < MAX_NUM_RADIOS; radio_idx++) {
+        band_idx = radio_index_to_band(radio_idx);
+        if (band_idx < 0) {
+            break;
+        }
+        wifi_BringDownInterfacesForRadio(radio_idx);
+    }
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+}
+
+
 // Initializes the wifi subsystem (all radios)
 INT wifi_init()                            //RDKB
 {
-    char interface[MAX_BUF_SIZE]={'\0'};
-    char bridge_name[MAX_BUF_SIZE]={'\0'};
-    INT len=0;
-
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     //Not intitializing macfilter for Turris-Omnia Platform for now
     //macfilter_init();
+    wifi_ParseProfile();
+    wifi_PrepareDefaultHostapdConfigs();
+    //system("/usr/sbin/iw reg set US");
+    system("systemctl start hostapd.service");
+    sleep(2);
+    wifi_BringUpInterfaces();
 
-    system("/usr/sbin/iw reg set US");
-    // system("systemctl start hostapd.service");
-    sleep(2);//sleep to wait for hostapd to start
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
@@ -1143,11 +1357,21 @@ INT wifi_init()                            //RDKB
 */
 INT wifi_reset()
 {
+
+    wifi_BringDownInterfaces();
+    sleep(2);
+
     //TODO: resets the wifi subsystem, deletes all APs
     system("systemctl stop hostapd.service");
     sleep(2);
+
     system("systemctl start hostapd.service");
     sleep(5);
+
+    wifi_PrepareDefaultHostapdConfigs();
+    sleep(2);
+    wifi_BringUpInterfaces();
+
     return RETURN_OK;
 }
 
@@ -1173,6 +1397,9 @@ INT wifi_reset()
 INT wifi_down()
 {
     //TODO: turns off transmit power for the entire Wifi subsystem, for all radios
+    wifi_BringDownInterfaces();
+    sleep(2);
+
     system("systemctl stop hostapd.service");
     sleep(2);
     return RETURN_OK;
