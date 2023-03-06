@@ -269,6 +269,7 @@ char main_prefix[MAX_NUM_RADIOS][IFNAMSIZ];
 char ext_prefix[MAX_NUM_RADIOS][IFNAMSIZ];
 #define MAX_SSID_LEN  64
 char default_ssid[MAX_NUM_RADIOS][MAX_SSID_LEN];;
+int radio_band[MAX_NUM_RADIOS];
 
 static int array_index_to_vap_index(UINT radioIndex, int arrayIndex);
 static int vap_index_to_array_index(int vapIndex, int *radioIndex, int *arrayIndex);
@@ -560,26 +561,7 @@ INT wifi_getMaxRadioNumber(INT *max_radio_num)
 
 wifi_band radio_index_to_band(int radioIndex)
 {
-    char cmd[128] = {0};
-    char buf[64] = {0};
-    int nl80211_band = 0;
-    int i = 0;
-    int phyIndex = 0;
-    int max_radio_num = 0;
-    wifi_band band = band_invalid;
-
-    phyIndex = radio_index_to_phy(radioIndex);
-    snprintf(cmd, sizeof(cmd), "iw phy%d info | grep 'Band .:' | tail -n 1 | tr -d ':\\n' | awk '{print $2}'", phyIndex);
-    _syscmd(cmd, buf, sizeof(buf));
-    nl80211_band = strtol(buf, NULL, 10);
-    if (nl80211_band == 1)
-        return band_2_4;
-    else if (nl80211_band == 2)
-        return band_5;
-    else if (nl80211_band == 4)     // band == 3 is 60GHz
-        return band_6;
-    else
-        return band_invalid;
+    return radio_band[radioIndex];
 }
 
 wifi_band wifi_index_to_band(int apIndex)
@@ -1131,6 +1113,7 @@ wifi_ParseProfile(void)
     int card_idx;
     int band_idx;
     int phy_idx = 0;
+    int wireless_mode = 0;
     char buf[MAX_BUF_SIZE] = {0};
     char chip_name[12];
     char card_profile[MAX_BUF_SIZE] = {0};
@@ -1142,6 +1125,8 @@ wifi_ParseProfile(void)
     memset(main_prefix, 0, sizeof(main_prefix));
     memset(ext_prefix, 0, sizeof(ext_prefix));
     memset(default_ssid, 0, sizeof(default_ssid));
+    for (i = 0; i < MAX_NUM_RADIOS; i++)
+        radio_band[i] = band_invalid;
 
     if (wifi_getMaxRadioNumber(&max_radio_num) != RETURN_OK) {
         /* LOG */
@@ -1176,6 +1161,31 @@ wifi_ParseProfile(void)
 
             if (get_value(band_profile, "SSID1", default_ssid[phy_idx], sizeof(default_ssid[phy_idx])) < 0) {
                 /* LOG */
+            }
+            if (get_value(band_profile, "WirelessMode", buf, sizeof(buf)) < 0) {
+                /* LOG */
+            }
+
+            wireless_mode = atoi(buf);
+            switch (wireless_mode) {
+            case 22:
+            case 16:
+            case 6:
+            case 4:
+            case 1:
+                radio_band[phy_idx] = band_2_4;
+                break;
+            case 23:
+            case 17:
+            case 14:
+            case 11:
+            case 2:
+                radio_band[phy_idx] = band_5;
+                break;
+            case 24:
+            case 18:
+                radio_band[phy_idx] = band_6;
+                break;
             }
             phy_idx++;
         }
