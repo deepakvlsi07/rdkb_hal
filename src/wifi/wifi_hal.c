@@ -9976,11 +9976,11 @@ INT wifi_delApAclDevices(INT apIndex)
     if(_syscmd(cmd,buf,sizeof(buf)))
         return RETURN_ERR;
 #endif
-    char cmd[MAX_CMD_SIZE]={0};
-    char buf[MAX_BUF_SIZE]={0};
+    char cmd[256]={0};
+    char buf[64]={0};
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    sprintf(cmd, "rm %s%d 2>&1 && touch %s%d", ACL_PREFIX, apIndex, ACL_PREFIX, apIndex);
+    sprintf(cmd, "rm %s%d %s%d 2>&1 && touch %s%d %s%d", ACL_PREFIX, apIndex, DENY_PREFIX, apIndex, ACL_PREFIX, apIndex, DENY_PREFIX, apIndex);
     if(_syscmd(cmd, buf, sizeof(buf)))
         return RETURN_ERR;
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
