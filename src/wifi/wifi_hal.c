@@ -11459,40 +11459,85 @@ INT wifi_setBSSColor(INT radio_index, UCHAR color)
     struct params params = {0};
     char config_file[128] = {0};
     char bss_color[4] ={0};
+    UCHAR *color_list;
+    int color_num = 0;
+    int maxNumberColors = 64;
+    BOOL color_is_aval = FALSE;
+
+    color_list = calloc(maxNumberColors, sizeof(UCHAR));
+    if (wifi_getAvailableBSSColor(radio_index, maxNumberColors, color_list, &color_num) != RETURN_OK)
+        return RETURN_ERR;
+
+    if (color > 63)
+        return RETURN_ERR;
+
+    for (int i = 0; i < color_num; i++) {
+        if (color_list[i] == color) {
+            color_is_aval = TRUE;
+            break;
+        }
+    }
+    if (color_is_aval == FALSE) {
+        fprintf(stderr, "%s: color %hhu is not avaliable.\n", __func__, color);
+        return RETURN_ERR;
+    }
 
     params.name = "he_bss_color";
     snprintf(bss_color, sizeof(bss_color), "%hhu", color);
     params.value = bss_color;
-    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radio_index);
+    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radio_index);
     wifi_hostapdWrite(config_file, &params, 1);
     wifi_hostapdProcessUpdate(radio_index, &params, 1);
-    
+    wifi_reloadAp(radio_index);
+
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
 
 INT wifi_getBSSColor(INT radio_index, UCHAR *color)
 {
-    char config_file[128] = {0};
     char buf[64] = {0};
-    char temp_output[128] = {'\0'};
+    char cmd[128] = {0};
+    char interface_name[16] = {0};
 
-    wifi_dbg_printf("\nFunc=%s\n", __func__);
     if (NULL == color)
         return RETURN_ERR;
 
-    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radio_index);
-    wifi_hostapdRead(config_file, "he_bss_color", buf, sizeof(buf));
+    if (wifi_GetInterfaceName(radio_index, interface_name) != RETURN_OK)
+        return RETURN_ERR;
 
-    if(strlen(buf) > 0) {
-        snprintf(temp_output, sizeof(temp_output), "%s", buf);
-    } else {
-        snprintf(temp_output, sizeof(temp_output), "1");   // default value
+    snprintf(cmd, sizeof(cmd), "hostapd_cli -i %s get_bss_color | cut -d '=' -f2", interface_name);
+    _syscmd(cmd, buf, sizeof(buf));
+    *color = (UCHAR)strtoul(buf, NULL, 10);
+
+    return RETURN_OK;
+}
+
+INT wifi_getAvailableBSSColor(INT radio_index, INT maxNumberColors, UCHAR* colorList, INT *numColorReturned)
+{
+    char buf[64] = {0};
+    char cmd[128] = {0};
+    char interface_name[16] = {0};
+    unsigned long long color_bitmap = 0;
+
+    if (NULL == colorList || NULL == numColorReturned)
+        return RETURN_ERR;
+
+    if (wifi_GetInterfaceName(radio_index, interface_name) != RETURN_OK)
+        return RETURN_ERR;
+
+    snprintf(cmd, sizeof(cmd), "hostapd_cli -i %s get_color_bmp | head -n 1 | cut -d '=' -f2", interface_name);
+    _syscmd(cmd, buf, sizeof(buf));
+    color_bitmap = strtoull(buf, NULL, 16);
+
+    *numColorReturned = 0;
+    for (int i = 0; i < maxNumberColors; i++) {
+        if (color_bitmap & 1) {
+            colorList[*numColorReturned] = i;
+            (*numColorReturned) += 1;
+        }
+        color_bitmap >>= 1;
     }
-
-    *color = (UCHAR)strtoul(temp_output, NULL, 10);
-    wifi_dbg_printf("\noutput_string=%s\n", color);
-
     return RETURN_OK;
 }
 
