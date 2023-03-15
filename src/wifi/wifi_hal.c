@@ -736,21 +736,17 @@ static int readBandWidth(int radioIndex,char *bw_value)
     sprintf(cmd,"grep 'SET_BW%d=' %s | sed 's/^.*=//'",radioIndex,BW_FNAME);
     _syscmd(cmd,buf,sizeof(buf));
     if(NULL!=strstr(buf,"20MHz"))
-    {
         strcpy(bw_value,"20MHz");
-    }
     else if(NULL!=strstr(buf,"40MHz"))
-    {
         strcpy(bw_value,"40MHz");
-    }
     else if(NULL!=strstr(buf,"80MHz"))
-    {
         strcpy(bw_value,"80MHz");
-    }
+    else if(NULL!=strstr(buf,"160MHz"))
+        strcpy(bw_value,"160MHz");
+    else if(NULL!=strstr(buf,"320MHz"))
+        strcpy(bw_value,"320MHz");
     else
-    {
         return RETURN_ERR;
-    }
     return RETURN_OK;
 }
 
@@ -2888,6 +2884,37 @@ INT wifi_getRadioExtChannel(INT radioIndex, CHAR *output_string) //Tr181
     return RETURN_OK;
 }
 
+// This function handle 20MHz to remove HT40+/- in hostapd config, other bandwidths are handled in wifi_setRadioExtChannel.
+INT wifi_RemoveRadioExtChannel(INT radioIndex, CHAR *ext_str)
+{
+    struct params params={0};
+    char config_file[64] = {0};
+    char ht_capab[128]={0};
+    char buf[128] = {0};
+    char cmd[128] = {0};
+    int max_radio_num =0;
+    bool stbcEnable = FALSE;
+
+    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radioIndex);
+    snprintf(cmd, sizeof(cmd), "cat %s | grep STBC", config_file);
+    _syscmd(cmd, buf, sizeof(buf));
+    if (strlen(buf) != 0)
+        stbcEnable = TRUE;
+
+    strcpy(ht_capab, HOSTAPD_HT_CAPAB);
+    params.value = ht_capab;
+    params.name = "ht_capab";
+
+    wifi_getMaxRadioNumber(&max_radio_num);
+    for(int i=0; i<=MAX_APS/max_radio_num; i++)
+    {
+        sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radioIndex+(max_radio_num*i));
+        wifi_hostapdWrite(config_file, &params, 1);
+        wifi_setRadioSTBCEnable(radioIndex+(max_radio_num*i), stbcEnable);
+    }
+    return RETURN_OK;
+}
+
 //Set the extension channel.
 INT wifi_setRadioExtChannel(INT radioIndex, CHAR *string) //Tr181	//AP only
 {
@@ -2908,10 +2935,16 @@ INT wifi_setRadioExtChannel(INT radioIndex, CHAR *string) //Tr181	//AP only
     _syscmd(cmd, buf, sizeof(buf));
     if (strlen(buf) != 0)
         stbcEnable = TRUE;
-    if (wifi_getRadioOperatingChannelBandwidth(radioIndex, buf) != RETURN_OK)
-        return RETURN_ERR;
+
+    // readBandWidth get empty file will return error, that means we don't set new bandwidth
+    if (readBandWidth(radioIndex, buf) != RETURN_OK) {
+        // Get current bandwidth
+        if (wifi_getRadioOperatingChannelBandwidth(radioIndex, buf) != RETURN_OK)
+            return RETURN_ERR;
+    }
     bandwidth = strtol(buf, NULL, 10);
     // TDK expected to get error with 20MHz
+    // we handle 20MHz in function wifi_RemoveRadioExtChannel().
     if (bandwidth == 20 || strstr(buf, "80+80") != NULL)
         return RETURN_ERR;
 
@@ -2936,7 +2969,8 @@ INT wifi_setRadioExtChannel(INT radioIndex, CHAR *string) //Tr181	//AP only
             return RETURN_OK;
         strcpy(ext_channel, HOSTAPD_HT_CAPAB "[HT40-]");
     } else {
-        strcpy(ext_channel, HOSTAPD_HT_CAPAB);
+        fprintf(stderr, "%s: unknow extchannel %s\n", __func__, string);
+        return RETURN_ERR;
     }
 
     params.value = ext_channel;
@@ -8995,8 +9029,6 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
             ext_str = "Above";
     }
 
-    wifi_setRadioExtChannel(radioIndex, ext_str);
-
     char mhz_str[16];
     snprintf(mhz_str, sizeof(mhz_str), "%dMHz", width);
     if (setEHT320 == TRUE)
@@ -9004,6 +9036,13 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
     else
         wifi_setRadioOperatingChannelBandwidth(radioIndex, mhz_str);
 
+    writeBandWidth(radioIndex, mhz_str);
+    if (band == band_2_4 || band == band_5) {
+        if (width == 20)
+            wifi_RemoveRadioExtChannel(radioIndex, ext_str);
+        else
+            wifi_setRadioExtChannel(radioIndex, ext_str);
+    }
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
     return RETURN_OK;
