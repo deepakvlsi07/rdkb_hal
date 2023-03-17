@@ -1373,8 +1373,10 @@ INT wifi_setRadioEnable(INT radioIndex, BOOL enable)
             if(strncmp(buf, "OK", 2))
                 fprintf(stderr, "Could not detach %s from hostapd daemon", interface_name);
 
-            snprintf(cmd, sizeof(cmd), "iw %s del", interface_name);
-            _syscmd(cmd, buf, sizeof(buf));
+            if (!(apIndex/max_radio_num)) {
+                snprintf(cmd, sizeof(cmd), "iw %s del", interface_name);
+                _syscmd(cmd, buf, sizeof(buf));
+            }
         }
     }
     else
@@ -1387,13 +1389,14 @@ INT wifi_setRadioEnable(INT radioIndex, BOOL enable)
             snprintf(cmd, sizeof(cmd), "cat %s | grep %s | cut -d'=' -f2", VAP_STATUS_FILE, interface_name);
             _syscmd(cmd, buf, sizeof(buf));
             if(*buf == '1') {
-                snprintf(cmd, sizeof(cmd), "iw phy%d interface add %s type __ap", phyId, interface_name);
-                ret = _syscmd(cmd, buf, sizeof(buf));
-                if ( ret == RETURN_ERR) {
-					fprintf(stderr, "VAP interface creation failed\n");
-                    continue;
+                if (!(apIndex/max_radio_num)) {
+                    snprintf(cmd, sizeof(cmd), "iw phy%d interface add %s type __ap", phyId, interface_name);
+                    ret = _syscmd(cmd, buf, sizeof(buf));
+                    if ( ret == RETURN_ERR) {
+                        fprintf(stderr, "VAP interface creation failed\n");
+                        continue;
+                    }
                 }
-
                 snprintf(cmd, sizeof(cmd), "hostapd_cli -i global raw ADD bss_config=phy%d:/nvram/hostapd%d.conf",
                               phyId, apIndex);
                 _syscmd(cmd, buf, sizeof(buf));
@@ -6168,10 +6171,12 @@ INT wifi_setApEnable(INT apIndex, BOOL enable)
         //Hostapd will bring up this interface
         sprintf(cmd, "hostapd_cli -i global raw REMOVE %s", interface_name);
         _syscmd(cmd, buf, sizeof(buf));
-        sprintf(cmd, "iw %s del", interface_name);
-        _syscmd(cmd, buf, sizeof(buf));
-        sprintf(cmd, "iw phy phy%d interface add %s type __ap", phyId, interface_name);
-        _syscmd(cmd, buf, sizeof(buf));
+        if (!(apIndex/max_radio_num)) {
+	        sprintf(cmd, "iw %s del", interface_name);
+	        _syscmd(cmd, buf, sizeof(buf));
+	        sprintf(cmd, "iw phy phy%d interface add %s type __ap", phyId, interface_name);
+	        _syscmd(cmd, buf, sizeof(buf));
+        }
         sprintf(cmd, "hostapd_cli -i global raw ADD bss_config=phy%d:%s", phyId, config_file);
         _syscmd(cmd, buf, sizeof(buf));
     }
@@ -12760,8 +12765,10 @@ static int prepareInterface(UINT apIndex, char *new_interface)
         phyIndex = radio_index_to_phy(radioIndex);
         // disable and del old interface, then add new interface
         wifi_setApEnable(apIndex, FALSE);
-        snprintf(cmd, sizeof(cmd), "iw %s del && iw phy%d interface add %s type __ap", cur_interface, phyIndex, new_interface);
-        _syscmd(cmd, buf, sizeof(buf));
+        if (!(apIndex/max_radio_num)) {
+            snprintf(cmd, sizeof(cmd), "iw %s del && iw phy%d interface add %s type __ap", cur_interface, phyIndex, new_interface);
+            _syscmd(cmd, buf, sizeof(buf));
+        }
     }
     // update the vap status file
     snprintf(cmd, sizeof(cmd), "sed -i -n -e '/^%s=/!p' -e '$a%s=1' %s", cur_interface, new_interface, VAP_STATUS_FILE);
