@@ -1197,68 +1197,80 @@ wifi_ParseProfile(void)
 static void
 wifi_PrepareDefaultHostapdConfigs(void)
 {
-    int radio_idx;
-    int bss_idx;
-    int ap_idx;
-    int band_idx;
-    char buf[MAX_BUF_SIZE] = {0};
-    char config_file[MAX_BUF_SIZE] = {0};
-    char ssid[MAX_BUF_SIZE] = {0};
-    char interface[32] = {0};
-    char ret_buf[MAX_BUF_SIZE] = {0};
-    struct params params[2];
+	int radio_idx;
+	int bss_idx;
+	int ap_idx;
+	int band_idx;
+	char buf[MAX_BUF_SIZE] = {0};
+	char config_file[MAX_BUF_SIZE] = {0};
+	char ssid[MAX_BUF_SIZE] = {0};
+	char interface[32] = {0};
+	char ret_buf[MAX_BUF_SIZE] = {0};
+	char psk_file[64] = {0};
+	struct params params[3];
 
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    for (radio_idx = 0; radio_idx < MAX_NUM_RADIOS; radio_idx++) {
-        band_idx = radio_index_to_band(radio_idx);
-        if (band_idx < 0) {
-            break;
-        }
-        for (bss_idx = 0; bss_idx < 5; bss_idx++) {
-            ap_idx = array_index_to_vap_index(radio_idx, bss_idx);
+	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+	for (radio_idx = 0; radio_idx < MAX_NUM_RADIOS; radio_idx++) {
+		band_idx = radio_index_to_band(radio_idx);
+		if (band_idx < 0) {
+		break;
+		}
+		for (bss_idx = 0; bss_idx < 5; bss_idx++) {
+		ap_idx = array_index_to_vap_index(radio_idx, bss_idx);
 
-            snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, ap_idx);
-            snprintf(buf, sizeof(buf), "cp /etc/hostapd-%s.conf %s", wifi_band_str[band_idx], config_file);
-            _syscmd(buf, ret_buf, sizeof(ret_buf));
+		snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, ap_idx);
+		snprintf(buf, sizeof(buf), "cp /etc/hostapd-%s.conf %s", wifi_band_str[band_idx], config_file);
+		_syscmd(buf, ret_buf, sizeof(ret_buf));
 
-            if (bss_idx == 0) {
-                snprintf(ssid, sizeof(ssid), "%s", default_ssid[radio_idx]);
-                snprintf(interface, sizeof(interface), "%s", main_prefix[radio_idx]);
-            } else {
-                snprintf(ssid, sizeof(ssid), "%s_%d", default_ssid[radio_idx], bss_idx);
-                snprintf(interface, sizeof(interface), "%s%d", ext_prefix[radio_idx], bss_idx);
-            }
+		if (bss_idx == 0) {
+			snprintf(ssid, sizeof(ssid), "%s", default_ssid[radio_idx]);
+			snprintf(interface, sizeof(interface), "%s", main_prefix[radio_idx]);
+		} else {
+			snprintf(ssid, sizeof(ssid), "%s_%d", default_ssid[radio_idx], bss_idx);
+			snprintf(interface, sizeof(interface), "%s%d", ext_prefix[radio_idx], bss_idx);
+		}
 
-            params[0].name = "ssid";
-            params[0].value = ssid;
-            params[1].name = "interface";
-            params[1].value = interface;
+		/* fix wpa_psk_file path */
+		snprintf(psk_file, sizeof(psk_file), "\\/nvram\\/hostapd%d.psk", ap_idx);
 
-            wifi_hostapdWrite(config_file, params, 2);
-        }
-    }
-    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+		params[0].name = "ssid";
+		params[0].value = ssid;
+		params[1].name = "interface";
+		params[1].value = interface;
+		params[2].name = "wpa_psk_file";
+		params[2].value = psk_file;
+
+		wifi_hostapdWrite(config_file, params, 3);
+		}
+	}
+	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 }
 
 static void
 wifiBringUpInterfacesForRadio(int radio_idx)
 {
-    int bss_idx;
-    int ap_idx;
-    int band_idx;
-    char cmd[MAX_CMD_SIZE] = {0};
-    char config_file[MAX_BUF_SIZE] = {0};
-    char ret_buf[MAX_BUF_SIZE] = {0};
+	int bss_idx;
+	int ap_idx;
+	int band_idx;
+	char cmd[MAX_CMD_SIZE] = {0};
+	char config_file[MAX_BUF_SIZE] = {0};
+	char ret_buf[MAX_BUF_SIZE] = {0};
 	char inf_name[IF_NAME_SIZE] = {0};
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-    for (bss_idx = 0; bss_idx < 5; bss_idx++) {
-        ap_idx = array_index_to_vap_index(radio_idx, bss_idx);
+	for (bss_idx = 0; bss_idx < 5; bss_idx++) {
+		ap_idx = array_index_to_vap_index(radio_idx, bss_idx);
 
-        snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, ap_idx);
-        snprintf(cmd, sizeof(cmd), "hostapd_cli -i global raw ADD bss_config=phy%d:%s", radio_idx, config_file);
-        _syscmd(cmd, ret_buf, sizeof(ret_buf));
+		snprintf(cmd, sizeof(cmd), "touch %s%d.psk", PSK_FILE, ap_idx);
+		_syscmd(cmd, ret_buf, sizeof(ret_buf));
+
+		memset(cmd, 0, MAX_CMD_SIZE);
+		memset(ret_buf, 0, MAX_BUF_SIZE);
+
+		snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, ap_idx);
+		snprintf(cmd, sizeof(cmd), "hostapd_cli -i global raw ADD bss_config=phy%d:%s", radio_idx, config_file);
+		_syscmd(cmd, ret_buf, sizeof(ret_buf));
 
 		wifi_GetInterfaceName(ap_idx, inf_name);
 
@@ -1268,8 +1280,8 @@ wifiBringUpInterfacesForRadio(int radio_idx)
 		/* fix vap-status file */
 		snprintf(cmd, sizeof(cmd), "sed -i \"s/^%s=.*/%s=1/\" %s", inf_name, inf_name, VAP_STATUS_FILE);
 		_syscmd(cmd, ret_buf, sizeof(ret_buf));
-    }
-    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+	}
+	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 }
 
 static void
