@@ -1354,7 +1354,7 @@ static void wifi_vap_status_reset()
     char ret_buf[MAX_BUF_SIZE] = {0};
 	char radio_idx = 0;
 	char bss_idx = 0;
-	
+
 	if (access(VAP_STATUS_FILE, F_OK) != 0) {
 		snprintf(cmd, MAX_CMD_SIZE, "touch %s", VAP_STATUS_FILE);
 		_syscmd(cmd, ret_buf, sizeof(ret_buf));
@@ -2988,9 +2988,10 @@ INT wifi_setRadioDfsRefreshPeriod(INT radioIndex, ULONG seconds) //Tr181
 //The output_string is a max length 64 octet string that is allocated by the RDKB code.  Implementations must ensure that strings are not longer than this.
 INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) //Tr181
 {
-    char buf[64] = {0};
+    char cmd[MAX_CMD_SIZE] = {0}, buf[64] = {0};
     char extchannel[128] = {0};
-    char config_file[128] = {0};
+    char interface_name[64] = {0};
+    int ret = 0, len=0;
     BOOL radio_enable = FALSE;
     wifi_band band;
 
@@ -3005,30 +3006,25 @@ INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) 
     if (radio_enable != TRUE)
         return RETURN_OK;
 
-    band = wifi_index_to_band(radioIndex);
-    if (band == band_2_4) {
-        wifi_getRadioExtChannel(radioIndex, extchannel);
-        if (strncmp(extchannel, "Auto", 4) == 0)    // Auto means that we did not set ht_capab HT40+/-
-            snprintf(output_string, 64, "20MHz");
-        else
-            snprintf(output_string, 64, "40MHz");
-
-    } else {
-        snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
-        wifi_hostapdRead(config_file, "he_oper_chwidth", buf, sizeof(buf));
-        if (strncmp(buf, "0", 1) == 0) {        // Check whether we set central channel
-            wifi_hostapdRead(config_file, "he_oper_centr_freq_seg0_idx", buf, sizeof(buf));
-            if (strncmp(buf, "0", 1) == 0)
-                snprintf(output_string, 64, "20MHz");
-            else
-                snprintf(output_string, 64, "40MHz");
-
-        } else if (strncmp(buf, "1", 1) == 0)
-            snprintf(output_string, 64, "80MHz");
-        else if (strncmp(buf, "2", 1) == 0)
-            snprintf(output_string, 64, "160MHz");
+    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+        return RETURN_ERR;
+    /*IW command get BW320 to do*/
+    snprintf(cmd, sizeof(cmd),"iw dev %s info | grep 'width' | cut -d  ' ' -f6 | tr -d '\\n'", interface_name);
+    ret = _syscmd(cmd, buf, sizeof(buf));
+    len = strlen(buf);
+    if((ret != 0) || (len == 0))
+    {
+        WIFI_ENTRY_EXIT_DEBUG("failed with Command %s %s:%d\n",cmd,__func__, __LINE__);
+        return RETURN_ERR;
     }
 
+    band = wifi_index_to_band(radioIndex);
+    if (band == band_2_4 && strncmp(buf, "20", 2) == 0) {
+        wifi_getRadioExtChannel(radioIndex, extchannel);
+        if (strncmp(extchannel, "Auto", 4) != 0)    // not auto means we have set HT40+/-
+            snprintf(buf, sizeof(buf), "40");
+    }
+    snprintf(output_string, 64, "%sMHz", buf);
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
     return RETURN_OK;
