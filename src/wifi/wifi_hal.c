@@ -1329,7 +1329,7 @@ INT wifi_getRadioEnable(INT radioIndex, BOOL *output_bool)      //RDKB
 	/* loop all interface in radio, if any is enable, reture true, else return false */
 	for(apIndex=radioIndex; apIndex<MAX_APS; apIndex+=max_radio_num)
 	{
-		if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+		if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
 			continue;
 		sprintf(cmd, "hostapd_cli -i %s status | grep state | cut -d '=' -f2", interface_name);
 		_syscmd(cmd, buf, sizeof(buf));
@@ -1386,7 +1386,7 @@ INT wifi_setRadioEnable(INT radioIndex, BOOL enable)
             if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
                 continue;
 
-            snprintf(cmd, sizeof(cmd), "cat %s | grep %s | cut -d'=' -f2", VAP_STATUS_FILE, interface_name);
+            snprintf(cmd, sizeof(cmd), "cat %s | grep %s= | cut -d'=' -f2", VAP_STATUS_FILE, interface_name);
             _syscmd(cmd, buf, sizeof(buf));
             if(*buf == '1') {
                 if (!(apIndex/max_radio_num)) {
@@ -3874,7 +3874,7 @@ INT wifi_applySSIDSettings(INT ssidIndex)
         apIndex = max_radio_num*i+radioIndex;
         if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
             continue;
-        snprintf(cmd, sizeof(cmd), "cat %s | grep %s | cut -d'=' -f2", VAP_STATUS_FILE, interface_name);
+        snprintf(cmd, sizeof(cmd), "cat %s | grep %s= | cut -d'=' -f2", VAP_STATUS_FILE, interface_name);
         _syscmd(cmd, buf, sizeof(buf));
         if(*buf == '1')
                wifi_setApEnable(apIndex, true);
