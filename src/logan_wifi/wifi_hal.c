@@ -1288,7 +1288,9 @@ wifiBringUpInterfacesForRadio(int radio_idx)
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-	for (bss_idx = 0; bss_idx < 5; bss_idx++) {
+	bss_idx = 0;
+	/*TBD: we need refine setup flow and mbss flow*/
+//    for (bss_idx = 0; bss_idx < 5; bss_idx++) {
 		ap_idx = array_index_to_vap_index(radio_idx, bss_idx);
 
 		snprintf(cmd, sizeof(cmd), "touch %s%d.psk", PSK_FILE, ap_idx);
@@ -1309,8 +1311,9 @@ wifiBringUpInterfacesForRadio(int radio_idx)
 		/* fix vap-status file */
 		snprintf(cmd, sizeof(cmd), "sed -i \"s/^%s=.*/%s=1/\" %s", inf_name, inf_name, VAP_STATUS_FILE);
 		_syscmd(cmd, ret_buf, sizeof(ret_buf));
-	}
-	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+//    }
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 }
 
 static void
@@ -12851,14 +12854,15 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
             return RETURN_ERR;
         }
 
-        memset(buf, 0, sizeof(buf));
-        beaconRate_enum_to_string(vap_info->u.bss_info.beaconRate, buf);
+		/*TBD: we need refine beacon rate setting flow*/
+        //memset(buf, 0, sizeof(buf));
+        //beaconRate_enum_to_string(vap_info->u.bss_info.beaconRate, buf);
         // fprintf(stderr, "%s: beaconrate: %d, buf: %s\n", __func__, vap_info->u.bss_info.beaconRate, buf);
-        ret = wifi_setApBeaconRate(vap_info->radio_index, buf);
-        if (ret != RETURN_OK) {
-            fprintf(stderr, "%s: wifi_setApBeaconRate return error\n", __func__);
-            return RETURN_ERR;
-        }
+        //ret = wifi_setApBeaconRate(vap_info->radio_index, buf);
+        //if (ret != RETURN_OK) {
+        //    fprintf(stderr, "%s: wifi_setApBeaconRate return error\n", __func__);
+        //    return RETURN_ERR;
+        //}
 
         ret = wifi_setRadioIGMPSnoopingEnable(vap_info->radio_index, vap_info->u.bss_info.mcast2ucast);
         if (ret != RETURN_OK) {
