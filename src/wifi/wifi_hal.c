@@ -13337,7 +13337,7 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
         sae_MFP = TRUE;
         sae_pwe = 2;
         disable_EAPOL_retries = FALSE;
-    } else if (security->mode == wifi_security_mode_owe) {
+    } else if (security->mode == wifi_security_mode_enhanced_open) {
         strcpy(wpa_mode, "OWE");
         sae_MFP = TRUE;
         sae_pwe = 2;
@@ -13356,7 +13356,7 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
     wifi_setSAEpwe(ap_index, sae_pwe);
     wifi_setDisable_EAPOL_retries(ap_index, disable_EAPOL_retries);
 
-    if (security->mode != wifi_security_mode_none && security->mode != wifi_security_mode_owe) {
+    if (security->mode != wifi_security_mode_none && security->mode != wifi_security_mode_enhanced_open) {
         if (security->u.key.type == wifi_security_key_type_psk || security->u.key.type == wifi_security_key_type_pass || security->u.key.type == wifi_security_key_type_psk_sae) {
             int key_len = strlen(security->u.key.key);
             // wpa_psk and wpa_passphrase cann;t use at the same time, the command replace one with the other.
@@ -13477,7 +13477,7 @@ INT wifi_getApSecurity(INT ap_index, wifi_vap_security_t *security)
         else if (!strcmp(buf, "WPA3-Enterprise"))
             security->mode = wifi_security_mode_wpa3_enterprise;
         else if (!strcmp(buf, "OWE"))
-            security->mode = wifi_security_mode_owe;
+            security->mode = wifi_security_mode_enhanced_open;
     }
 
     wifi_hostapdRead(config_file,"wpa_pairwise",buf,sizeof(buf));
