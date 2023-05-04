@@ -11178,12 +11178,13 @@ INT wifi_getZeroDFSState(UINT radioIndex, BOOL *enable, BOOL *precac)
 
     sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radioIndex);
     wifi_hostapdRead(config_file, "enable_background_radar", buf, sizeof(buf));
-    if (strncmp(enable, "1", 1) == 0)
+    if (strncmp(buf, "1", 1) == 0) {
         *enable = true;
-    else
+        *precac = true;
+    } else {
         *enable = false;
-
-    /* TODO precac feature */
+        *precac = false;
+    }
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
