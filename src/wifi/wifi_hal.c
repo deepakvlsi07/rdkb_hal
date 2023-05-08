@@ -11465,12 +11465,14 @@ INT wifi_setBSSColor(INT radio_index, UCHAR color)
     int maxNumberColors = 64;
     BOOL color_is_aval = FALSE;
 
-    color_list = calloc(maxNumberColors, sizeof(UCHAR));
-    if (wifi_getAvailableBSSColor(radio_index, maxNumberColors, color_list, &color_num) != RETURN_OK)
-        return RETURN_ERR;
-
     if (color > 63)
         return RETURN_ERR;
+
+    color_list = calloc(maxNumberColors, sizeof(UCHAR));
+    if (wifi_getAvailableBSSColor(radio_index, maxNumberColors, color_list, &color_num) != RETURN_OK) {
+        free(color_list);
+        return RETURN_ERR;
+    }
 
     for (int i = 0; i < color_num; i++) {
         if (color_list[i] == color) {
@@ -11479,6 +11481,7 @@ INT wifi_setBSSColor(INT radio_index, UCHAR color)
         }
     }
     if (color_is_aval == FALSE) {
+        free(color_list);
         fprintf(stderr, "%s: color %hhu is not avaliable.\n", __func__, color);
         return RETURN_ERR;
     }
@@ -11491,6 +11494,7 @@ INT wifi_setBSSColor(INT radio_index, UCHAR color)
     wifi_hostapdProcessUpdate(radio_index, &params, 1);
     wifi_reloadAp(radio_index);
 
+    free(color_list);
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
