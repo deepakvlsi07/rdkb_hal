@@ -5130,7 +5130,8 @@ INT wifi_setRadioIGMPSnoopingEnable(INT radioIndex, BOOL enable)
     char interface_name[16] = {0};
     char cmd[128]={0};
     char buf[4]={0};
-    int max_num_radios =0;
+    int max_num_radios = 0;
+    int apIndex = 0;
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
     // bridge
@@ -5139,9 +5140,10 @@ INT wifi_setRadioIGMPSnoopingEnable(INT radioIndex, BOOL enable)
 
     wifi_getMaxRadioNumber(&max_num_radios);
     // mac80211
-    for (int i = 0; i < max_num_radios; i++) {
-        if (wifi_GetInterfaceName(i, interface_name) != RETURN_OK)
-            return RETURN_ERR;
+    for (int i = 0; i < MAX_NUM_VAP_PER_RADIO; i++) {
+        apIndex = radioIndex + i*max_num_radios;
+        if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+            continue;
         snprintf(cmd, sizeof(cmd),  "echo %d > /sys/devices/virtual/net/%s/brif/%s/multicast_to_unicast", enable, BRIDGE_NAME, interface_name);
         _syscmd(cmd, buf, sizeof(buf));
     }
@@ -7196,7 +7198,7 @@ INT wifi_setApWpsConfigMethodsEnabled(INT apIndex, CHAR *methodString)
         else if(*token=='P' )
         {
             if(!strcmp(token, "PushButton"))
-                snprintf(config_methods, sizeof(config_methods), "%s ", "virtual_push_button");
+                snprintf(config_methods, sizeof(config_methods), "%s ", "push_button");
             else if(!strcmp(token, "PIN"))
                 snprintf(config_methods, sizeof(config_methods), "%s ", "keypad");
             else
@@ -12958,12 +12960,6 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
             return RETURN_ERR;
         }
 
-        ret = wifi_setRadioIGMPSnoopingEnable(vap_info->radio_index, vap_info->u.bss_info.mcast2ucast);
-        if (ret != RETURN_OK) {
-            fprintf(stderr, "%s: wifi_setRadioIGMPSnoopingEnable\n", __func__);
-            return RETURN_ERR;
-        }
-
         ret = wifi_setApSecurity(vap_info->vap_index, &vap_info->u.bss_info.security);
         if (ret != RETURN_OK) {
             fprintf(stderr, "%s: wifi_setApSecurity return error\n", __func__);
@@ -12976,13 +12972,39 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
             return RETURN_ERR;
         }
 
+        ret = wifi_setApWpsEnable(vap_info->vap_index, vap_info->u.bss_info.wps.enable);
+        if (ret != RETURN_OK) {
+            fprintf(stderr, "%s: wifi_setApWpsEnable return error\n", __func__);
+            return RETURN_ERR;
+        }
+
         wifi_setApEnable(vap_info->vap_index, FALSE);
         wifi_setApEnable(vap_info->vap_index, TRUE);
         multiple_set = FALSE;
 
         // If config use hostapd_cli to set, we calling these type of functions after enable the ap.
+        if (vap_info->u.bss_info.wps.methods && WIFI_ONBOARDINGMETHODS_PUSHBUTTON) {
+            // The set wps methods function should check whether wps is configured.
+            ret = wifi_setApWpsButtonPush(vap_info->vap_index);
+            if (ret != RETURN_OK) {
+                fprintf(stderr, "%s: wifi_setApWpsButtonPush return error\n", __func__);
+                return RETURN_ERR;
+            }
+            // wifi_setApWpsConfigMethodsEnabled only write to config.
+            ret = wifi_setApWpsConfigMethodsEnabled(vap_info->vap_index, "PushButton");
+            if (ret != RETURN_OK) {
+                fprintf(stderr, "%s: wifi_setApWpsConfigMethodsEnabled return error\n", __func__);
+                return RETURN_ERR;
+            }
+        }
 
-        // TODO mgmtPowerControl, interworking, wps
+        // IGMP Snooping enable should be placed after all hostapd_reload.
+        ret = wifi_setRadioIGMPSnoopingEnable(vap_info->radio_index, vap_info->u.bss_info.mcast2ucast);
+        if (ret != RETURN_OK) {
+            fprintf(stderr, "%s: wifi_setRadioIGMPSnoopingEnable return error\n", __func__);
+            return RETURN_ERR;
+        }
+        // TODO mgmtPowerControl, interworking
     }
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
