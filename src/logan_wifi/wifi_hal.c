@@ -1725,6 +1725,9 @@ INT wifi_getRadioEnable(INT radioIndex, BOOL *output_bool)      //RDKB
     return RETURN_OK;
 }
 
+typedef long time_t;
+static time_t radio_up_time[MAX_NUM_RADIOS];
+
 INT wifi_setRadioEnable(INT radioIndex, BOOL enable)
 {
     char interface_name[16] = {0};
@@ -1741,17 +1744,12 @@ INT wifi_setRadioEnable(INT radioIndex, BOOL enable)
     wifi_getMaxRadioNumber(&max_radio_num);
 
     if(enable == FALSE) {
-		snprintf(cmd, sizeof(cmd), "hostapd_cli -i %s DISABLE", main_prefix[radioIndex]);
+		snprintf(cmd, sizeof(cmd), "hostapd_cli -i global raw REMOVE %s", main_prefix[radioIndex]);
 		_syscmd(cmd, buf, sizeof(buf));
-
+		if(strncmp(buf, "OK", 2))
+			fprintf(stderr, "Could not detach %s from hostapd daemon", interface_name);
 	} else {
-
-		snprintf(cmd, sizeof(cmd), "hostapd_cli -i %s ENABLE", main_prefix[radioIndex]);
-		_syscmd(cmd, buf, sizeof(buf));
-
-		/*start from bss1 not main bss */
-		for(apIndex = (radioIndex + max_radio_num); apIndex < MAX_APS; apIndex += max_radio_num) {
-
+		for (apIndex = radioIndex; apIndex < MAX_APS; apIndex += max_radio_num) {
             if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
                 return RETURN_ERR;
 
@@ -1772,7 +1770,7 @@ INT wifi_setRadioEnable(INT radioIndex, BOOL enable)
 
             }
         }
-
+		time(&radio_up_time[radioIndex]);
     }
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
@@ -2179,6 +2177,13 @@ INT wifi_getRadioSupportedStandards(INT radioIndex, CHAR *output_string) //Tr181
     _syscmd(cmd, buf, sizeof(buf));
     if (strlen(buf) >= 6 && strncmp (buf, "0x0000", 6) != 0) {
         strcat(temp_output, "ax,");
+    }
+
+	// eht capabilities
+    snprintf(cmd, sizeof(cmd),  "iw phy%d info | grep 'EHT MAC Capabilities' | head -n 2 | tail -n 1 | cut -d '(' -f2 | cut -c1-6 | tr -d '\\n'", phyId);
+    _syscmd(cmd, buf, sizeof(buf));
+    if (strlen(buf) >= 6 && strncmp (buf, "0x0000", 6) != 0) {
+        strcat(temp_output, "be,");
     }
 
     // Remove the last comma
@@ -6503,7 +6508,7 @@ INT wifi_setApWmmUapsdEnable(INT apIndex, BOOL enable)
     sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,apIndex);
     wifi_hostapdWrite(config_file, &list, 1);
     wifi_hostapdProcessUpdate(apIndex, &list, 1);
-    wifi_reloadAp(apIndex);
+    wifi_quick_reload_ap(apIndex);
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
     return RETURN_OK;
@@ -8454,9 +8459,17 @@ INT wifi_pushSsidAdvertisementEnable(INT apIndex, BOOL enable)
 
 INT wifi_getRadioUpTime(INT radioIndex, ULONG *output)
 {
-    INT status = RETURN_ERR;
-    *output = 0;
-    return RETURN_ERR;
+    time_t now;
+
+	time(&now);
+	if (now > radio_up_time[radioIndex])
+		*output = now - radio_up_time[radioIndex];
+	else {
+		*output = 0;
+		return RETURN_ERR;
+	}
+
+    return RETURN_OK;
 }
 
 INT wifi_getApEnableOnLine(INT wlanIndex, BOOL *enabled)
