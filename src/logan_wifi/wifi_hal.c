@@ -5909,12 +5909,12 @@ INT wifi_getApWpaEncryptionMode(INT apIndex, CHAR *output_string)
     }
     wifi_dbg_printf("\n%s output_string=%s",__func__,output_string);
 
-    if(strcmp(output_string,"TKIP") == 0)
+    if(strcmp(output_string,"TKIP CCMP") == 0)
+        strncpy(output_string,"TKIPandAESEncryption", strlen("TKIPandAESEncryption"));
+    else if(strcmp(output_string,"TKIP") == 0)
         strncpy(output_string,"TKIPEncryption", strlen("TKIPEncryption"));
     else if(strcmp(output_string,"CCMP") == 0)
         strncpy(output_string,"AESEncryption", strlen("AESEncryption"));
-    else if(strcmp(output_string,"TKIP CCMP") == 0)
-        strncpy(output_string,"TKIPandAESEncryption", strlen("TKIPandAESEncryption"));
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
@@ -5929,7 +5929,7 @@ INT wifi_setApWpaEncryptionMode(INT apIndex, CHAR *encMode)
     char config_file[MAX_BUF_SIZE] = {0};
 
     memset(output_string,'\0',32);
-    wifi_getApWpaEncryptionMode(apIndex,output_string);
+    wifi_getApBeaconType(apIndex,output_string);
 
     if(strcmp(encMode, "TKIPEncryption") == 0)
         params.value = "TKIP";
@@ -6005,7 +6005,7 @@ INT wifi_setApAuthMode(INT apIndex, INT mode)
     wifi_dbg_printf("\n%s algo_mode=%d", __func__, mode);
     params.name = "auth_algs";
 
-    if (mode & 1 && mode & 2)
+	if ((mode & 1 && mode & 2) || mode & 4)
         params.value = "3";
     else if (mode & 2)
         params.value = "2";
@@ -6017,6 +6017,7 @@ INT wifi_setApAuthMode(INT apIndex, INT mode)
     sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, apIndex);
     wifi_hostapdWrite(config_file, &params, 1);
     wifi_hostapdProcessUpdate(apIndex, &params, 1);
+	wifi_reloadAp(apIndex);
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n", __func__, __LINE__);
 
     return RETURN_OK;
@@ -6946,6 +6947,8 @@ INT wifi_getApSecurityModeEnabled(INT apIndex, CHAR *output)
         else if (!strcmp(wpa, "3"))
             snprintf(output, 32, "WPA-WPA2-Personal");
 
+    } else if (strstr(key_mgmt, "WPA-EAP-SUITE-B-192")) {
+        snprintf(output, 32, "WPA3-Enterprise");
     } else if (strstr(key_mgmt, "WPA-EAP")) {
         if (!strcmp(wpa, "1"))
             snprintf(output, 32, "WPA-Enterprise");
@@ -6958,8 +6961,6 @@ INT wifi_getApSecurityModeEnabled(INT apIndex, CHAR *output)
             snprintf(output, 32, "WPA3-Personal");
         else
             snprintf(output, 32, "WPA3-Personal-Transition");
-    } else if (strstr(key_mgmt, "WPA-EAP-SUITE-B-192")) {
-        snprintf(output, 32, "WPA3-Enterprise");
     }
 
     //save the beaconTypeString to wifi config and hostapd config file. Wait for wifi reset or hostapd restart to apply
@@ -7093,7 +7094,7 @@ INT wifi_getApSecurityPreSharedKey(INT apIndex, CHAR *output_string)
 
     wifi_dbg_printf("\nFunc=%s\n",__func__);
     sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,apIndex);
-    wifi_hostapdRead(config_file,"wpa_passphrase",output_string,64);
+	wifi_hostapdRead(config_file,"wpa_psk",output_string,65);
     wifi_dbg_printf("\noutput_string=%s\n",output_string);
 
     return RETURN_OK;
@@ -7111,18 +7112,20 @@ INT wifi_setApSecurityPreSharedKey(INT apIndex, CHAR *preSharedKey)
     if(NULL == preSharedKey)
         return RETURN_ERR;
 
-    params.name = "wpa_passphrase";
+    params.name = "wpa_psk";
 
-    if(strlen(preSharedKey)<8 || strlen(preSharedKey)>63)
+    if(strlen(preSharedKey) != 64)
     {
-        wifi_dbg_printf("\nCannot Set Preshared Key length of preshared key should be 8 to 63 chars\n");
+        wifi_dbg_printf("\nCannot Set Preshared Key length of preshared key should be 64 chars\n");
         return RETURN_ERR;
     }
     params.value = preSharedKey;
     sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,apIndex);
     ret = wifi_hostapdWrite(config_file, &params, 1);
-    if(!ret)
+    if(!ret) {
         ret = wifi_hostapdProcessUpdate(apIndex, &params, 1);
+        wifi_reloadAp(apIndex);
+    }
     return ret;
     //TODO: call hostapd_cli for dynamic_config_control
 }
@@ -7171,8 +7174,10 @@ INT wifi_setApSecurityKeyPassphrase(INT apIndex, CHAR *passPhrase)
     params.value = passPhrase;
     sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,apIndex);
     ret=wifi_hostapdWrite(config_file,&params,1);
-    if(!ret)
+    if(!ret) {
         wifi_hostapdProcessUpdate(apIndex, &params, 1);
+		wifi_reloadAp(apIndex);
+    }
 
     return ret;
 }
@@ -7288,6 +7293,12 @@ INT wifi_setApSecurityRadiusServer(INT apIndex, CHAR *IPAddress, UINT port, CHAR
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
+	if (wifi_getApSecurityModeEnabled(apIndex, buf) != RETURN_OK)
+        return RETURN_ERR;
+
+    if (strstr(buf, "Enterprise") == NULL)  // non Enterprise mode sould not set radius server info
+        return RETURN_ERR;
+
     snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, apIndex);
 
     snprintf(cmd, sizeof(cmd), "cat %s | grep '# radius 1'", config_file);
@@ -7362,6 +7373,12 @@ INT wifi_setApSecuritySecondaryRadiusServer(INT apIndex, CHAR *IPAddress, UINT p
     char buf[128] = {0};
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+	if (wifi_getApSecurityModeEnabled(apIndex, buf) != RETURN_OK)
+        return RETURN_ERR;
+
+    if (strstr(buf, "Enterprise") == NULL)  // non Enterprise mode sould not set radius server info
+        return RETURN_ERR;
 
     snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, apIndex);
 
@@ -7450,12 +7467,21 @@ INT wifi_getApWpsEnable(INT apIndex, BOOL *output_bool)
 INT wifi_setApWpsEnable(INT apIndex, BOOL enable)
 {
     char config_file[MAX_BUF_SIZE] = {0};
+    char buf[128] = {0};
     struct params params;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     //store the paramters, and wait for wifi up to apply
     params.name = "wps_state";
-    params.value = enable ? "2":"0";
+    if (enable == TRUE) {
+        wifi_getApBeaconType(apIndex, buf);
+        if (strncmp(buf, "None", 4) == 0)   // If ap didn't set encryption
+            params.value = "1";
+        else                                // If ap set encryption
+            params.value = "2";
+    } else {
+        params.value = "0";
+    }
 
     snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, apIndex);
     wifi_hostapdWrite(config_file, &params, 1);
@@ -7523,7 +7549,7 @@ INT wifi_setApWpsConfigMethodsEnabled(INT apIndex, CHAR *methodString)
         else if(*token=='P' )
         {
             if(!strcmp(token, "PushButton"))
-                snprintf(config_methods, sizeof(config_methods), "%s ", "virtual_push_button");
+                snprintf(config_methods, sizeof(config_methods), "%s ", "push_button");
             else if(!strcmp(token, "PIN"))
                 snprintf(config_methods, sizeof(config_methods), "%s ", "keypad");
             else
@@ -13579,6 +13605,7 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
 {
     char buf[128] = {0};
     char config_file[128] = {0};
+    char cmd[128] = {0};
     char password[64] = {0};
     char mfp[32] = {0};
     char wpa_mode[32] = {0};
@@ -13644,15 +13671,30 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
     wifi_setDisable_EAPOL_retries(ap_index, disable_EAPOL_retries);
 
     if (security->mode != wifi_security_mode_none && security->mode != wifi_security_mode_enhanced_open) {
-        if (security->u.key.type == wifi_security_key_type_psk || security->u.key.type == wifi_security_key_type_psk_sae) {
-            strncpy(password, security->u.key.key, 63);     // 8 to 63 characters
-            password[63] = '\0';
-            wifi_setApSecurityKeyPassphrase(ap_index, password);
+        if (security->u.key.type == wifi_security_key_type_psk || security->u.key.type == wifi_security_key_type_pass || security->u.key.type == wifi_security_key_type_psk_sae) {
+            int key_len = strlen(security->u.key.key);
+            // wpa_psk and wpa_passphrase cann;t use at the same time, the command replace one with the other.
+            if (key_len == 64) {    // set wpa_psk
+                strncpy(password, security->u.key.key, 64);     // 64 characters
+                password[64] = '\0';
+                wifi_setApSecurityPreSharedKey(ap_index, password);
+                snprintf(cmd, sizeof(cmd), "sed -i -n -e '/^wpa_passphrase=/!p' %s", config_file);
+            } else if (key_len >= 8 && key_len < 64) {  // set wpa_passphrase
+                strncpy(password, security->u.key.key, 63);
+                password[63] = '\0';
+                wifi_setApSecurityKeyPassphrase(ap_index, password);
+                snprintf(cmd, sizeof(cmd), "sed -i -n -e '/^wpa_psk=/!p' %s", config_file);
+            } else
+                return RETURN_ERR;
+            _syscmd(cmd, buf, sizeof(buf));
         }
         if (security->u.key.type == wifi_security_key_type_sae || security->u.key.type == wifi_security_key_type_psk_sae) {
             params.name = "sae_password";
             params.value = security->u.key.key;
             wifi_hostapdWrite(config_file, &params, 1);
+        } else {    // remove sae_password
+            snprintf(cmd, sizeof(cmd), "sed -i -n -e '/^sae_password=/!p' %s", config_file);
+            _syscmd(cmd, buf, sizeof(buf));
         }
     }
 
@@ -13697,6 +13739,8 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
 
     memset(&params, 0, sizeof(params));
     params.name = "wpa_pairwise_update_count";
+    if (security->eapol_key_retries == 0)
+        security->eapol_key_retries = 4;    // 0 is invalid, set to default value.
     snprintf(buf, sizeof(buf), "%u", security->eapol_key_retries);
     params.value = buf;
     wifi_hostapdWrite(config_file, &params, 1);
@@ -13721,7 +13765,7 @@ INT wifi_getApSecurity(INT ap_index, wifi_vap_security_t *security)
     char buf[256] = {0};
     char config_file[128] = {0};
     int disable = 0;
-    // struct params params = {0};
+    bool set_sae = FALSE;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, ap_index);
@@ -13766,13 +13810,22 @@ INT wifi_getApSecurity(INT ap_index, wifi_vap_security_t *security)
         memset(buf, 0, sizeof(buf));
         // wpa3 can use one or both configs as password, so we check sae_password first.
         wifi_hostapdRead(config_file, "sae_password", buf, sizeof(buf));
-        if (security->mode == wifi_security_mode_wpa3_personal && strlen(buf) != 0) {
-            security->u.key.type = wifi_security_key_type_sae;
-        } else {
-            security->u.key.type = wifi_security_key_type_psk;
-            wifi_hostapdRead(config_file, "wpa_passphrase", buf, sizeof(buf));
+        if (strlen(buf) != 0) {
+            if (security->mode == wifi_security_mode_wpa3_personal || security->mode == wifi_security_mode_wpa3_transition)
+                security->u.key.type = wifi_security_key_type_sae;
+            set_sae = TRUE;
+            strncpy(security->u.key.key, buf, sizeof(buf));
         }
-        strncpy(security->u.key.key, buf, sizeof(buf));
+        wifi_hostapdRead(config_file, "wpa_passphrase", buf, sizeof(buf));
+        if (strlen(buf) != 0){
+            if (set_sae == TRUE)
+                security->u.key.type = wifi_security_key_type_psk_sae;
+            else if (strlen(buf) == 64)
+                security->u.key.type = wifi_security_key_type_psk;
+            else
+                security->u.key.type = wifi_security_key_type_pass;
+            strncpy(security->u.key.key, buf, sizeof(security->u.key.key));
+        }
         security->u.key.key[255] = '\0';
     }
 
