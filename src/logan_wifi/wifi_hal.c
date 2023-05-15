@@ -2724,9 +2724,14 @@ INT wifi_getRadioChannelsInUse(INT radioIndex, CHAR *output_string)	//RDKB
         }
     } else if (band == band_5 || band == band_6){
         // to minus 20 is an offset, because frequence of a channel have a range. We need to use offset to calculate correct channel.
-        // example: bandwidth 80: center is 42 (5210), channels are 36-48 (5170-5250). The delta should be 6.
+        // example: bandwidth 80: center is 42 (5210), channels are "36,40,44,48" (5170-5250). The delta should be 6.
         channel_delta = (bandwidth-20)/10;
-        snprintf(output_string, 256, "%d-%d", (center_channel-channel_delta), (center_channel+channel_delta));
+        memset(output_string, 0, 256);
+        for (int i = center_channel-channel_delta; i <= center_channel+channel_delta; i+=4) {
+            // If i is not the last channel, we add a comma.
+            snprintf(buf, sizeof(buf), "%d%s", i, i==center_channel+channel_delta?"":",");
+            strncat(output_string, buf, strlen(buf));
+        }
     } else
         return RETURN_ERR;
 
@@ -11268,107 +11273,64 @@ INT wifi_setRMBeaconRequest(UINT apIndex, CHAR *peer, wifi_BeaconRequest_t *in_r
 INT wifi_getRadioChannels(INT radioIndex, wifi_channelMap_t *outputMap, INT outputMapSize)
 {
     int i;
-    char cmd[256];
-    char channel_numbers_buf[256];
-    char dfs_state_buf[256];
-    char line[256];
+    int phyId = -1;
+    char cmd[256] = {0};
+    char channel_numbers_buf[256] = {0};
+    char dfs_state_buf[256] = {0};
+    char line[256] = {0};
     const char *ptr;
+    BOOL dfs_enable = false;
 
-    memset(cmd, 0, sizeof(cmd));
-    memset(channel_numbers_buf, 0, sizeof(channel_numbers_buf));
-    memset(line, 0, sizeof(line));
-    memset(dfs_state_buf, 0, sizeof(dfs_state_buf));
-    memset(outputMap, 0, outputMapSize); // all unused entries should be zero
+    memset(outputMap, 0, outputMapSize*sizeof(wifi_channelMap_t)); // all unused entries should be zero
 
-    if (radioIndex == 0) { // 2.4G - all allowed
-        if (outputMapSize < 11) {
-            wifi_dbg_printf("%s: outputMapSize too small (%d)\n", __FUNCTION__, outputMapSize);
-            return RETURN_ERR;
-        }
+    wifi_getRadioDfsEnable(radioIndex, &dfs_enable);
+    phyId = radio_index_to_phy(radioIndex);
 
-        for (i = 0; i < 11; i++) {
-            outputMap[i].ch_number = i + 1;
-            outputMap[i].ch_state = CHAN_STATE_AVAILABLE;
-        }
+    snprintf(cmd, sizeof (cmd), "iw phy phy%d info | grep -e '\\*.*MHz .*dBm' | grep -v '%sno IR\\|5340\\|5480' | awk '{print $4}' | tr -d '[]'", phyId, dfs_enable?"":"radar\\|");
 
-        return RETURN_OK;
+    if (_syscmd(cmd, channel_numbers_buf, sizeof(channel_numbers_buf)) == RETURN_ERR) {
+        wifi_dbg_printf("%s: failed to execute '%s'\n", __FUNCTION__, cmd);
+        return RETURN_ERR;
     }
 
-    if (radioIndex == 1) { // 5G
-//  Example output of iw list:
-//
-//    		Frequencies:
-//		* 5180 MHz [36] (17.0 dBm)
-//		* 5200 MHz [40] (17.0 dBm)
-//		* 5220 MHz [44] (17.0 dBm)
-//		* 5240 MHz [48] (17.0 dBm)
-//		* 5260 MHz [52] (23.0 dBm) (radar detection)
-//		  DFS state: usable (for 78930 sec)
-//		  DFS CAC time: 60000 ms
-//		* 5280 MHz [56] (23.0 dBm) (radar detection)
-//		  DFS state: usable (for 78930 sec)
-//		  DFS CAC time: 60000 ms
-//		* 5300 MHz [60] (23.0 dBm) (radar detection)
-//		  DFS state: usable (for 78930 sec)
-//		  DFS CAC time: 60000 ms
-//		* 5320 MHz [64] (23.0 dBm) (radar detection)
-//		  DFS state: usable (for 78930 sec)
-//		  DFS CAC time: 60000 ms
-//		* 5500 MHz [100] (disabled)
-//		* 5520 MHz [104] (disabled)
-//		* 5540 MHz [108] (disabled)
-//		* 5560 MHz [112] (disabled)
-//
-//		Below command should fetch channel numbers of each enabled channel in 5GHz band:
-        if (sprintf(cmd,"iw list | grep MHz | tr -d '\\t' | grep -v disabled | tr -d '*' | grep '^ 5' | awk '{print $3}' | tr -d '[]'") < 0) {
-            wifi_dbg_printf("%s: failed to build iw list command\n", __FUNCTION__);
+    ptr = channel_numbers_buf;
+    i = 0;
+    while (ptr = get_line_from_str_buf(ptr, line)) {
+        if (i >= outputMapSize) {
+                wifi_dbg_printf("%s: DFS map size too small\n", __FUNCTION__);
+                return RETURN_ERR;
+        }
+        sscanf(line, "%d", &outputMap[i].ch_number);
+
+        memset(cmd, 0, sizeof(cmd));
+        // Below command should fetch string for DFS state (usable, available or unavailable)
+        // Example line: "DFS state: usable (for 78930 sec)"
+        if (sprintf(cmd,"iw list | grep -A 2 '\\[%d\\]' | tr -d '\\t' | grep 'DFS state' | awk '{print $3}' | tr -d '\\n'", outputMap[i].ch_number) < 0) {
+            wifi_dbg_printf("%s: failed to build dfs state command\n", __FUNCTION__);
             return RETURN_ERR;
         }
 
-        if (_syscmd(cmd, channel_numbers_buf, sizeof(channel_numbers_buf)) == RETURN_ERR) {
+        memset(dfs_state_buf, 0, sizeof(dfs_state_buf));
+        if (_syscmd(cmd, dfs_state_buf, sizeof(dfs_state_buf)) == RETURN_ERR) {
             wifi_dbg_printf("%s: failed to execute '%s'\n", __FUNCTION__, cmd);
             return RETURN_ERR;
         }
 
-        ptr = channel_numbers_buf;
-        i = 0;
-        while (ptr = get_line_from_str_buf(ptr, line)) {
-            if (i >= outputMapSize) {
-                 wifi_dbg_printf("%s: DFS map size too small\n", __FUNCTION__);
-                 return RETURN_ERR;
-            }
-            sscanf(line, "%d", &outputMap[i].ch_number);
+        wifi_dbg_printf("DFS state = '%s'\n", dfs_state_buf);
 
-            memset(cmd, 0, sizeof(cmd));
-            // Below command should fetch string for DFS state (usable, available or unavailable)
-            // Example line: "DFS state: usable (for 78930 sec)"
-            if (sprintf(cmd,"iw list | grep -A 2 '\\[%d\\]' | tr -d '\\t' | grep 'DFS state' | awk '{print $3}' | tr -d '\\n'", outputMap[i].ch_number) < 0) {
-                wifi_dbg_printf("%s: failed to build dfs state command\n", __FUNCTION__);
-                return RETURN_ERR;
-            }
-
-            memset(dfs_state_buf, 0, sizeof(dfs_state_buf));
-            if (_syscmd(cmd, dfs_state_buf, sizeof(dfs_state_buf)) == RETURN_ERR) {
-                wifi_dbg_printf("%s: failed to execute '%s'\n", __FUNCTION__, cmd);
-                return RETURN_ERR;
-            }
-
-            wifi_dbg_printf("DFS state = '%s'\n", dfs_state_buf);
-
-            if (!strcmp(dfs_state_buf, "usable")) {
-                outputMap[i].ch_state = CHAN_STATE_DFS_NOP_FINISHED;
-            } else if (!strcmp(dfs_state_buf, "available")) {
-                outputMap[i].ch_state = CHAN_STATE_DFS_CAC_COMPLETED;
-            } else if (!strcmp(dfs_state_buf, "unavailable")) {
-                outputMap[i].ch_state = CHAN_STATE_DFS_NOP_START;
-            } else {
-                outputMap[i].ch_state = CHAN_STATE_AVAILABLE;
-            }
-            i++;
+        if (!strcmp(dfs_state_buf, "usable")) {
+            outputMap[i].ch_state = CHAN_STATE_DFS_NOP_FINISHED;
+        } else if (!strcmp(dfs_state_buf, "available")) {
+            outputMap[i].ch_state = CHAN_STATE_DFS_CAC_COMPLETED;
+        } else if (!strcmp(dfs_state_buf, "unavailable")) {
+            outputMap[i].ch_state = CHAN_STATE_DFS_NOP_START;
+        } else {
+            outputMap[i].ch_state = CHAN_STATE_AVAILABLE;
         }
-
-        return RETURN_OK;
+        i++;
     }
+
+    return RETURN_OK;
 
     wifi_dbg_printf("%s: wrong radio index (%d)\n", __FUNCTION__, radioIndex);
     return RETURN_ERR;
