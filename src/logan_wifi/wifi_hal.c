@@ -2357,71 +2357,130 @@ INT wifi_getRadioStandard(INT radioIndex, CHAR *output_string, BOOL *gOnly, BOOL
 #endif
 }
 
+enum WIFI_MODE {
+	WMODE_INVALID = 0,
+	WMODE_A = 1 << 0,
+	WMODE_B = 1 << 1,
+	WMODE_G = 1 << 2,
+	WMODE_GN = 1 << 3,
+	WMODE_AN = 1 << 4,
+	WMODE_AC = 1 << 5,
+	WMODE_AX_24G = 1 << 6,
+	WMODE_AX_5G = 1 << 7,
+	WMODE_AX_6G = 1 << 8,
+	WMODE_BE_24G = 1 << 9,
+	WMODE_BE_5G = 1 << 10,
+	WMODE_BE_6G = 1 << 11,
+	/*
+	 * total types of supported wireless mode,
+	 * add this value once yow add new type
+	 */
+	WMODE_COMP = 12,
+};
+
+#define RADIO_MODE_LEN 32
 INT wifi_getRadioMode(INT radioIndex, CHAR *output_string, UINT *pureMode)
 {
-    char cmd[128] = {0};
-    char buf[64] = {0};
-    char config_file[64] = {0};
+    char cmd[MAX_CMD_SIZE] = {0};
+    char buf[MAX_BUF_SIZE] = {0};
     wifi_band band;
+	unsigned int phymode;
+	unsigned char radio_mode_tem_len;
+	char interface_name[IF_NAME_SIZE] = {0};
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     if(NULL == output_string || NULL == pureMode)
         return RETURN_ERR;
 
-    // grep all of the ieee80211 protocol config set to 1
-    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
-    //snprintf(cmd, sizeof(cmd), "cat %s | grep -E \"ieee.*=1\" | cut -d '=' -f1 | tr -d 'ieee80211'", config_file);
-    /*tr -d 'ieee80211' return unexpected result, if object is ieee80211be*/
-    snprintf(cmd, sizeof(cmd), "cat %s | grep -E \"ieee.*=1\" | cut -d '=' -f1 | sed 's/ieee80211//g", config_file);
+	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+		return RETURN_ERR;
+
+	snprintf(cmd, sizeof(cmd),  "mwctl %s dump radio_info | grep 'phymode' | cut -d ' ' -f2", interface_name);
     _syscmd(cmd, buf, sizeof(buf));
 
-    band = wifi_index_to_band(radioIndex);
-    // puremode is a bit map
+	phymode = strtoul(buf, NULL, 10);
+	band = wifi_index_to_band(radioIndex);
+
+	// puremode is a bit map
     *pureMode = 0;
-    if (band == band_2_4) {
-        strcat(output_string, "b,g");
-        *pureMode |= WIFI_MODE_B | WIFI_MODE_G;
-        if (strstr(buf, "n") != NULL) {
-            strcat(output_string, ",n");
-            *pureMode |= WIFI_MODE_N;
-        }
-        if (strstr(buf, "ax") != NULL) {
-            strcat(output_string, ",ax");
-            *pureMode |= WIFI_MODE_AX;
-        }
-        if (strstr(buf, "be") != NULL) {
-            strcat(output_string, ",be");
-            *pureMode |= WIFI_MODE_BE;
-        }
-    } else if (band == band_5) {
-        strcat(output_string, "a");
-        *pureMode |= WIFI_MODE_A;
-        if (strstr(buf, "n") != NULL) {
-            strcat(output_string, ",n");
-            *pureMode |= WIFI_MODE_N;
-        }
-        if (strstr(buf, "ac") != NULL) {
-            strcat(output_string, ",ac");
-            *pureMode |= WIFI_MODE_AC;
-        }
-        if (strstr(buf, "ax") != NULL) {
-            strcat(output_string, ",ax");
-            *pureMode |= WIFI_MODE_AX;
-        }
-        if (strstr(buf, "be") != NULL) {
-            strcat(output_string, ",be");
-            *pureMode |= WIFI_MODE_BE;
-        }
-    } else if (band == band_6) {
-        if (strstr(buf, "ax") != NULL) {
-            strcat(output_string, "ax");
-            *pureMode |= WIFI_MODE_AX;
-        }
-        if (strstr(buf, "be") != NULL) {
-            strcat(output_string, ",be");
-            *pureMode |= WIFI_MODE_BE;
-        }
-    }
+	memset(output_string, 0, RADIO_MODE_LEN);
+
+	radio_mode_tem_len = RADIO_MODE_LEN - strlen(output_string);
+
+	switch (band) {
+	case band_2_4:
+		if (phymode & WMODE_B) {
+			snprintf(output_string + strlen(output_string), radio_mode_tem_len, "%s", "b,");
+			*pureMode |= WIFI_MODE_B;
+			radio_mode_tem_len = RADIO_MODE_LEN - strlen(output_string);
+		}
+		if (phymode & WMODE_G) {
+			snprintf(output_string + strlen(output_string), radio_mode_tem_len, "%s", "g,");
+			*pureMode |= WIFI_MODE_G;
+			radio_mode_tem_len = RADIO_MODE_LEN - strlen(output_string);
+		}
+		if (phymode & WMODE_GN) {
+			snprintf(output_string + strlen(output_string), radio_mode_tem_len, "%s", "n,");
+			*pureMode |= WIFI_MODE_N;
+			radio_mode_tem_len = RADIO_MODE_LEN - strlen(output_string);
+		}
+		if (phymode & WMODE_AX_24G) {
+			snprintf(output_string + strlen(output_string), radio_mode_tem_len, "%s", "ax,");
+			*pureMode |= WIFI_MODE_AX;
+			radio_mode_tem_len = RADIO_MODE_LEN - strlen(output_string);
+		}
+		if (phymode & WMODE_BE_24G) {
+			snprintf(output_string + strlen(output_string), radio_mode_tem_len, "%s", "be,");
+			*pureMode |= WIFI_MODE_BE;
+			radio_mode_tem_len = RADIO_MODE_LEN - strlen(output_string);
+		}
+		break;
+	case band_5:
+		if (phymode & WMODE_A) {
+			snprintf(output_string + strlen(output_string), radio_mode_tem_len, "%s", "a,");
+			*pureMode |= WIFI_MODE_A;
+			radio_mode_tem_len = RADIO_MODE_LEN - strlen(output_string);
+		}
+		if (phymode & WMODE_AN) {
+			snprintf(output_string + strlen(output_string), radio_mode_tem_len, "%s", "n,");
+			*pureMode |= WIFI_MODE_N;
+			radio_mode_tem_len = RADIO_MODE_LEN - strlen(output_string);
+		}
+		if (phymode & WMODE_AC) {
+			snprintf(output_string + strlen(output_string), radio_mode_tem_len, "%s", "ac,");
+			*pureMode |= WIFI_MODE_AC;
+		}
+		if (phymode & WMODE_AX_5G) {
+			snprintf(output_string + strlen(output_string), radio_mode_tem_len, "%s", "ax,");
+			*pureMode |= WIFI_MODE_AX;
+			radio_mode_tem_len = RADIO_MODE_LEN - strlen(output_string);
+		}
+		if (phymode & WMODE_BE_5G) {
+			snprintf(output_string + strlen(output_string), radio_mode_tem_len, "%s", "be,");
+			*pureMode |= WIFI_MODE_BE;
+			radio_mode_tem_len = RADIO_MODE_LEN - strlen(output_string);
+		}
+		break;
+	case band_6:
+		if (phymode & WMODE_AX_6G) {
+			snprintf(output_string + strlen(output_string), radio_mode_tem_len, "%s", "ax,");
+			*pureMode |= WIFI_MODE_AX;
+			radio_mode_tem_len = RADIO_MODE_LEN - strlen(output_string);
+		}
+		if (phymode & WMODE_BE_6G) {
+			snprintf(output_string + strlen(output_string), radio_mode_tem_len, "%s", "be,");
+			*pureMode |= WIFI_MODE_BE;
+			radio_mode_tem_len = RADIO_MODE_LEN - strlen(output_string);
+		}
+		break;
+	default:
+		fprintf(stderr, "%s band_idx invalid\n", __func__);
+		break;
+	}
+
+	/* Remove the last comma */
+	if (strlen(output_string) != 0)
+        output_string[strlen(output_string)-1] = '\0';
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
@@ -2522,54 +2581,137 @@ INT wifi_setRadioChannelMode(INT radioIndex, CHAR *channelMode, BOOL gOnlyFlag, 
     return RETURN_OK;
 }
 
+typedef enum _RT_802_11_PHY_MODE {
+	PHY_11BG_MIXED = 0,
+	PHY_11B = 1,
+	PHY_11A = 2,
+	PHY_11ABG_MIXED = 3,
+	PHY_11G = 4,
+	PHY_11ABGN_MIXED = 5,	/* both band   5 */
+	PHY_11N_2_4G = 6,		/* 11n-only with 2.4G band      6 */
+	PHY_11GN_MIXED = 7,		/* 2.4G band      7 */
+	PHY_11AN_MIXED = 8,		/* 5G  band       8 */
+	PHY_11BGN_MIXED = 9,	/* if check 802.11b.      9 */
+	PHY_11AGN_MIXED = 10,	/* if check 802.11b.      10 */
+	PHY_11N_5G = 11,		/* 11n-only with 5G band                11 */
+	PHY_11VHT_N_ABG_MIXED = 12, /* 12 -> AC/A/AN/B/G/GN mixed */
+	PHY_11VHT_N_AG_MIXED = 13, /* 13 -> AC/A/AN/G/GN mixed  */
+	PHY_11VHT_N_A_MIXED = 14, /* 14 -> AC/AN/A mixed in 5G band */
+	PHY_11VHT_N_MIXED = 15, /* 15 -> AC/AN mixed in 5G band */
+	PHY_11AX_24G = 16,
+	PHY_11AX_5G = 17,
+	PHY_11AX_6G = 18,
+	PHY_11AX_24G_6G = 19,
+	PHY_11AX_5G_6G = 20,
+	PHY_11AX_24G_5G_6G = 21,
+	PHY_11BE_24G = 22,
+	PHY_11BE_5G = 23,
+	PHY_11BE_6G = 24,
+	PHY_11BE_24G_6G = 25,
+	PHY_11BE_5G_6G = 26,
+	PHY_11BE_24G_5G_6G = 27,
+	PHY_MODE_MAX,
+} RT_802_11_PHY_MODE;
+
+unsigned int puremode_to_wireless_mode(INT radioIndex, UINT pureMode)
+{
+	int band_idx = 0;
+	unsigned int wireless_mode = PHY_MODE_MAX;
+
+	band_idx = radio_index_to_band(radioIndex);
+
+	switch (band_idx) {
+	case band_2_4:
+		if (pureMode == (WIFI_MODE_G | WIFI_MODE_N))
+			wireless_mode = PHY_11GN_MIXED;
+		if (pureMode == (WIFI_MODE_B | WIFI_MODE_G | WIFI_MODE_N))
+			wireless_mode = PHY_11BGN_MIXED;
+		if (pureMode & WIFI_MODE_AX)
+			wireless_mode = PHY_11AX_24G;
+		if (pureMode & WIFI_MODE_BE)
+			wireless_mode = PHY_11BE_24G;
+		break;
+	case band_5:
+		if (pureMode == WIFI_MODE_N)
+			wireless_mode = PHY_11N_5G;
+		if ((pureMode == WIFI_MODE_AC) || (pureMode == (WIFI_MODE_N | WIFI_MODE_AC)))
+			wireless_mode = PHY_11VHT_N_MIXED;
+		if (pureMode == (WIFI_MODE_A | WIFI_MODE_N | WIFI_MODE_AC))
+			wireless_mode = PHY_11VHT_N_A_MIXED;
+		if (pureMode & WIFI_MODE_AX)
+			wireless_mode = PHY_11AX_5G;
+		if (pureMode & WIFI_MODE_BE)
+			wireless_mode = PHY_11BE_5G;
+		break;
+	case band_6:
+		if (pureMode & WIFI_MODE_AX)
+			wireless_mode = PHY_11AX_6G;
+		if (pureMode & WIFI_MODE_BE)
+			wireless_mode = PHY_11BE_6G;
+		break;
+	default:
+		fprintf(stderr, "%s band_idx invalid\n", __func__);
+		break;
+	}
+
+	return wireless_mode;
+}
+
 // Set the radio operating mode, and pure mode flag.
 INT wifi_setRadioMode(INT radioIndex, CHAR *channelMode, UINT pureMode)
 {
-    int num_hostapd_support_mode = 3;   // n, ac, ax
-    struct params list[num_hostapd_support_mode];
-    char config_file[64] = {0};
-    char bandwidth[16] = {0};
-    int mode_check_bit = 1 << 3;    // n mode
+	unsigned int wireless_mode = PHY_MODE_MAX;
 
+	char interface_name[IF_NAME_SIZE] = {0};
+	char cmd[MAX_CMD_SIZE] = {0};
+    char buf[MAX_BUF_SIZE] = {0};
+	int i;
 
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s_%d:%d\n", __func__, channelMode, pureMode, __LINE__);
-    // Set radio mode
-    list[0].name = "ieee80211n";
-    list[1].name = "ieee80211ac";
-    list[2].name = "ieee80211ax";
-    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
+	WIFI_ENTRY_EXIT_DEBUG("Inside %s_%d:%d\n", __func__, channelMode, pureMode, __LINE__);
 
-    // check the bit map from n to ax, and set hostapd config
-    if (pureMode & WIFI_MODE_N)
-        list[0].value = "1";
-    else
-        list[0].value = "0";
-    if (pureMode & WIFI_MODE_AC)
-        list[1].value = "1";
-    else
-        list[1].value = "0";
-    if (pureMode & WIFI_MODE_AX)
-        list[2].value = "1";
-    else
-        list[2].value = "0";
-    wifi_hostapdWrite(config_file, list, num_hostapd_support_mode);
+	wireless_mode = puremode_to_wireless_mode(radioIndex, pureMode);
 
-    if (channelMode == NULL || strlen(channelMode) == 0)
-        return RETURN_OK;
-    // Set bandwidth
-    if (strstr(channelMode, "40") != NULL)
-        strcpy(bandwidth, "40MHz");
-    else if (strstr(channelMode, "80") != NULL)
-        strcpy(bandwidth, "80MHz");
-    else if (strstr(channelMode, "160") != NULL)
-        strcpy(bandwidth, "160MHz");
-    else    // 11A, 11B, 11G....
-        strcpy(bandwidth, "20MHz");
+    if (wireless_mode == PHY_MODE_MAX) {
+		fprintf(stderr, "%s wireless_mode invalid pureMode = %x\n", __func__, pureMode);
+		return RETURN_ERR;
+    }
 
-    writeBandWidth(radioIndex, bandwidth);
-    wifi_setRadioOperatingChannelBandwidth(radioIndex, bandwidth);
+	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+        return RETURN_ERR;
+	snprintf(cmd, sizeof(cmd),  "mwctl %s set phymode %d", interface_name, wireless_mode);
+    _syscmd(cmd, buf, sizeof(buf));
 
-    wifi_reloadAp(radioIndex);
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
+    return RETURN_OK;
+}
+
+INT wifi_setRadioMode_by_dat(INT radioIndex, UINT pureMode)
+{
+	unsigned int wireless_mode = PHY_MODE_MAX;
+	char interface_name[IF_NAME_SIZE] = {0};
+	char cmd[MAX_CMD_SIZE] = {0};
+    char buf[MAX_BUF_SIZE] = {0};
+	int i;
+	char dat_file[MAX_BUF_SIZE] = {0};
+	struct params params={0};
+
+	WIFI_ENTRY_EXIT_DEBUG("Inside %s_%d:%d\n", __func__, pureMode, __LINE__);
+
+	wireless_mode = puremode_to_wireless_mode(radioIndex, pureMode);
+
+    if (wireless_mode == PHY_MODE_MAX) {
+		fprintf(stderr, "%s wireless_mode invalid pureMode = %x\n", __func__, pureMode);
+		return RETURN_ERR;
+    }
+
+	params.name = "WirelessMode";
+    snprintf(buf, sizeof(buf), "%d", wireless_mode);
+    params.value = buf;
+
+	snprintf(dat_file, sizeof(dat_file), "%s%d.dat", LOGAN_DAT_FILE, radioIndex);
+    wifi_datfileWrite(dat_file, &params, 1);
+
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
     return RETURN_OK;
@@ -12151,6 +12293,14 @@ int main(int argc,char **argv)
         printf("Ap name is %s \n",buf);
         return 0;
     }
+	if(strstr(argv[1], "wifi_getRadioMode")!=NULL)
+    {
+    	int mode = 0;
+
+        wifi_getRadioMode(index, buf, &mode);
+        printf("Ap Radio mode is %s , mode = 0x%x\n", buf, mode);
+        return 0;
+    }
     if(strstr(argv[1], "wifi_getRadioAutoChannelEnable")!=NULL)
     {
         BOOL b = FALSE;
@@ -12584,7 +12734,7 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
             set_mode |= WIFI_MODE_AX;
         // Second parameter is to set channel band width, it is done by wifi_pushRadioChannel2 if changed.
         memset(buf, 0, sizeof(buf));
-        if (wifi_setRadioMode(index, buf, set_mode) != RETURN_OK) {
+        if (wifi_setRadioMode_by_dat(index, set_mode) != RETURN_OK) {
             fprintf(stderr, "%s: wifi_setRadioMode return error.\n", __func__);
             return RETURN_ERR;
         }
@@ -13242,15 +13392,13 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
             return RETURN_ERR;
         }
 
-		/*TBD: we need refine beacon rate setting flow*/
-        //memset(buf, 0, sizeof(buf));
-        //beaconRate_enum_to_string(vap_info->u.bss_info.beaconRate, buf);
-        // fprintf(stderr, "%s: beaconrate: %d, buf: %s\n", __func__, vap_info->u.bss_info.beaconRate, buf);
-        //ret = wifi_setApBeaconRate(vap_info->radio_index, buf);
-        //if (ret != RETURN_OK) {
-        //    fprintf(stderr, "%s: wifi_setApBeaconRate return error\n", __func__);
-        //    return RETURN_ERR;
-        //}
+        memset(buf, 0, sizeof(buf));
+        beaconRate_enum_to_string(vap_info->u.bss_info.beaconRate, buf);
+        ret = wifi_setApBeaconRate(vap_info->radio_index, buf);
+        if (ret != RETURN_OK) {
+            fprintf(stderr, "%s: wifi_setApBeaconRate return error\n", __func__);
+            return RETURN_ERR;
+        }
 
         ret = wifi_setRadioIGMPSnoopingEnable(vap_info->radio_index, vap_info->u.bss_info.mcast2ucast);
         if (ret != RETURN_OK) {
