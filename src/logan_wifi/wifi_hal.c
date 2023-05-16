@@ -67,7 +67,6 @@ Licensed under the ISC license
 #define MAX_CMD_SIZE 256
 #define IF_NAME_SIZE 16
 #define CONFIG_PREFIX "/nvram/hostapd"
-#define LOGAN_DAT_FILE "/etc/wireless/mediatek/mt7990.b"
 #define ACL_PREFIX "/nvram/hostapd-acl"
 #define DENY_PREFIX "/nvram/hostapd-deny"
 //#define ACL_PREFIX "/tmp/wifi_acl_list" //RDKB convention
@@ -86,9 +85,8 @@ Licensed under the ISC license
 #define LOGAN_DAT_FILE "/etc/wireless/mediatek/mt7990.b"
 
 #define NOACK_MAP_FILE "/tmp/NoAckMap"
+
 #define BRIDGE_NAME "brlan0"
-#define BASE_PHY_INDEX 1
-#define BASE_RADIO_INDEX 0
 
 /*
    MAX_APS - Number of all AP available in system
@@ -611,38 +609,6 @@ wifi_band wifi_index_to_band(int apIndex)
     return band;
 }
 
-static int wifi_datfileRead(char *dat_file, char *param, char *output, int output_size)
-{
-    char cmd[MAX_CMD_SIZE]={'\0'};
-    char buf[MAX_BUF_SIZE]={'\0'};
-    int ret = 0;
-
-    sprintf(cmd, "cat %s 2> /dev/null | grep \"^%s=\" | cut -d \"=\" -f 2 | head -n1 | tr -d \"\\n\"", dat_file, param);
-    ret = _syscmd(cmd, buf, sizeof(buf));
-    if ((ret != 0) && (strlen(buf) == 0))
-        return -1;
-    snprintf(output, output_size, "%s", buf);
-
-    return 0;
-}
-static int wifi_datfileWrite(char *dat_file, struct params *list, int item_count)
-{
-    char cmd[MAX_CMD_SIZE]={'\0'};
-    char buf[MAX_BUF_SIZE]={'\0'};
-
-    for(int i=0;i<item_count;i++) {
-        wifi_datfileRead(dat_file, list[i].name, buf, sizeof(buf));
-        if (strlen(buf) == 0) //Insert
-            snprintf(cmd, sizeof(cmd), "sed -i -e '$a %s=%s' %s", list[i].name, list[i].value, dat_file);
-        else //Update
-            snprintf(cmd, sizeof(cmd), "sed -i \"s/^%s=.*/%s=%s/\" %s", list[i].name, list[i].name, list[i].value, dat_file);
-
-    if(_syscmd(cmd, buf, sizeof(buf)))
-        return -1;
-    }
-
-    return 0;
-}
 static int wifi_hostapdRead(char *conf_file, char *param, char *output, int output_size)
 {
 	char cmd[MAX_CMD_SIZE] = {0};
@@ -749,25 +715,6 @@ static int wifi_GetInterfaceName(int apIndex, char *interface_name)
     return RETURN_OK;
 }
 
-/* index: radio index or phy index
-   phy: true-> base phy command
-        false-> base radio command */
-static int wifi_mwctlSet(int index, struct params *mwctl, bool phy)
-{
-    char cmd[MAX_CMD_SIZE]={'\0'};
-    char buf[MAX_BUF_SIZE]={'\0'};
-    char interface_name[16] = {0};
-
-    if (phy == TRUE)
-        snprintf(cmd, sizeof(cmd), "mwctl phy phy%d set %s%s", index, mwctl->name, mwctl->value);
-    else {
-        if (wifi_GetInterfaceName(index, interface_name) != RETURN_OK)
-            return RETURN_ERR;
-        snprintf(cmd, sizeof(cmd), "mwctl %s set %s%s", interface_name, mwctl->name, mwctl->value);
-    }
-    if (_syscmd(cmd, buf, sizeof(buf)))
-        return RETURN_ERR;
-
 static UCHAR get_bssnum_byindex(INT radio_index, UCHAR *bss_cnt)
 {
     char interface_name[IF_NAME_SIZE] = {0};
@@ -803,8 +750,7 @@ static int wifi_hostapdProcessUpdate(int apIndex, struct params *list, int item_
         return RETURN_ERR;
     for(i=0; i<item_count; i++, list++)
     {
-        snprintf(cmd, sizeof(cmd), "hostapd_cli -i %s SET %s %s", interface_name, list->name, list->value);
-        printf("ck_test: %s, cmd:%s\n", __func__, cmd);
+        snprintf(cmd, sizeof(cmd), "hostapd_cli -i%s SET %s %s", interface_name, list->name, list->value);
         if((fp = popen(cmd, "r"))==NULL)
         {
             perror("popen failed");
@@ -2723,19 +2669,7 @@ INT wifi_getRadioPossibleChannels(INT radioIndex, CHAR *output_string)	//RDKB
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
-//Getting current radio extension channel
-INT wifi_halgetRadioExtChannel(CHAR *file,CHAR *Value)
-{
-    CHAR buf[150] = {0};
-    CHAR cmd[150] = {0};
-    sprintf(cmd,"%s%s%s","cat ",file," | grep -w ht_capab=");
-    _syscmd(cmd, buf, sizeof(buf));
-    if(NULL != strstr(buf,"HT40+"))
-        strcpy(Value,"AboveControlChannel");
-    else if(NULL != strstr(buf,"HT40-"))
-        strcpy(Value,"BelowControlChannel");
-    return RETURN_OK;
-}
+
 //Get the list for used channel. eg: "1,6,9,11"
 //The output_string is a max length 256 octet string that is allocated by the RDKB code.  Implementations must ensure that strings are not longer than this.
 INT wifi_getRadioChannelsInUse(INT radioIndex, CHAR *output_string)	//RDKB
@@ -2870,10 +2804,8 @@ INT wifi_setRadioChannel(INT radioIndex, ULONG channel)	//RDKB	//AP only
     char *list_channel;
     char config_file[128] = {0};
     char possible_channels[256] = {0};
-    char config_file_dat[128] = {0};
     int max_radio_num = 0;
     struct params list = {0};
-    struct params dat = {0};
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -2892,19 +2824,16 @@ INT wifi_setRadioChannel(INT radioIndex, ULONG channel)	//RDKB	//AP only
             break;
         list_channel = strtok(NULL, ",");
     }
+
     list.name = "channel";
     list.value = str_channel;
-
-    dat.name = "Channel";
-    dat.value = str_channel;
     wifi_getMaxRadioNumber(&max_radio_num);
     for(int i=0; i<=MAX_APS/max_radio_num;i++)
     {
         sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radioIndex+(max_radio_num*i));
         wifi_hostapdWrite(config_file, &list, 1);
     }
-    sprintf(config_file_dat, "%s%d.dat", LOGAN_DAT_FILE, radioIndex);
-    wifi_datfileWrite(config_file_dat, &dat, 1);
+
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n", __func__, __LINE__);
     return RETURN_OK;
 }
@@ -3131,20 +3060,20 @@ INT wifi_getRadioDfsEnable(INT radioIndex, BOOL *output_bool)	//Tr181
 {
     char buf[16] = {0};
     FILE *f = NULL;
-    char config_file_dat[128] = {0};
-    char dfs_key[16] = "IEEE80211H";
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
     if (output_bool == NULL)
         return RETURN_ERR;
+
     *output_bool = TRUE;        // default
-    sprintf(config_file_dat, "%s%d.dat", LOGAN_DAT_FILE, radioIndex);
-
-    wifi_datfileRead(config_file_dat, dfs_key, buf, sizeof(buf));
-
-    if (strncmp(buf, "0", 1) == 0)
-        *output_bool = FALSE;
+    f = fopen(DFS_ENABLE_FILE, "r");
+    if (f != NULL) {
+        fgets(buf, 2, f);
+        if (strncmp(buf, "0", 1) == 0)
+            *output_bool = FALSE;
+        fclose(f);
+    }
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
@@ -3154,8 +3083,7 @@ INT wifi_setRadioDfsEnable(INT radioIndex, BOOL enable)	//Tr181
 {
     char config_file[128] = {0};
     FILE *f = NULL;
-    struct params params = {0};
-    struct params dat = {0};
+    struct params params={0};
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -3167,15 +3095,12 @@ INT wifi_setRadioDfsEnable(INT radioIndex, BOOL enable)	//Tr181
 
     params.name = "acs_exclude_dfs";
     params.value = enable?"0":"1";
-
     sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radioIndex);
     wifi_hostapdWrite(config_file, &params, 1);
     wifi_hostapdProcessUpdate(radioIndex, &params, 1);
+
     wifi_setRadioIEEE80211hEnabled(radioIndex, enable);
 
-    dat.name = "IEEE80211H";
-    dat.value = enable?"0":"1";
-    wifi_datfileWrite(radioIndex, &dat, 1);
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
@@ -3292,7 +3217,19 @@ INT wifi_setRadioOperatingChannelBandwidth(INT radioIndex, CHAR *bandwidth) //Tr
     return RETURN_OK;
 }
 
-
+//Getting current radio extension channel
+INT wifi_halgetRadioExtChannel(CHAR *file,CHAR *Value)
+{
+    CHAR buf[150] = {0};
+    CHAR cmd[150] = {0};
+    sprintf(cmd,"%s%s%s","cat ",file," | grep -w ht_capab=");
+    _syscmd(cmd, buf, sizeof(buf));
+    if(NULL != strstr(buf,"HT40+"))
+        strcpy(Value,"AboveControlChannel");
+    else if(NULL != strstr(buf,"HT40-"))
+        strcpy(Value,"BelowControlChannel");
+    return RETURN_OK;
+}
 
 //Get the secondary extension channel position, "AboveControlChannel" or "BelowControlChannel". (this is for 40MHz and 80MHz bandwith only)
 //The output_string is a max length 64 octet string that is allocated by the RDKB code.  Implementations must ensure that strings are not longer than this.
@@ -3302,7 +3239,7 @@ INT wifi_getRadioExtChannel(INT radioIndex, CHAR *output_string) //Tr181
     char mode_str[16] = {0};
     char buf[64] = {0};
     wifi_band band;
-    ULONG channel = 0, centr_channel = 0;
+    int channel = 0, centr_channel = 0;
     UINT mode_map = 0;
 
     if (output_string == NULL)
@@ -9275,8 +9212,6 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
     wifi_band band = band_invalid;
     int center_chan = 0;
     int center_freq1 = 0;
-    struct params mwctl = {0};
-    char str_channel[8]={0};
 
     snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
 
@@ -9339,19 +9274,11 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
 
         // Only the first AP, other are hanging on the same radio
         int apIndex = radioIndex;
-        /* snprintf(cmd, sizeof(cmd), "hostapd_cli  -i %s chan_switch %d %d %s %s %s",
+        snprintf(cmd, sizeof(cmd), "hostapd_cli  -i %s chan_switch %d %d %s %s %s",
             interface_name, csa_beacon_count, freq,
-            sec_chan_offset_str, center_freq1_str, opt_chan_info_str); */
-        snprintf(str_channel, sizeof(str_channel), "%d", channel);
-        mwctl.name = "channel num=";
-        mwctl.value = str_channel;
-        ret = wifi_mwctlSet(radioIndex, &mwctl, BASE_PHY_INDEX);
-        if (ret != RETURN_OK) {
-            fprintf(stderr, "%s: wifi_mwctlSet return error.\n", __func__);
-            return RETURN_ERR;
-        }
-        /* wifi_dbg_printf("execute: '%s'\n", cmd);
-        ret = _syscmd(cmd, buf, sizeof(buf));*/
+            sec_chan_offset_str, center_freq1_str, opt_chan_info_str);
+        wifi_dbg_printf("execute: '%s'\n", cmd);
+        ret = _syscmd(cmd, buf, sizeof(buf));
         wifi_reloadAp(radioIndex);
 
         ret = wifi_setRadioChannel(radioIndex, channel);
