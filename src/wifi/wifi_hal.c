@@ -2913,8 +2913,8 @@ INT wifi_RemoveRadioExtChannel(INT radioIndex, CHAR *ext_str)
     {
         sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radioIndex+(max_radio_num*i));
         wifi_hostapdWrite(config_file, &params, 1);
-        wifi_setRadioSTBCEnable(radioIndex+(max_radio_num*i), stbcEnable);
     }
+    wifi_setRadioSTBCEnable(radioIndex, stbcEnable);
     return RETURN_OK;
 }
 
@@ -2983,8 +2983,8 @@ INT wifi_setRadioExtChannel(INT radioIndex, CHAR *string) //Tr181	//AP only
     {
         sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,radioIndex+(max_radio_num*i));
         wifi_hostapdWrite(config_file, &params, 1);
-        wifi_setRadioSTBCEnable(radioIndex+(max_radio_num*i), stbcEnable);
     }
+    wifi_setRadioSTBCEnable(radioIndex, stbcEnable);
 
     //Set to wifi config only. Wait for wifi reset or wifi_pushRadioChannel to apply.
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
