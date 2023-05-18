@@ -54,7 +54,9 @@ Licensed under the ISC license
 #include <netlink/genl/family.h>
 #include <netlink/genl/ctrl.h>
 #include <linux/nl80211.h>
-#include<net/if.h>
+#include <net/if.h>
+#include <unl.h>
+#include "mtk_vendor_nl80211.h"
 #endif
 
 #include <ev.h>
@@ -5155,7 +5157,7 @@ INT wifi_getAssociatedDeviceDetail(INT apIndex, INT devIndex, wifi_device_t *out
     }
 
     genlmsg_put(msg,
-                NL_AUTO_PORT,
+                NL_AUTO_PID,
                 NL_AUTO_SEQ,
                 nl.id,
                 0,
@@ -5164,7 +5166,7 @@ INT wifi_getAssociatedDeviceDetail(INT apIndex, INT devIndex, wifi_device_t *out
                 0);
 
     nla_put_u32(msg, NL80211_ATTR_IFINDEX, if_nametoindex(if_name));
-    nl_send_auto(nl.socket, msg);
+    nl_send_auto_complete(nl.socket, msg);
     nl_cb_set(nl.cb,NL_CB_VALID,NL_CB_CUSTOM,AssoDevInfo_callback,&info);
     nl_recvmsgs(nl.socket, nl.cb);
     nlmsg_free(msg);
@@ -6409,6 +6411,46 @@ INT wifi_getApDevicesAssociated(INT apIndex, CHAR *macArray, UINT buf_size)
 	return RETURN_OK;
 }
 
+int hex2num(char c)
+{
+	if (c >= '0' && c <= '9')
+		return c - '0';
+	if (c >= 'a' && c <= 'f')
+		return c - 'a' + 10;
+	if (c >= 'A' && c <= 'F')
+		return c - 'A' + 10;
+	return -1;
+}
+
+/**
+ * hwaddr_aton2 - Convert ASCII string to MAC address (in any known format)
+ * @txt: MAC address as a string (e.g., 00:11:22:33:44:55 or 0011.2233.4455)
+ * @addr: Buffer for the MAC address (ETH_ALEN = 6 bytes)
+ * Returns: Characters used (> 0) on success, -1 on failure
+ */
+int hwaddr_aton2(const char *txt, unsigned char *addr)
+{
+	int i;
+	const char *pos = txt;
+
+	for (i = 0; i < 6; i++) {
+		int a, b;
+
+		while (*pos == ':' || *pos == '.' || *pos == '-')
+			pos++;
+
+		a = hex2num(*pos++);
+		if (a < 0)
+			return -1;
+		b = hex2num(*pos++);
+		if (b < 0)
+			return -1;
+		*addr++ = (a << 4) | b;
+	}
+
+	return pos - txt;
+}
+
 // adds the mac address to the filter list
 //DeviceMacAddress is in XX:XX:XX:XX:XX:XX format
 INT wifi_addApAclDevice(INT apIndex, CHAR *DeviceMacAddress)
@@ -6416,18 +6458,55 @@ INT wifi_addApAclDevice(INT apIndex, CHAR *DeviceMacAddress)
 	char cmd[MAX_CMD_SIZE] = {0};
 	char buf[MAX_BUF_SIZE] = {0};
 	char inf_name[IF_NAME_SIZE] = {0};
+	int if_idx, ret = 0;
+	struct nl_msg *msg;
+	void *data;
+	unsigned char mac[ETH_ALEN] = {0x00, 0x0c, 0x43, 0x11, 0x22, 0x33};
+	struct unl unl_ins;
 
 	if (wifi_GetInterfaceName(apIndex, inf_name) != RETURN_OK)
 		return RETURN_ERR;
-
 	if (!DeviceMacAddress)
 		return RETURN_ERR;
 
-	/* mwctl acl add sta */
-	snprintf(cmd, sizeof(cmd), "mwctl %s acl add=%s", inf_name, DeviceMacAddress);
-	_syscmd(cmd, buf, sizeof(buf));
+	if (hwaddr_aton2(DeviceMacAddress, mac) < 0) {
+		printf("error device mac address=%s\n", DeviceMacAddress);
+		return RETURN_ERR;
+	}
 
-    return RETURN_OK;
+	if_idx = if_nametoindex(inf_name);
+	if (unl_genl_init(&unl_ins, "nl80211") < 0) {
+		(void)fprintf(stderr, "Failed to connect to nl80211\n");
+		return RETURN_ERR;
+	}
+
+	msg = unl_genl_msg(&unl_ins, NL80211_CMD_VENDOR, false);
+
+	if (nla_put_u32(msg,  NL80211_ATTR_IFINDEX, if_idx) ||
+		nla_put_u32(msg, NL80211_ATTR_VENDOR_ID, MTK_NL80211_VENDOR_ID) ||
+		nla_put_u32(msg, NL80211_ATTR_VENDOR_SUBCMD, MTK_NL80211_VENDOR_SUBCMD_SET_ACL)) {
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	data = nla_nest_start(msg, NL80211_ATTR_VENDOR_DATA);
+	if (!data)
+		goto err;
+
+	if (nla_put(msg, MTK_NL80211_VENDOR_ATTR_ACL_ADD_MAC, ETH_ALEN, mac)) {
+		printf("Nla put attribute error\n");
+		goto err;
+	}
+
+	nla_nest_end(msg, data);
+
+	ret = unl_genl_request(&unl_ins, msg, NULL, NULL);
+	unl_free(&unl_ins);
+	return RETURN_OK;
+err:
+	nlmsg_free(msg);
+	unl_free(&unl_ins);
+	return RETURN_ERR;
 }
 
 // deletes the mac address from the filter list
@@ -10418,7 +10497,7 @@ INT wifi_getApAssociatedDeviceTidStatsResult(INT radioIndex,  mac_address_t *cli
     }
 
     genlmsg_put(msg,
-              NL_AUTO_PORT,
+              NL_AUTO_PID,
               NL_AUTO_SEQ,
               nl.id,
               0,
@@ -10429,7 +10508,7 @@ INT wifi_getApAssociatedDeviceTidStatsResult(INT radioIndex,  mac_address_t *cli
     nla_put(msg, NL80211_ATTR_MAC, MAC_ALEN, clientMacAddress);
     nla_put_u32(msg, NL80211_ATTR_IFINDEX, if_nametoindex(if_name));
     nl_cb_set(nl.cb,NL_CB_VALID,NL_CB_CUSTOM,tidStats_callback,tid_stats);
-    nl_send_auto(nl.socket, msg);
+    nl_send_auto_complete(nl.socket, msg);
     nl_recvmsgs(nl.socket, nl.cb);
     nlmsg_free(msg);
     nlfree(&nl);
@@ -10713,7 +10792,7 @@ INT wifi_getApAssociatedDeviceRxStatsResult(INT radioIndex, mac_address_t *clien
     }
 
     genlmsg_put(msg,
-        NL_AUTO_PORT,
+        NL_AUTO_PID,
         NL_AUTO_SEQ,
         nl.id,
         0,
@@ -10724,7 +10803,7 @@ INT wifi_getApAssociatedDeviceRxStatsResult(INT radioIndex, mac_address_t *clien
     nla_put(msg, NL80211_ATTR_MAC, MAC_ALEN, *clientMacAddress);
     nla_put_u32(msg, NL80211_ATTR_IFINDEX, if_nametoindex(if_name));
     nl_cb_set(nl.cb, NL_CB_VALID , NL_CB_CUSTOM, rxStatsInfo_callback, stats_array);
-    nl_send_auto(nl.socket, msg);
+    nl_send_auto_complete(nl.socket, msg);
     nl_recvmsgs(nl.socket, nl.cb);
     nlmsg_free(msg);
     nlfree(&nl);
@@ -10859,7 +10938,7 @@ INT wifi_getApAssociatedDeviceTxStatsResult(INT radioIndex, mac_address_t *clien
     }
 
     genlmsg_put(msg,
-                NL_AUTO_PORT,
+                NL_AUTO_PID,
                 NL_AUTO_SEQ,
                 nl.id,
                 0,
@@ -10870,7 +10949,7 @@ INT wifi_getApAssociatedDeviceTxStatsResult(INT radioIndex, mac_address_t *clien
     nla_put(msg, NL80211_ATTR_MAC, MAC_ALEN, clientMacAddress);
     nla_put_u32(msg, NL80211_ATTR_IFINDEX, if_nametoindex(if_name));
     nl_cb_set(nl.cb, NL_CB_VALID , NL_CB_CUSTOM, txStatsInfo_callback, stats_array);
-    nl_send_auto(nl.socket, msg);
+    nl_send_auto_complete(nl.socket, msg);
     nl_recvmsgs(nl.socket, nl.cb);
     nlmsg_free(msg);
     nlfree(&nl);
@@ -11117,7 +11196,7 @@ INT wifi_getRadioChannelStats(INT radioIndex,wifi_channelStats_t *input_output_c
     }
 
     genlmsg_put(msg,
-                NL_AUTO_PORT,
+                NL_AUTO_PID,
                 NL_AUTO_SEQ,
                 nl.id,
                 0,
@@ -11126,7 +11205,7 @@ INT wifi_getRadioChannelStats(INT radioIndex,wifi_channelStats_t *input_output_c
                 0);
 
     nla_put_u32(msg, NL80211_ATTR_IFINDEX, if_nametoindex(if_name));
-    nl_send_auto(nl.socket, msg);
+    nl_send_auto_complete(nl.socket, msg);
     nl_cb_set(nl.cb,NL_CB_VALID,NL_CB_CUSTOM,chanSurveyInfo_callback,local);
     nl_recvmsgs(nl.socket, nl.cb);
     nlmsg_free(msg);
