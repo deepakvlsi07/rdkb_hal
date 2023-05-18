@@ -3112,6 +3112,7 @@ INT wifi_setRadioChannel(INT radioIndex, ULONG channel)	//RDKB	//AP only
         acs.value = "0";
     }
     wifi_datfileWrite(config_file_dat, &acs, 1);
+    wifi_reloadAp(radioIndex);
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n", __func__, __LINE__);
     return RETURN_OK;
 }
@@ -5453,7 +5454,6 @@ INT wifi_setRadioObssCoexistenceEnable(INT apIndex, BOOL enable)
     wifi_hostapdWrite(config_file, &list, 1);
     wifi_datfileWrite(config_dat_file, &list, 1);
     wifi_hostapdProcessUpdate(apIndex, &list, 1);
-    wifi_reloadAp(apIndex);
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
@@ -9240,7 +9240,7 @@ INT wifi_getRadioAutoChannelEnable(INT radioIndex, BOOL *output_bool)
     char config_file[MAX_BUF_SIZE] = {0};
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);ss
+    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
     wifi_datfileRead(config_file, "Channel" , output, sizeof(output));
 
     *output_bool = (strncmp(output, "0", 1)==0) ?  TRUE : FALSE;
@@ -11961,6 +11961,7 @@ INT wifi_setZeroDFSState(UINT radioIndex, BOOL enable, BOOL precac)
     params[1].value = enable?"1":"0";
     snprintf(config_file, sizeof(config_file), "%s%d.dat", LOGAN_DAT_FILE, band);
     wifi_datfileWrite(config_file, params, 2);
+    wifi_reloadAp(radioIndex);
     /* TODO precac feature */
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
