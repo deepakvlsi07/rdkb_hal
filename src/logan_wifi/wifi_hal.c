@@ -5574,53 +5574,65 @@ INT wifi_setRadioSTBCEnable(INT radioIndex, BOOL STBC_Enable)
 // outputs A-MSDU enable status, 0 == not enabled, 1 == enabled
 INT wifi_getRadioAMSDUEnable(INT radioIndex, BOOL *output_bool)
 {
-    char cmd[128] = {0};
-    char buf[128] = {0};
-    char interface_name[16] = {0};
+    char dat_file[128] = {0};
+    BOOL enable;
+	wifi_band band;
+	char amdus_buff[8] = {'\0'};
 
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-    if(output_bool == NULL)
-        return RETURN_ERR;
-
-    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
-        return RETURN_ERR;
-
-    sprintf(cmd, "hostapd_cli -i %s get_amsdu | awk '{print $3}'", interface_name);
-    _syscmd(cmd, buf, sizeof(buf));
-
-    if (strncmp(buf, "1", 1) == 0)
+	band = wifi_index_to_band(radioIndex);
+	if (band == band_invalid) {
+		printf("%s:Band Error\n", __func__);
+		return RETURN_ERR;
+	}
+	snprintf(dat_file, sizeof(dat_file), "%s%d.dat", LOGAN_DAT_FILE, band);
+	wifi_datfileRead(dat_file, "HT_AMSDU", amdus_buff, sizeof(amdus_buff));
+	if (strncmp(amdus_buff, "1", 1) == 0)
         *output_bool = TRUE;
-    else
-        *output_bool = FALSE;
+	else
+		*output_bool = FALSE;
 
-    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
-    return RETURN_OK;
+	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
+	return RETURN_OK;
 }
 
 // enables A-MSDU in the hardware, 0 == not enabled, 1 == enabled
 INT wifi_setRadioAMSDUEnable(INT radioIndex, BOOL amsduEnable)
 {
-    char config_file[128] = {0};
-    struct params list = {0};
-    BOOL enable;
+	char dat_file[128] = {0};
+	BOOL enable;
+	wifi_band band;
+	char amdus_buff[8] = {'\0'};
+	struct params params = {0};
 
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-    if (wifi_getRadioAMSDUEnable(radioIndex, &enable) != RETURN_OK)
-        return RETURN_ERR;
+	band = wifi_index_to_band(radioIndex);
+	if (band == band_invalid) {
+		printf("%s:Band Error\n", __func__);
+		return RETURN_ERR;
+	}
+	snprintf(dat_file, sizeof(dat_file), "%s%d.dat", LOGAN_DAT_FILE, band);
+	wifi_datfileRead(dat_file, "HT_AMSDU", amdus_buff, sizeof(amdus_buff));
+	if (strncmp(amdus_buff, "1", 1) == 0)
+        enable = TRUE;
+	else
+		enable = FALSE;
+	if (amsduEnable == enable)
+	    return RETURN_OK;
 
-    if (amsduEnable == enable)
-        return RETURN_OK;
+	params.name = "HT_AMSDU";
+	if (amsduEnable)
+		params.value = "1";
+	else
+		params.value = "0";
+	wifi_datfileWrite(dat_file, &params, 1);
+	wifi_reloadAp(radioIndex);
 
-    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
-    list.name = "amsdu";
-    list.value = amsduEnable? "1":"0";
-    wifi_hostapdWrite(config_file, &list, 1);
-    wifi_hostapdProcessUpdate(radioIndex, &list, 1);
-    wifi_reloadAp(radioIndex);
+	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
-    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
 
