@@ -121,6 +121,21 @@ Licensed under the ISC license
 
 //Uncomment to enable debug logs
 //#define WIFI_DEBUG
+enum {
+	DEBUG_OFF = 0,
+	DEBUG_ERROR = 1,
+	DEBUG_WARN = 2,
+	DEBUG_NOTICE = 3,
+	DEBUG_INFO = 4
+};
+int wifi_debug_level = DEBUG_NOTICE;
+#define wifi_debug(level, fmt, args...) \
+{	\
+	if (level <= wifi_debug_level)	\
+	{ \
+		printf("[%s][%d]"fmt"\n", __func__, __LINE__, ##args);	\
+	} \
+}
 
 #ifdef WIFI_DEBUG
 #define wifi_dbg_printf printf
@@ -243,6 +258,140 @@ char *                  wifi_get_str_by_key(wifi_secur_list *list, int list_sz, 
 static int ieee80211_channel_to_frequency(int channel, int *freqMHz);
 static void wifi_PrepareDefaultHostapdConfigs(void);
 static void wifi_psk_file_reset();
+
+/*type define the nl80211 call back func*/
+typedef int (*mtk_nl80211_cb) (struct nl_msg *, void *);
+
+/**
+*struct mtk_nl80211_param
+* init mtk nl80211 using parameters
+* @sub_cmd: the cmd define in the mtk_vendor_nl80211.h.
+* @if_type: now only support the NL80211_ATTR_IFINDEX/NL80211_ATTR_WIPHY.
+* @if_idx: the index should match the interface or wiphy.
+* Note: NA
+**/
+struct mtk_nl80211_param {
+	unsigned int sub_cmd;
+	int if_type;
+	int if_idx;
+};
+
+/**
+*mtk_nl80211_init
+* init mtk nl80211 netlink and init the vendor msg common part.
+* @nl: netlink, just init it.
+* @msg: netlink message will alloc it.
+*		the msg send success/fails is not free by app
+*		only the nla_put etc api fails should use nlmsg_free.
+* @msg_data: vendor data msg attr pointer.
+* @param: init using interface and sub_cmd parameter.
+*
+*init the netlink context and mtk netlink vendor msg.
+*
+*return:
+*	0: success
+*	other: fail
+**/
+
+int mtk_nl80211_init(struct unl *nl, struct nl_msg **msg,
+	struct nlattr **msg_data, struct mtk_nl80211_param *param) {
+	/*sanity check here*/
+	if (!nl || !param) {
+		(void)fprintf(stderr,
+		"[%s][%d]:nl(0x%lx) or param(0x%lx) is null, error!\n",
+		__func__, __LINE__, nl, param);
+		return -1;
+	}
+	/*if_type check*/
+	if ( param->if_type != NL80211_ATTR_IFINDEX && param->if_type != NL80211_ATTR_WIPHY) {
+		(void)fprintf(stderr,
+			"[%s][%d]:if_type(0x%x) is not supported, only 0x%x and 0x%x supported.\n",
+			__func__, __LINE__, param->if_type, NL80211_ATTR_IFINDEX, NL80211_ATTR_WIPHY);
+		return -1;
+	}
+	/*init the nl*/
+	if (unl_genl_init(nl, "nl80211") < 0) {
+		(void)fprintf(stderr, "[%s][%d]::Failed to connect to nl80211\n",
+			__func__, __LINE__);
+		return -1;
+	}
+	/*init the msg*/
+	*msg = unl_genl_msg(nl, NL80211_CMD_VENDOR, false);
+
+	if (nla_put_u32(*msg, param->if_type, param->if_idx) ||
+	    nla_put_u32(*msg, NL80211_ATTR_VENDOR_ID, MTK_NL80211_VENDOR_ID) ||
+	    nla_put_u32(*msg, NL80211_ATTR_VENDOR_SUBCMD, param->sub_cmd)) {
+		(void)fprintf(stderr,
+		"[%s][%d]:Nla put error: if_type: 0x%x, if_idx: 0x%x, sub_cmd: 0x%x\n",
+		__func__, __LINE__, param->if_type, param->if_idx, param->sub_cmd);
+		goto err;
+	}
+
+	*msg_data = nla_nest_start(*msg, NL80211_ATTR_VENDOR_DATA);
+	if (!*msg_data) {
+		(void)fprintf(stderr, "[%s][%d]:Nla put NL80211_ATTR_VENDOR_DATA start error\n",
+			__func__, __LINE__);
+		goto err;
+	}
+
+	return 0;
+err:
+
+	nlmsg_free(*msg);
+	unl_free(nl);
+	return -1;
+}
+
+/**
+*mtk_nl80211_send
+* set the vendor cmd call back and sent the vendor msg.
+* @nl: netlink.
+* @msg: netlink message.
+* @msg_data: vendor data msg attr pointer.
+* @handler: if the msg have call back shoud add the call back func
+*			the event msg will handle by the call back func(exp:get cmd)
+*			other set it as NULL(exp:set cmd).
+* @arg:call back func arg parameter.
+*add end of the netlink msg, set the call back and send msg
+*
+*return:
+*	0: success
+*	other: fail
+**/
+int mtk_nl80211_send(struct unl *nl, struct nl_msg *msg,
+	struct nlattr *msg_data, mtk_nl80211_cb handler, void *arg) {
+	int ret = 0;
+	/*sanity check*/
+	if (!nl || !msg || !msg_data) {
+		(void)fprintf(stderr,
+		"[%s][%d]:nl(0x%lx),msg(0x%lx) or msg_data(0x%lx) is null, error!\n",
+		__func__, __LINE__, nl, msg, msg_data);
+		return -1;
+	}
+	/*end the msg attr of vendor data*/
+	nla_nest_end(msg, msg_data);
+	/*send the msg and set call back */
+	ret = unl_genl_request(nl, msg, handler, arg);
+	if (ret)
+		(void)fprintf(stderr, "send nl80211 cmd fails\n");
+	return ret;
+}
+
+/**
+*mtk_nl80211_deint
+* deinit the netlink and the nl80211 vendor msg.
+* @nl: netlink.
+*
+*free deinit the netlink and the nl80211 vendor msg.
+*
+*return:
+*	0: success
+**/
+
+int mtk_nl80211_deint(struct unl *nl) {
+	unl_free(nl);
+	return 0;
+}
 
 
 static wifi_secur_list map_security[] =
@@ -6605,53 +6754,50 @@ INT wifi_addApAclDevice(INT apIndex, CHAR *DeviceMacAddress)
 	char buf[MAX_BUF_SIZE] = {0};
 	char inf_name[IF_NAME_SIZE] = {0};
 	int if_idx, ret = 0;
-	struct nl_msg *msg;
-	void *data;
+	struct nl_msg *msg  = NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
 	unsigned char mac[ETH_ALEN] = {0x00, 0x0c, 0x43, 0x11, 0x22, 0x33};
 	struct unl unl_ins;
-
 	if (wifi_GetInterfaceName(apIndex, inf_name) != RETURN_OK)
 		return RETURN_ERR;
 	if (!DeviceMacAddress)
 		return RETURN_ERR;
-
 	if (hwaddr_aton2(DeviceMacAddress, mac) < 0) {
 		printf("error device mac address=%s\n", DeviceMacAddress);
 		return RETURN_ERR;
 	}
 
 	if_idx = if_nametoindex(inf_name);
-	if (unl_genl_init(&unl_ins, "nl80211") < 0) {
-		(void)fprintf(stderr, "Failed to connect to nl80211\n");
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_ACL;
+	param.if_type = NL80211_ATTR_IFINDEX;
+	param.if_idx = if_idx;
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
 		return RETURN_ERR;
 	}
-
-	msg = unl_genl_msg(&unl_ins, NL80211_CMD_VENDOR, false);
-
-	if (nla_put_u32(msg,  NL80211_ATTR_IFINDEX, if_idx) ||
-		nla_put_u32(msg, NL80211_ATTR_VENDOR_ID, MTK_NL80211_VENDOR_ID) ||
-		nla_put_u32(msg, NL80211_ATTR_VENDOR_SUBCMD, MTK_NL80211_VENDOR_SUBCMD_SET_ACL)) {
+	/*add mtk vendor cmd data*/
+	if (nla_put(msg, MTK_NL80211_VENDOR_ATTR_ACL_ADD_MAC, ETH_ALEN, mac)) {
+		printf("Nla put attribute error\n");
 		nlmsg_free(msg);
 		goto err;
 	}
 
-	data = nla_nest_start(msg, NL80211_ATTR_VENDOR_DATA);
-	if (!data)
-		goto err;
-
-	if (nla_put(msg, MTK_NL80211_VENDOR_ATTR_ACL_ADD_MAC, ETH_ALEN, mac)) {
-		printf("Nla put attribute error\n");
+	/*send mtk nl80211 vendor msg*/
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
 		goto err;
 	}
-
-	nla_nest_end(msg, data);
-
-	ret = unl_genl_request(&unl_ins, msg, NULL, NULL);
-	unl_free(&unl_ins);
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_NOTICE, "set cmd success.\n");
 	return RETURN_OK;
 err:
-	nlmsg_free(msg);
-	unl_free(&unl_ins);
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR, "set cmd fails.\n");
 	return RETURN_ERR;
 }
 
@@ -12637,6 +12783,15 @@ int main(int argc,char **argv)
         printf("Ap name is %s \n",buf);
         return 0;
     }
+	if (strstr(argv[1], "wifi_setApAcl")!=NULL) {
+		if(argc <= 3 )
+        {
+            printf("Insufficient arguments \n");
+            exit(-1);
+        }
+		wifi_addApAclDevice(index, argv[3]);
+		return 0;
+	}
 	if(strstr(argv[1], "wifi_getRadioMode")!=NULL)
     {
     	int mode = 0;
