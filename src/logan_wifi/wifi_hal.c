@@ -844,42 +844,71 @@ static int wifi_hostapdWrite(char *conf_file, struct params *list, int item_coun
 
     return 0;
 }
+
 static int wifi_datfileRead(char *conf_file, char *param, char *output, int output_size)
 {
     char cmd[MAX_CMD_SIZE] = {0};
-    char buf[MAX_BUF_SIZE] = {0};
     int ret = 0;
+    int len;
 
-    ret = snprintf(cmd, MAX_CMD_SIZE, "cat %s 2> /dev/null | grep \"^%s=\" | cut -d \"=\" -f 2 | head -n1 | tr -d \"\\n\"",
-    conf_file, param);
-
+    ret = snprintf(cmd, sizeof(cmd), "datconf -f %s get %s", conf_file, param);
     if (ret < 0) {
         printf("%s: snprintf error!", __func__);
         return -1;
     }
 
-    ret = _syscmd(cmd, buf, sizeof(buf));
-    if ((ret != 0) && (strlen(buf) == 0)) {
+    ret = _syscmd(cmd, output, output_size);
+    if ((ret != 0) && (strlen(output) == 0)) {
         printf("%s: _syscmd error!", __func__);
         return -1;
     }
 
-    snprintf(output, output_size, "%s", buf);
+    len = strlen(output);
+    if ((len > 0) && (output[len - 1] == '\n')) {
+        output[len - 1] = '\0';
+    }
+
+    return 0;
+}
+
+static int wifi_datfileRead2(char *conf_file, int vap_idx, char *param, char *output, int output_size)
+{
+    char cmd[MAX_CMD_SIZE] = {0};
+    int ret = 0;
+    int len;
+
+    ret = snprintf(cmd, sizeof(cmd), "datconf -f %s get %d %s", conf_file, vap_idx, param);
+    if (ret < 0) {
+        printf("%s: snprintf error!", __func__);
+        return -1;
+    }
+
+    ret = _syscmd(cmd, output, output_size);
+    if ((ret != 0) && (strlen(output) == 0)) {
+        printf("%s: _syscmd error!", __func__);
+        return -1;
+    }
+
+    len = strlen(output);
+    if ((len > 0) && (output[len - 1] == '\n')) {
+        output[len - 1] = '\0';
+    }
 
     return 0;
 }
 
 static int wifi_datfileWrite(char *conf_file, struct params *list, int item_count)
 {
+    int ret;
     char cmd[MAX_CMD_SIZE] = {0};
     char buf[MAX_BUF_SIZE] = {0};
 
     for (int i = 0; i < item_count; i++) {
-        wifi_datfileRead(conf_file, list[i].name, buf, sizeof(buf));
-        if (strlen(buf) == 0) /*no such item, insert it*/
-            snprintf(cmd, sizeof(cmd), "sed -i -e '$a %s=%s' %s", list[i].name, list[i].value, conf_file);
-        else /*find the item, update it*/
-            snprintf(cmd, sizeof(cmd), "sed -i \"s/^%s=.*/%s=%s/\" %s", list[i].name, list[i].name, list[i].value, conf_file);
+        ret = snprintf(cmd, sizeof(cmd), "datconf -f %s set %s \"%s\"", conf_file, list[i].name, list[i].value);
+        if (ret < 0) {
+            printf("%s: snprintf error!", __func__);
+            return -1;
+        }
 
         if(_syscmd(cmd, buf, sizeof(buf)))
             return -1;
@@ -887,6 +916,215 @@ static int wifi_datfileWrite(char *conf_file, struct params *list, int item_coun
 
     return 0;
 }
+
+static int wifi_datfileWrite2(char *conf_file, int vap_idx, struct params *list, int item_count)
+{
+    int ret;
+    char cmd[MAX_CMD_SIZE] = {0};
+    char buf[MAX_BUF_SIZE] = {0};
+
+    for (int i = 0; i < item_count; i++) {
+        ret = snprintf(cmd, sizeof(cmd), "datconf -f %s set %s %d \"%s\"", conf_file, list[i].name, vap_idx, list[i].value);
+        if (ret < 0) {
+            printf("%s: snprintf error!", __func__);
+            return -1;
+        }
+
+        if(_syscmd(cmd, buf, sizeof(buf)))
+            return -1;
+    }
+
+    return 0;
+}
+
+static int wifi_l1ProfileRead(char *param, char *output, int output_size)
+{
+    char buf[MAX_BUF_SIZE] = {0};
+    int ret;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    if (!param || !output || (output_size <= 0)) {
+        fprintf(stderr, "%s: invalid parameters", __func__);
+        return RETURN_ERR;
+    }
+
+    ret = wifi_datfileRead(l1profile, param, output, output_size);
+    if (ret != 0) {
+        fprintf(stderr, "%s: wifi_datfileRead %s from %s failed, ret:%d", __func__, param, l1profile, ret);
+        return RETURN_ERR;
+    }
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
+}
+
+static int wifi_CardProfileRead(int card_idx, char *param, char *output, int output_size)
+{
+    char option[64];
+    char card_profile_path[64];
+    int ret;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    if (!param || !output || (output_size <= 0)) {
+        fprintf(stderr, "%s: invalid parameters", __func__);
+        return RETURN_ERR;
+    }
+
+    snprintf(option, sizeof(option), "INDEX%d_profile_path", card_idx);
+    ret = wifi_l1ProfileRead(option, card_profile_path, sizeof(card_profile_path));
+    if (ret != 0) {
+        fprintf(stderr, "%s: wifi_l1ProfileRead %s failed, ret:%d", __func__, option,  ret);
+        return RETURN_ERR;
+    }
+
+    ret = wifi_datfileRead(card_profile_path, param, output, output_size);
+    if (ret != 0) {
+        fprintf(stderr, "%s: wifi_datfileRead %s from %s failed, ret:%d", __func__, param, card_profile_path, ret);
+        return RETURN_ERR;
+    }
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
+}
+
+static int wifi_BandProfileRead(int card_idx,
+                                int radio_idx,
+                                char *param,
+                                char *output,
+                                int output_size,
+                                char *default_value)
+{
+    char option[64];
+    char band_profile_path[64];
+    int ret;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    if (!param || !output || (output_size <= 0)) {
+        fprintf(stderr, "%s: invalid parameters", __func__);
+        return RETURN_ERR;
+    }
+
+    snprintf(option, sizeof(option), "BN%d_profile_path", radio_idx);
+    ret = wifi_CardProfileRead(card_idx, option, band_profile_path, sizeof(band_profile_path));
+    if (ret != 0) {
+        fprintf(stderr, "%s: wifi_CardProfileRead %s failed, ret:%d", __func__, option);
+        return RETURN_ERR;
+    }
+
+    ret = wifi_datfileRead(band_profile_path, param, output, output_size);
+    if (ret != 0) {
+        if (default_value) {
+            snprintf(output, output_size, "%s", default_value);
+        } else {
+            output[0] = '\0';
+        }
+    }
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
+}
+
+static int wifi_BandProfileRead2(int card_idx,
+                                 int radio_idx,
+                                 int vap_idx,
+                                 char *param,
+                                 char *output,
+                                 int output_size,
+                                 char* default_value)
+{
+    char option[64];
+    char band_profile_path[64];
+    int ret;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    if (!param || !output || (output_size <= 0)) {
+        fprintf(stderr, "%s: invalid parameters", __func__);
+        return RETURN_ERR;
+    }
+
+    snprintf(option, sizeof(option), "BN%d_profile_path", radio_idx);
+    ret = wifi_CardProfileRead(card_idx, option, band_profile_path, sizeof(band_profile_path));
+    if (ret != 0) {
+        fprintf(stderr, "%s: wifi_CardProfileRead %s failed, ret:%d", __func__, option);
+        return RETURN_ERR;
+    }
+
+    ret = wifi_datfileRead2(band_profile_path, vap_idx, param, output, output_size);
+    if (ret != 0) {
+        if (default_value) {
+            snprintf(output, output_size, "%s", default_value);
+        } else {
+            output[0] = '\0';
+        }
+    }
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
+
+}
+
+static int wifi_BandProfileWrite(int card_idx, int radio_idx, struct params *list, int item_count)
+{
+    char option[64];
+    char band_profile_path[64];
+    int ret;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    snprintf(option, sizeof(option), "BN%d_profile_path", radio_idx);
+    ret = wifi_CardProfileRead(card_idx, option, band_profile_path, sizeof(band_profile_path));
+    if (ret != 0) {
+        fprintf(stderr, "%s: wifi_CardProfileRead %s failed, ret:%d", __func__, option);
+        return RETURN_ERR;
+    }
+
+    for (int i = 0; i < item_count; i++) {
+    }
+    ret = wifi_datfileWrite(band_profile_path, list, item_count);
+    if (ret != 0) {
+        fprintf(stderr, "%s: wifi_datfileWrite failed, ret:%d", __func__);
+        return RETURN_ERR;
+    }
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
+
+}
+
+static int wifi_BandProfileWrite2(int card_idx,
+                                  int radio_idx,
+                                  int vap_idx,
+                                  struct params *list,
+                                  int item_count)
+{
+    char option[64];
+    char band_profile_path[64];
+    char buf[64];
+    char buf2[MAX_BUF_SIZE];
+    int ret;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    snprintf(option, sizeof(option), "BN%d_profile_path", radio_idx);
+    ret = wifi_CardProfileRead(card_idx, option, band_profile_path, sizeof(band_profile_path));
+    if (ret != 0) {
+        fprintf(stderr, "%s: wifi_CardProfileRead %s failed, ret:%d", __func__, option);
+        return RETURN_ERR;
+    }
+
+    ret = wifi_datfileWrite2(band_profile_path, vap_idx, list, item_count);
+    if (ret != 0) {
+        fprintf(stderr, "%s: wifi_datfileWrite failed, ret:%d", __func__);
+        return RETURN_ERR;
+    }
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
+
+}
+
+
 
 //For Getting Current Interface Name from corresponding hostapd configuration
 static int wifi_GetInterfaceName(int apIndex, char *interface_name)
@@ -1848,29 +2086,19 @@ INT wifi_createInitialConfigFiles()
 /* outputs the country code to a max 64 character string */
 INT wifi_getRadioCountryCode(INT radioIndex, CHAR *output_string)
 {
-	char interface_name[IF_NAME_SIZE] = {0};
-	char buf[MAX_BUF_SIZE] = {0}, cmd[MAX_CMD_SIZE] = {0}, *value;
+    int ret;
 
-	if (!output_string || (radioIndex >= MAX_NUM_RADIOS)) {
-		printf("%s: input para error!!!\n", __func__);
-		return RETURN_ERR;
-	}
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
 
-	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK) {
-		printf("%s: get inf_name error!!!\n", __func__);
-		return RETURN_ERR;
-	}
+    ret = wifi_BandProfileRead(0, radioIndex, "CountryCode", output_string, 64, NULL);
+    if (ret != 0) {
+        fprintf(stderr, "%s: wifi_BandProfileRead CountryCode failed\n", __func__);
+        return RETURN_ERR;
+    }
 
-	snprintf(cmd, MAX_CMD_SIZE, "hostapd_cli -i %s status driver | grep country | cut -d '=' -f2 | tr -d '\\n'",
-		interface_name);
-	_syscmd(cmd, buf, sizeof(buf));
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n", __func__, __LINE__);
 
-	if(strlen(buf))
-		snprintf(output_string, 64, "%s", buf);
-	else
-		return RETURN_ERR;
-
-	return RETURN_OK;
+    return RETURN_OK;
 }
 
 INT wifi_setRadioCountryCode(INT radioIndex, CHAR *CountryCode)
@@ -13688,12 +13916,23 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
     BOOL enabled = FALSE;
     char buf[256] = {0};
     wifi_vap_security_t security = {0};
-    map->num_vaps = 5;      // Hardcoded
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     printf("Entering %s index = %d\n", __func__, (int)index);
 
-    for (i = 0; i < 5; i++)
+    ret = wifi_BandProfileRead(0, index, "BssidNum", buf, sizeof(buf), "0");
+    if (ret != 0) {
+        fprintf(stderr, "%s: wifi_BandProfileRead BssidNum failed\n", __func__);
+        return RETURN_ERR;
+    }
+
+    map->num_vaps = atoi(buf);
+    if (map->num_vaps <= 0)  {
+        fprintf(stderr, "%s: invalid BssidNum %s\n", __func__, buf);
+        return RETURN_ERR;
+    }
+
+    for (i = 0; i < map->num_vaps; i++)
     {
         map->vap_array[i].radio_index = index;
 
