@@ -277,6 +277,18 @@ struct mtk_nl80211_param {
 };
 
 /**
+*struct mtk_nl80211_cb_data
+* init mtk nl80211 call back parameters
+* @out_buf: store the mtk vendor output msg for wifi hal buffer.
+* @out_len: the output buffer length.
+* Note: NA
+**/
+struct mtk_nl80211_cb_data {
+	char * out_buf;
+	unsigned int out_len;
+};
+
+/**
 *mtk_nl80211_init
 * init mtk nl80211 netlink and init the vendor msg common part.
 * @nl: netlink, just init it.
@@ -6661,23 +6673,118 @@ INT wifi_setApRadioIndex(INT apIndex, INT radioIndex)
     return RETURN_ERR;
 }
 
+
+#define MAX_ACL_DUMP_LEN 4096
+int mtk_acl_list_dump_callback(struct nl_msg *msg, void *cb)
+{
+	struct nlattr *tb[NL80211_ATTR_MAX + 1];
+	struct nlattr *vndr_tb[MTK_NL80211_VENDOR_AP_ACL_ATTR_MAX + 1];
+	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+	char *show_str = NULL;
+	int err = 0, skip_len = 0;
+	unsigned short acl_result_len = 0;
+	struct mtk_nl80211_cb_data *cb_data = cb;
+
+	if (!msg || !cb_data) {
+		wifi_debug(DEBUG_ERROR, "msg(0x%lx) or cb_data(0x%lx) is null,error.", msg, cb_data);
+		return NL_SKIP;
+	}
+
+	err = nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+			  genlmsg_attrlen(gnlh, 0), NULL);
+	if (err < 0) {
+		wifi_debug(DEBUG_ERROR, "nla_parse acl list nl80211 msg fails,error.");
+		return NL_SKIP;
+	}
+
+	if (tb[NL80211_ATTR_VENDOR_DATA]) {
+		err = nla_parse_nested(vndr_tb, MTK_NL80211_VENDOR_AP_ACL_ATTR_MAX,
+			tb[NL80211_ATTR_VENDOR_DATA], NULL);
+		if (err < 0)
+			return NL_SKIP;
+		if (vndr_tb[MTK_NL80211_VENDOR_ATTR_ACL_LIST_INFO]) {
+			acl_result_len = nla_len(vndr_tb[MTK_NL80211_VENDOR_ATTR_ACL_LIST_INFO]);
+			show_str = nla_data(vndr_tb[MTK_NL80211_VENDOR_ATTR_ACL_LIST_INFO]);
+			if (acl_result_len > MAX_ACL_DUMP_LEN) {
+				wifi_debug(DEBUG_ERROR,"the scan result len is invalid !!!\n");
+				return NL_SKIP;
+			} else if (*(show_str + acl_result_len - 1) != '\0') {
+				wifi_debug(DEBUG_INFO, "the result string is not ended with right terminator, handle it!!!\n");
+				*(show_str + acl_result_len - 1) = '\0';
+			}
+			wifi_debug(DEBUG_INFO, "driver msg:%s\n", show_str);
+			/*skip the first line: 'policy=1\n' len check*/
+			skip_len = (strchr(show_str, '\n')+1 - show_str);
+			if (cb_data->out_len < acl_result_len-skip_len) {
+				wifi_debug(DEBUG_ERROR, "output buffer is not enough! error.\n");
+				return NL_SKIP;
+			}
+			memset(cb_data->out_buf, 0, cb_data->out_len);
+			/*skip the first line: 'policy=1\n' to find the acl mac addrs*/
+			memmove(cb_data->out_buf, strchr(show_str, '\n')+1, acl_result_len-skip_len);
+			wifi_debug(DEBUG_INFO, "out buff:%s", cb_data->out_buf);
+		} else
+			wifi_debug(DEBUG_ERROR, "no acl result attr\n");
+	} else
+		wifi_debug(DEBUG_ERROR, "no any acl result from driver\n");
+	return NL_OK;
+}
 // Get the ACL MAC list per AP
 INT wifi_getApAclDevices(INT apIndex, CHAR *macArray, UINT buf_size)
 {
-	char cmd[MAX_CMD_SIZE] = {0};
-	char buf[MAX_BUF_SIZE] = {0};
 	char inf_name[IF_NAME_SIZE] = {0};
+	struct mtk_nl80211_param params;
+	unsigned int if_idx = 0;
+	int ret = -1;
+	struct unl unl_ins;
+	struct nl_msg *msg  = NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+	struct mtk_nl80211_cb_data cb_data;
 
 	if (wifi_GetInterfaceName(apIndex, inf_name) != RETURN_OK)
 		return RETURN_ERR;
 
-	/* mwctl acl del sta */
-	snprintf(cmd, sizeof(cmd), "mwctl %s acl show_all | grep ':'", inf_name);
-	_syscmd(cmd, buf, sizeof(buf));
+	if_idx = if_nametoindex(inf_name);
+	if (!if_idx) {
+		wifi_debug(DEBUG_ERROR,"can't finde ifname(%s) index,ERROR", inf_name);
+		return RETURN_ERR;
+	}
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_ACL;
+	param.if_type = NL80211_ATTR_IFINDEX;
+	param.if_idx = if_idx;
 
-	memcpy(macArray, buf, buf_size);
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
 
+	/*add mtk vendor cmd data*/
+	if (nla_put_flag(msg, MTK_NL80211_VENDOR_ATTR_ACL_SHOW_ALL)) {
+		printf("Nla put ACL_SHOW_ALL attribute error\n");
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	/*send mtk nl80211 vendor msg*/
+	cb_data.out_buf = macArray;
+	cb_data.out_len = buf_size;
+
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, mtk_acl_list_dump_callback, &cb_data);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		goto err;
+	}
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_NOTICE,"send cmd success, get macArray:%s", macArray);
     return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR,"send cmd fails");
+	return RETURN_ERR;
 }
 
 INT wifi_getApDenyAclDevices(INT apIndex, CHAR *macArray, UINT buf_size)
@@ -12783,7 +12890,7 @@ int main(int argc,char **argv)
         printf("Ap name is %s \n",buf);
         return 0;
     }
-	if (strstr(argv[1], "wifi_setApAcl")!=NULL) {
+	if (strstr(argv[1], "wifi_setApAclDevice")!=NULL) {
 		if(argc <= 3 )
         {
             printf("Insufficient arguments \n");
@@ -12792,6 +12899,11 @@ int main(int argc,char **argv)
 		wifi_addApAclDevice(index, argv[3]);
 		return 0;
 	}
+	if (strstr(argv[1], "wifi_getApAclDevices")!=NULL) {
+		wifi_getApAclDevices(index, buf, MAX_BUF_SIZE);
+		return 0;
+	}
+
 	if(strstr(argv[1], "wifi_getRadioMode")!=NULL)
     {
     	int mode = 0;
