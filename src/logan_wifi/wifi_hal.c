@@ -10853,25 +10853,27 @@ static int tidStats_callback(struct nl_msg *msg, void *arg) {
         return NL_SKIP;
     }
 
-    nla_for_each_nested(tidattr, sinfo[NL80211_STA_INFO_TID_STATS], rem)
-    {
-        stats_entry = &out->tid_array[tid_index];
-
-        stats_entry->tid = tid_index;
-        stats_entry->ac = _tid_ac_index_get[tid_index];
-
-        if(sinfo[NL80211_STA_INFO_TID_STATS])
+    if (sinfo[NL80211_STA_INFO_TID_STATS]) {
+        nla_for_each_nested(tidattr, sinfo[NL80211_STA_INFO_TID_STATS], rem)
         {
-            if(nla_parse_nested(stats_info, NL80211_TID_STATS_MAX,tidattr, tid_policy)) {
-                printf("failed to parse nested stats attributes!");
-                return NL_SKIP;
-            }
-        }
-        if(stats_info[NL80211_TID_STATS_TX_MSDU])
-            stats_entry->num_msdus = (unsigned long long)nla_get_u64(stats_info[NL80211_TID_STATS_TX_MSDU]);
+            stats_entry = &out->tid_array[tid_index];
 
-        if(tid_index < (PS_MAX_TID - 1))
-            tid_index++;
+            stats_entry->tid = tid_index;
+            stats_entry->ac = _tid_ac_index_get[tid_index];
+
+            if(sinfo[NL80211_STA_INFO_TID_STATS])
+            {
+                if(nla_parse_nested(stats_info, NL80211_TID_STATS_MAX,tidattr, tid_policy)) {
+                    printf("failed to parse nested stats attributes!");
+                    return NL_SKIP;
+                }
+            }
+            if(stats_info[NL80211_TID_STATS_TX_MSDU])
+                stats_entry->num_msdus = (unsigned long long)nla_get_u64(stats_info[NL80211_TID_STATS_TX_MSDU]);
+
+            if(tid_index < (PS_MAX_TID - 1))
+                tid_index++;
+        }
     }
     //ToDo: sum_time_ms, ewma_time_ms
     return NL_SKIP;
@@ -11112,9 +11114,11 @@ static int rxStatsInfo_callback(struct nl_msg *msg, void *arg) {
 
     if_indextoname(nla_get_u32(tb[NL80211_ATTR_IFINDEX]), dev);
 
-    if(nla_parse_nested(rinfo, NL80211_RATE_INFO_MAX, sinfo[NL80211_STA_INFO_RX_BITRATE], rate_policy )) {
-        fprintf(stderr, "failed to parse nested rate attributes!");
-        return NL_SKIP;
+    if (sinfo[NL80211_STA_INFO_RX_BITRATE]) {
+        if(nla_parse_nested(rinfo, NL80211_RATE_INFO_MAX, sinfo[NL80211_STA_INFO_RX_BITRATE], rate_policy )) {
+            fprintf(stderr, "failed to parse nested rate attributes!");
+            return NL_SKIP;
+        }
     }
 
    if(sinfo[NL80211_STA_INFO_TID_STATS])
@@ -11252,9 +11256,11 @@ static int txStatsInfo_callback(struct nl_msg *msg, void *arg) {
 
     if_indextoname(nla_get_u32(tb[NL80211_ATTR_IFINDEX]), dev);
 
-    if(nla_parse_nested(rinfo, NL80211_RATE_INFO_MAX, sinfo[NL80211_STA_INFO_TX_BITRATE], rate_policy)) {
-        fprintf(stderr, "failed to parse nested rate attributes!");
-        return NL_SKIP;
+    if (sinfo[NL80211_STA_INFO_TX_BITRATE]) {
+        if(nla_parse_nested(rinfo, NL80211_RATE_INFO_MAX, sinfo[NL80211_STA_INFO_TX_BITRATE], rate_policy)) {
+            fprintf(stderr, "failed to parse nested rate attributes!");
+            return NL_SKIP;
+        }
     }
 
     if(sinfo[NL80211_STA_INFO_TID_STATS])
