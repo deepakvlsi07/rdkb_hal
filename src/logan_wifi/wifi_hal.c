@@ -6053,9 +6053,24 @@ INT wifi_setRadioReverseDirectionGrantEnable(INT radioIndex, BOOL enable)
 //Get radio ADDBA enable setting
 INT wifi_getRadioDeclineBARequestEnable(INT radioIndex, BOOL *output_bool)
 {
-    if (NULL == output_bool)
+    char interface_name[16] = {0};
+    char cmd[128]={0};
+    char buf[10]={0};
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
-    *output_bool = TRUE;
+
+    snprintf(cmd, sizeof(cmd),  "mwctl %s set ba_decline s", interface_name);
+    _syscmd(cmd, buf, sizeof(buf));
+
+    if (strncmp(buf, "enabled", 7) == 0)
+        *output_bool = TRUE;
+    else
+        *output_bool = FALSE;
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
     return RETURN_OK;
 }
 
@@ -6068,9 +6083,23 @@ INT wifi_setRadioDeclineBARequestEnable(INT radioIndex, BOOL enable)
 //Get radio auto block ack enable setting
 INT wifi_getRadioAutoBlockAckEnable(INT radioIndex, BOOL *output_bool)
 {
-    if (NULL == output_bool)
+    char interface_name[16] = {0};
+    char cmd[128]={0};
+    char buf[10]={0};
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
-    *output_bool = TRUE;
+
+    snprintf(cmd, sizeof(cmd),  "mwctl %s set ba_auto s", interface_name);
+    _syscmd(cmd, buf, sizeof(buf));
+    if (strncmp(buf, "enabled", 7) == 0)
+        *output_bool = TRUE;
+    else
+        *output_bool = FALSE;
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
     return RETURN_OK;
 }
 
@@ -6109,29 +6138,19 @@ INT wifi_getRadioIGMPSnoopingEnable(INT radioIndex, BOOL *output_bool)
 {
     char interface_name[16] = {0};
     char cmd[128]={0};
-    char buf[4]={0};
+    char buf[10]={0};
     bool bridge = FALSE, mac80211 = FALSE;
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-    if(output_bool == NULL)
-        return RETURN_ERR;
-
-    *output_bool = FALSE;
-
-    snprintf(cmd, sizeof(cmd),  "cat /sys/devices/virtual/net/%s/bridge/multicast_snooping", BRIDGE_NAME);
-    _syscmd(cmd, buf, sizeof(buf));
-    if (strncmp(buf, "1", 1) == 0)
-        bridge = TRUE;
-
     if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
-    snprintf(cmd, sizeof(cmd),  "cat /sys/devices/virtual/net/%s/brif/%s/multicast_to_unicast", BRIDGE_NAME, interface_name);
-    _syscmd(cmd, buf, sizeof(buf));
-    if (strncmp(buf, "1", 1) == 0)
-        mac80211 = TRUE;
 
-    if (bridge && mac80211)
+    snprintf(cmd, sizeof(cmd), "mwctl %s set multicast_snooping enable=s", interface_name);
+    _syscmd(cmd, buf, sizeof(buf));
+    if (strncmp(buf, "enabled", 7) == 0)
         *output_bool = TRUE;
+    else
+        *output_bool = FALSE;
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
@@ -6143,21 +6162,12 @@ INT wifi_setRadioIGMPSnoopingEnable(INT radioIndex, BOOL enable)
     char interface_name[16] = {0};
     char cmd[128]={0};
     char buf[4]={0};
-    int max_num_radios =0;
+
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-
-    // bridge
-    snprintf(cmd, sizeof(cmd),  "echo %d > /sys/devices/virtual/net/%s/bridge/multicast_snooping", enable, BRIDGE_NAME);
+    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+        return RETURN_ERR;
+    snprintf(cmd, sizeof(cmd),  "mwctl %s set multicast_snooping enable=1", interface_name);
     _syscmd(cmd, buf, sizeof(buf));
-
-    wifi_getMaxRadioNumber(&max_num_radios);
-    // mac80211
-    for (int i = 0; i < max_num_radios; i++) {
-        if (wifi_GetInterfaceName(i, interface_name) != RETURN_OK)
-            return RETURN_ERR;
-        snprintf(cmd, sizeof(cmd),  "echo %d > /sys/devices/virtual/net/%s/brif/%s/multicast_to_unicast", enable, BRIDGE_NAME, interface_name);
-        _syscmd(cmd, buf, sizeof(buf));
-    }
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
@@ -7340,9 +7350,24 @@ INT wifi_setApRetryLimit(INT apIndex, UINT number)
 //Indicates whether this access point supports WiFi Multimedia (WMM) Access Categories (AC).
 INT wifi_getApWMMCapability(INT apIndex, BOOL *output)
 {
+    char interface_name[16] = {0};
+    char cmd[128]={0};
+    char buf[10]={0};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     if(!output)
         return RETURN_ERR;
-    *output=TRUE;
+
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+        return RETURN_ERR;
+    snprintf(cmd, sizeof(cmd),  "mwctl %s set wmm_cap s", interface_name);
+    _syscmd(cmd, buf, sizeof(buf));
+    if (strncmp(buf, "enabled", 7) == 0)
+        *output = TRUE;
+    else
+        *output = FALSE;
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
 
@@ -7375,19 +7400,24 @@ INT wifi_getApUAPSDCapability(INT apIndex, BOOL *output)
 INT wifi_getApWmmEnable(INT apIndex, BOOL *output)
 {
     //get the running status from driver
+    char interface_name[16] = {0};
+    char cmd[128]={0};
+    char buf[10]={0};
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     if(!output)
         return RETURN_ERR;
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+        return RETURN_ERR;
 
-    char config_file[MAX_BUF_SIZE] = {0};
-    char buf[16] = {0};
-
-    sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,apIndex);
-    wifi_hostapdRead(config_file, "wmm_enabled", buf, sizeof(buf));
-    if (strlen(buf) == 0 || strncmp("1", buf, 1) == 0)
+    snprintf(cmd, sizeof(cmd),  "mwctl %s set wmm_cap s", interface_name);
+    _syscmd(cmd, buf, sizeof(buf));
+    if (strncmp(buf, "enabled", 7) == 0)
         *output = TRUE;
     else
         *output = FALSE;
 
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
 
@@ -7395,19 +7425,19 @@ INT wifi_getApWmmEnable(INT apIndex, BOOL *output)
 INT wifi_setApWmmEnable(INT apIndex, BOOL enable)
 {
     //Save config and apply instantly.
-    char config_file[MAX_BUF_SIZE] = {0};
-    struct params list;
+    char interface_name[16] = {0};
+    char cmd[128]={0};
+    char buf[4]={0};
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    list.name = "wmm_enabled";
-    list.value = enable?"1":"0";
 
-    sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,apIndex);
-    wifi_hostapdWrite(config_file, &list, 1);
-    wifi_hostapdProcessUpdate(apIndex, &list, 1);
-    wifi_reloadAp(apIndex);
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+        return RETURN_ERR;
+
+    snprintf(cmd, sizeof(cmd),  "mwctl %s set WmmCapable=%d", interface_name, enable);
+    _syscmd(cmd, buf, sizeof(buf));
+
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
-
     return RETURN_OK;
 }
 
