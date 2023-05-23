@@ -3451,7 +3451,7 @@ INT wifi_getApDTIMInterval(INT apIndex, INT *dtimInterval)
         return RETURN_ERR;
 
     snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, apIndex);
-    wifi_hostapdRead(config_file, "dtime_period", buf, sizeof(buf));
+    wifi_hostapdRead(config_file, "dtim_period", buf, sizeof(buf));
 
     if (strlen(buf) == 0) {
         *dtimInterval = 2;
