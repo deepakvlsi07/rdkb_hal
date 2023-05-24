@@ -85,6 +85,7 @@ Licensed under the ISC license
 #define MGMT_POWER_CTRL "/tmp/mgmt_power_ctrl"
 /*LOGAN_DAT_FILE: may be different on customer's platform.*/
 #define LOGAN_DAT_FILE "/etc/wireless/mediatek/mt7990.b"
+#define ROM_LOGAN_DAT_FILE "/rom/etc/wireless/mediatek/mt7990.b"
 
 #define NOACK_MAP_FILE "/tmp/NoAckMap"
 
@@ -258,6 +259,9 @@ char *                  wifi_get_str_by_key(wifi_secur_list *list, int list_sz, 
 static int ieee80211_channel_to_frequency(int channel, int *freqMHz);
 static void wifi_PrepareDefaultHostapdConfigs(void);
 static void wifi_psk_file_reset();
+static void wifi_psk_file_reset_by_radio(char radio_idx);
+static void wifi_dat_file_reset();
+static void wifi_dat_file_reset_by_radio(char radio_idx);
 static int util_get_sec_chan_offset(int channel, const char* ht_mode);
 
 /*type define the nl80211 call back func*/
@@ -1554,17 +1558,14 @@ INT wifi_factoryResetRadio(int radioIndex) 	//RDKB
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
 
-	snprintf(cmd, MAX_CMD_SIZE, "systemctl stop hostapd.service");
+	wifi_dat_file_reset_by_radio(radioIndex);
+
+	/*reset gi setting*/
+	snprintf(cmd, sizeof(cmd), "echo 'Auto' > %s%d.txt", GUARD_INTERVAL_FILE, radioIndex);
 	_syscmd(cmd, buf, sizeof(buf));
 
-	memset(cmd, 0, MAX_CMD_SIZE);
-	memset(buf, 0, MAX_BUF_SIZE);
-
-	for (vap_idx = radioIndex; vap_idx < MAX_APS; vap_idx += MAX_NUM_RADIOS)
-		wifi_factoryResetAP(vap_idx);
-
-	snprintf(cmd, MAX_CMD_SIZE, "systemctl start hostapd.service");
-	_syscmd(cmd, buf, sizeof(buf));
+	/*TBD: check mbss issue*/
+	wifi_factoryResetAP(radioIndex);
 
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n", __func__, __LINE__);
 	return RETURN_OK;
@@ -1914,6 +1915,28 @@ wifi_BringDownInterfaces(void)
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 }
 
+static void wifi_dat_file_reset()
+{
+	char radio_idx = 0;
+
+	for (radio_idx = 0; radio_idx < MAX_NUM_RADIOS; radio_idx++)
+		wifi_dat_file_reset_by_radio(radio_idx);
+}
+
+static void wifi_dat_file_reset_by_radio(char radio_idx)
+{
+	char cmd[MAX_CMD_SIZE] = {0};
+	char ret_buf[MAX_BUF_SIZE] = {0};
+	char rom_dat_file[MAX_CMD_SIZE]= {0};
+	char dat_file[MAX_CMD_SIZE]= {0};
+
+	snprintf(rom_dat_file, sizeof(rom_dat_file), "%s%d.dat", ROM_LOGAN_DAT_FILE, radio_idx);
+	snprintf(dat_file, sizeof(dat_file), "%s%d.dat", LOGAN_DAT_FILE, radio_idx);
+	snprintf(cmd, MAX_CMD_SIZE, "cp -rf %s %s", rom_dat_file, dat_file);
+	_syscmd(cmd, ret_buf, sizeof(ret_buf));
+
+}
+
 static void wifi_psk_file_reset()
 {
 	char cmd[MAX_CMD_SIZE] = {0};
@@ -1933,6 +1956,28 @@ static void wifi_psk_file_reset()
 		}
 	}
 }
+
+static void wifi_psk_file_reset_by_radio(char radio_idx)
+{
+	char cmd[MAX_CMD_SIZE] = {0};
+	char ret_buf[MAX_BUF_SIZE] = {0};
+	char psk_file[MAX_CMD_SIZE]= {0};
+	char vap_idx = 0;
+
+	for (vap_idx = radio_idx; vap_idx < MAX_APS; vap_idx += MAX_NUM_RADIOS) {
+		snprintf(psk_file, sizeof(psk_file), "%s%d.psk", PSK_FILE, vap_idx);
+
+		if (access(psk_file, F_OK) != 0) {
+			snprintf(cmd, MAX_CMD_SIZE, "touch %s", psk_file);
+			_syscmd(cmd, ret_buf, sizeof(ret_buf));
+		} else {
+			snprintf(cmd, MAX_CMD_SIZE, "echo '' > %s", psk_file);
+			_syscmd(cmd, ret_buf, sizeof(ret_buf));
+		}
+	}
+
+}
+
 
 static void wifi_vap_status_reset()
 {
@@ -2043,11 +2088,12 @@ INT wifi_reset()
 INT wifi_down()
 {
     //TODO: turns off transmit power for the entire Wifi subsystem, for all radios
-    wifi_BringDownInterfaces();
-    sleep(2);
+    int max_num_radios = 0;
+	wifi_getMaxRadioNumber(&max_num_radios);
 
-    system("systemctl stop hostapd.service");
-    sleep(2);
+	for (int radioIndex = 0; radioIndex < max_num_radios; radioIndex++)
+		wifi_setRadioEnable(radioIndex, FALSE);
+
     return RETURN_OK;
 }
 
@@ -9824,23 +9870,18 @@ INT wifi_ifConfigUp(INT apIndex)
 //>> Deprecated. Replace with wifi_applyRadioSettings
 INT wifi_pushBridgeInfo(INT apIndex)
 {
-    char interface_name[16] = {0};
-    char ip[32] = {0};
-    char subnet[32] = {0};
-    char bridge[32] = {0};
-    int vlanId = 0;
-    char cmd[128] = {0};
-    char buf[1024] = {0};
+	char ip[32] = {0};
+	char subnet[32] = {0};
+	char bridge[32] = {0};
+	char cmd[128] = {0};
+	char buf[1024] = {0};
 
-    wifi_getApBridgeInfo(apIndex,bridge,ip,subnet);
-    wifi_getApVlanID(apIndex,&vlanId);
+	wifi_getApBridgeInfo(apIndex, bridge, ip, subnet);
 
-    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
-        return RETURN_ERR;
-    snprintf(cmd, sizeof(cmd), "cfgVlan %s %s %d %s ", interface_name, bridge, vlanId, ip);
-    _syscmd(cmd,buf, sizeof(buf));
+	snprintf(cmd, sizeof(cmd), "ifconfig %s %s netmask %s ", bridge, ip, subnet);
+	_syscmd(cmd, buf, sizeof(buf));
 
-    return 0;
+	return 0;
 }
 
 INT wifi_pushChannel(INT radioIndex, UINT channel)
