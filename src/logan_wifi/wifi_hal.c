@@ -258,6 +258,7 @@ char *                  wifi_get_str_by_key(wifi_secur_list *list, int list_sz, 
 static int ieee80211_channel_to_frequency(int channel, int *freqMHz);
 static void wifi_PrepareDefaultHostapdConfigs(void);
 static void wifi_psk_file_reset();
+static int util_get_sec_chan_offset(int channel, const char* ht_mode);
 
 /*type define the nl80211 call back func*/
 typedef int (*mtk_nl80211_cb) (struct nl_msg *, void *);
@@ -3070,9 +3071,9 @@ INT wifi_halgetRadioExtChannel(CHAR *file,CHAR *Value)
     CHAR cmd[150] = {0};
 
     wifi_datfileRead(file, "HT_EXTCHA", buf, sizeof(buf));
-    if (strncmp(buf, "0", 1) == 0)  //bewlow
+    if (strncmp(buf, "Below", 5) == 0)  //below
         strcpy(Value,"BelowControlChannel");
-    if(strncmp(buf, "1", 1) == 0)      //above
+    if(strncmp(buf, "Above", 5) == 0)      //above
         strcpy(Value,"AboveControlChannel");
     return RETURN_OK;
 }
@@ -3555,7 +3556,6 @@ INT wifi_getRadioDfsEnable(INT radioIndex, BOOL *output_bool)	//Tr181
     char buf[16] = {0};
     FILE *f = NULL;
     char config_file_dat[128] = {0};
-    char dfs_key[16] = "DfsEnable";
     wifi_band band = band_invalid;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
@@ -3566,7 +3566,7 @@ INT wifi_getRadioDfsEnable(INT radioIndex, BOOL *output_bool)	//Tr181
     band = wifi_index_to_band(radioIndex);
     snprintf(config_file_dat, sizeof(config_file_dat), "%s%d.dat", LOGAN_DAT_FILE, band);
 
-    wifi_datfileRead(config_file_dat, dfs_key, buf, sizeof(buf));
+    wifi_datfileRead(config_file_dat, "DfsEnable", buf, sizeof(buf));
 
     if (strncmp(buf, "0", 1) == 0)
         *output_bool = FALSE;
@@ -3594,7 +3594,7 @@ INT wifi_setRadioDfsEnable(INT radioIndex, BOOL enable)	//Tr181
     wifi_setRadioIEEE80211hEnabled(radioIndex, enable);
 
     dat.name = "DfsEnable";
-    dat.value = enable?"0":"1";
+    dat.value = enable?"1":"0";
     band = wifi_index_to_band(radioIndex);
     snprintf(config_dat_file, sizeof(config_dat_file), "%s%d.dat", LOGAN_DAT_FILE, band);
     wifi_datfileWrite(config_dat_file, &dat, 1);
@@ -3686,6 +3686,9 @@ INT wifi_setRadioOperatingChannelBandwidth(INT radioIndex, CHAR *bandwidth) //Tr
     char eht_value[16];
     struct params dat[3];
     wifi_band band = band_invalid;
+    char cmd[MAX_CMD_SIZE] = {0};
+    char buf[MAX_BUF_SIZE] = {0};
+    int bw = 20;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -3697,22 +3700,27 @@ INT wifi_setRadioOperatingChannelBandwidth(INT radioIndex, CHAR *bandwidth) //Tr
         snprintf(ht_value, sizeof(ht_value), "%d", HT_BW_40);
         snprintf(vht_value, sizeof(vht_value), "%d", VHT_BW_160);
         snprintf(eht_value, sizeof(eht_value), "%d", EHT_BW_320);
+        bw = 320;
     } else if(strstr(bandwidth,"160") != NULL) {
         snprintf(ht_value, sizeof(ht_value), "%d", HT_BW_40);
         snprintf(vht_value, sizeof(vht_value), "%d", VHT_BW_160);
         snprintf(eht_value, sizeof(eht_value), "%d", EHT_BW_160);
+        bw = 160;
     } else if(strstr(bandwidth,"80") != NULL) {
         snprintf(ht_value, sizeof(ht_value), "%d", HT_BW_40);
         snprintf(vht_value, sizeof(vht_value), "%d", VHT_BW_80);
         snprintf(eht_value, sizeof(eht_value), "%d", EHT_BW_80);
+        bw = 80;
     } else if(strstr(bandwidth,"40") != NULL) {
         snprintf(ht_value, sizeof(ht_value), "%d", HT_BW_40);
         snprintf(vht_value, sizeof(vht_value), "%d", VHT_BW_2040);
         snprintf(eht_value, sizeof(eht_value), "%d", EHT_BW_40);
+         bw = 40;
     } else if(strstr(bandwidth,"20") != NULL) {
         snprintf(ht_value, sizeof(ht_value), "%d", HT_BW_20);
         snprintf(vht_value, sizeof(vht_value), "%d", VHT_BW_2040);
         snprintf(eht_value, sizeof(eht_value), "%d", EHT_BW_20);
+        bw = 20;
     } else {
         fprintf(stderr, "%s: Invalid Bandwidth %s\n", __func__, bandwidth);
         return RETURN_ERR;
@@ -3726,6 +3734,8 @@ INT wifi_setRadioOperatingChannelBandwidth(INT radioIndex, CHAR *bandwidth) //Tr
     dat[2].name = "EHT_ApBw";
     dat[2].value = eht_value;
     wifi_datfileWrite(config_file, dat, 3);
+    snprintf(cmd, sizeof(cmd),	"mwctl phy phy%d set channel bw=%d\n", band, bw);
+    _syscmd(cmd, buf, sizeof(buf));
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
@@ -3816,6 +3826,7 @@ INT wifi_setRadioExtChannel(INT radioIndex, CHAR *string) //Tr181	//AP only
         return RETURN_ERR;
     bandwidth = strtol(buf, NULL, 10);
     // TDK expected to get error with 20MHz
+    // we handle 20MHz in function wifi_RemoveRadioExtChannel().
     if (bandwidth == 20 || strstr(buf, "80+80") != NULL)
         return RETURN_ERR;
 
@@ -3826,24 +3837,23 @@ INT wifi_setRadioExtChannel(INT radioIndex, CHAR *string) //Tr181	//AP only
     if (wifi_getRadioChannel(radioIndex, &channel) != RETURN_OK)
         return RETURN_ERR;
 
-    if (band == band_5) {
-        snprintf(buf, sizeof(buf), "HT%d", bandwidth);
-        centr_channel = util_unii_5g_centerfreq(buf, channel);
-        if (centr_channel == 0)
-            return RETURN_ERR;
-    }
+    snprintf(buf, sizeof(buf), "HT%d", bandwidth);
+    ret = util_get_sec_chan_offset(channel, buf);
+    if (ret == -EINVAL)
+        return RETURN_ERR;
 
     if(NULL!= strstr(string,"Above")) {
-        if ((band == band_2_4 && channel > 9) || (band == band_5 && channel > centr_channel))
-            return RETURN_ERR;
-        snprintf(ext_channel, sizeof(ext_channel), "Above");
+        if ((band == band_2_4 && channel > 9) || (band == band_5 && ret == -1))
+            return RETURN_OK;
+	strcpy(ext_channel, "Above");
     } else if(NULL!= strstr(string,"Below")) {
-        if ((band == band_2_4 && channel < 5) || (band == band_5 && channel < centr_channel))
-            return RETURN_ERR;
-        snprintf(ext_channel, sizeof(ext_channel), "Above");
-    } else
+        if ((band == band_2_4 && channel < 5) || (band == band_5 && ret == -1))
+            return RETURN_OK;
+        strcpy(ext_channel, "Below");
+    } else {
         printf("%s: invalid EXT_CHA:%s\n", __func__, string);
-
+	return RETURN_ERR;
+    }
     params.name = "HT_EXTCHA";
     params.value = ext_channel;
 
@@ -5613,7 +5623,7 @@ INT wifi_setRadioObssCoexistenceEnable(INT apIndex, BOOL enable)
     snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, apIndex);
     snprintf(config_dat_file, sizeof(config_dat_file), "%s%d.dat", LOGAN_DAT_FILE, band);
     wifi_hostapdWrite(config_file, &list, 1);
-    wifi_datfileWrite(config_dat_file, &list, 1);
+    wifi_datfileWrite(config_dat_file, &dat, 1);
     wifi_hostapdProcessUpdate(apIndex, &list, 1);
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
@@ -9536,9 +9546,18 @@ INT wifi_getRadioAutoChannelEnable(INT radioIndex, BOOL *output_bool)
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
-    wifi_datfileRead(config_file, "Channel" , output, sizeof(output));
+    wifi_datfileRead(config_file, "AutoChannelSelect" , output, sizeof(output));
 
-    *output_bool = (strncmp(output, "0", 1)==0) ?  TRUE : FALSE;
+    if (output == NULL)
+        *output_bool = FALSE;
+    else if (strncmp(output, "1", 1) == 0)
+        *output_bool = TRUE;
+    else if (strncmp(output, "2", 1) == 0)
+        *output_bool = TRUE;
+    else if (strncmp(output, "3", 1) == 0)
+        *output_bool = TRUE;
+    else
+        *output_bool = FALSE;
     WIFI_ENTRY_EXIT_DEBUG("Exit %s:%d\n",__func__, __LINE__);
 
     return RETURN_OK;
@@ -10082,8 +10101,10 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
             return RETURN_ERR;
         }
 
-        if (sec_chan_offset == 1) ext_str = "Above";
-        else if (sec_chan_offset == -1) ext_str = "Below";
+        if (sec_chan_offset == 1)
+            ext_str = "Above";
+        else if (sec_chan_offset == -1)
+            ext_str = "Below";
 
         /*wifi_setRadioCenterChannel(radioIndex, center_chan); */
 
