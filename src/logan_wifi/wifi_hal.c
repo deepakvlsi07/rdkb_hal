@@ -7848,28 +7848,94 @@ INT wifi_setApRetryLimit(INT apIndex, UINT number)
 	return RETURN_ERR;
 }
 
+int get_wmm_cap_status_callback(struct nl_msg *msg, void *data)
+{
+	struct nlattr *tb[NL80211_ATTR_MAX + 1];
+	struct nlattr *vndr_tb[MTK_NL80211_VENDOR_WMM_ATTR_MAX + 1];
+	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+	unsigned char *status = (unsigned char * *)data;
+	int err = 0;
+	//u16 acl_result_len = 0;
+
+	err = nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+			  genlmsg_attrlen(gnlh, 0), NULL);
+	if (err < 0)
+		return err;
+
+	if (tb[NL80211_ATTR_VENDOR_DATA]) {
+		err = nla_parse_nested(vndr_tb, MTK_NL80211_VENDOR_WMM_ATTR_MAX,
+			tb[NL80211_ATTR_VENDOR_DATA], NULL);
+		if (err < 0)
+			return err;
+
+		if (vndr_tb[MTK_NL80211_VENDOR_ATTR_WMM_AP_CAP_INFO]) {
+			//acl_result_len = nla_len(vndr_tb[MTK_NL80211_VENDOR_ATTR_MCAST_SNOOP_ENABLE]);
+			*status = nla_get_u8(vndr_tb[MTK_NL80211_VENDOR_ATTR_WMM_AP_CAP_INFO]);
+		}
+	}
+
+	return 0;
+}
+
 //Indicates whether this access point supports WiFi Multimedia (WMM) Access Categories (AC).
 INT wifi_getApWMMCapability(INT apIndex, BOOL *output)
 {
+	int if_idx, ret = 0;
     char interface_name[16] = {0};
-    char cmd[128]={0};
-    char buf[10]={0};
+	unsigned char status = 0;
+	struct nl_msg *msg	= NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+	struct unl unl_ins;
+	struct vlan_policy_param vlan_param;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     if(!output)
         return RETURN_ERR;
 
+	if (apIndex > MAX_APS) {
+		wifi_debug(DEBUG_ERROR, "Invalid apIndex %d\n", apIndex);
+		return RETURN_ERR;
+	}
+
     if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
-    snprintf(cmd, sizeof(cmd),  "mwctl %s set wmm_cap s", interface_name);
-    _syscmd(cmd, buf, sizeof(buf));
-    if (strncmp(buf, "enabled", 7) == 0)
-        *output = TRUE;
-    else
-        *output = FALSE;
+
+	if_idx = if_nametoindex(interface_name);
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_WMM;
+	param.if_type = NL80211_ATTR_IFINDEX;
+	param.if_idx = if_idx;
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+
+	if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_WMM_AP_CAP_INFO, 0xf)) {
+		wifi_debug(DEBUG_ERROR, "Nla put attribute error\n");
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, get_wmm_cap_status_callback,
+		(void *)&status);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vendor msg fails\n");
+		goto err;
+	}
+	mtk_nl80211_deint(&unl_ins);
+
+	*output = status == 0 ? FALSE : TRUE;
+	wifi_debug(DEBUG_NOTICE, "wmm cap (%u).\n", (unsigned int)(*output));
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR, "set cmd fails.\n");
+	return RETURN_ERR;
 }
 
 //Indicates whether this access point supports WMM Unscheduled Automatic Power Save Delivery (U-APSD). Note: U-APSD support implies WMM support.
@@ -7900,47 +7966,64 @@ INT wifi_getApUAPSDCapability(INT apIndex, BOOL *output)
 //Whether WMM support is currently enabled. When enabled, this is indicated in beacon frames.
 INT wifi_getApWmmEnable(INT apIndex, BOOL *output)
 {
-    //get the running status from driver
-    char interface_name[16] = {0};
-    char cmd[128]={0};
-    char buf[10]={0};
-
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    if(!output)
-        return RETURN_ERR;
-    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
-        return RETURN_ERR;
-
-    snprintf(cmd, sizeof(cmd),  "mwctl %s set wmm_cap s", interface_name);
-    _syscmd(cmd, buf, sizeof(buf));
-    if (strncmp(buf, "enabled", 7) == 0)
-        *output = TRUE;
-    else
-        *output = FALSE;
-
-    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
-    return RETURN_OK;
+    return wifi_getApWMMCapability(apIndex, output);
 }
 
 // enables/disables WMM on the hardwawre for this AP.  enable==1, disable == 0
 INT wifi_setApWmmEnable(INT apIndex, BOOL enable)
 {
-    //Save config and apply instantly.
-    char interface_name[16] = {0};
-    char cmd[128]={0};
-    char buf[4]={0};
+	int if_idx, ret = 0;
+	char interface_name[16] = {0};
+	unsigned char status = 0;
+	struct nl_msg *msg	= NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+	struct unl unl_ins;
+	struct vlan_policy_param vlan_param;
 
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
-        return RETURN_ERR;
+	if (apIndex > MAX_APS) {
+		wifi_debug(DEBUG_ERROR, "Invalid apIndex %d\n", apIndex);
+		return RETURN_ERR;
+	}
 
-    snprintf(cmd, sizeof(cmd),  "mwctl %s set WmmCapable=%d", interface_name, enable);
-    _syscmd(cmd, buf, sizeof(buf));
+	if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+		return RETURN_ERR;
 
-    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
-    return RETURN_OK;
+	if_idx = if_nametoindex(interface_name);
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_WMM;
+	param.if_type = NL80211_ATTR_IFINDEX;
+	param.if_idx = if_idx;
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+
+	if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_WMM_AP_CAP_INFO, enable ? 1 : 0)) {
+		wifi_debug(DEBUG_ERROR, "Nla put attribute error\n");
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vendor msg fails\n");
+		goto err;
+	}
+	mtk_nl80211_deint(&unl_ins);
+
+	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+	return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR, "set cmd fails.\n");
+	return RETURN_ERR;
 }
+
 
 //Whether U-APSD support is currently enabled. When enabled, this is indicated in beacon frames. Note: U-APSD can only be enabled if WMM is also enabled.
 INT wifi_getApWmmUapsdEnable(INT apIndex, BOOL *output)
@@ -13530,6 +13613,34 @@ int main(int argc,char **argv)
         }
 		filter_mode = atoi(argv[3]);
 		wifi_setApMacAddressControlMode(index,filter_mode);
+		return 0;
+	}
+
+	if (strncmp(argv[1], "wifi_setApWmmEnable", strlen(argv[1])) == 0) {
+		int enable = 0;
+		if(argc <= 3)
+		{
+			wifi_debug(DEBUG_ERROR, "Insufficient arguments \n");
+			exit(-1);
+		}
+		enable = atoi(argv[3]);
+		wifi_setApWmmEnable(index,enable);
+		return 0;
+	}
+
+	if (strncmp(argv[1], "wifi_getApWMMCapability", strlen(argv[1])) == 0) {
+		BOOL enable = 0;
+
+		wifi_getApWMMCapability(index, &enable);
+		wifi_debug(DEBUG_NOTICE, "wifi_getApWMMCapability enable: %d\n", (int)enable);
+		return 0;
+	}
+
+	if (strncmp(argv[1], "wifi_getApWmmEnable", strlen(argv[1])) == 0) {
+		BOOL enable = 0;
+
+		wifi_getApWmmEnable(index, &enable);
+		wifi_debug(DEBUG_NOTICE, "wifi_getApWmmEnable enable: %d\n", (int)enable);
 		return 0;
 	}
 
