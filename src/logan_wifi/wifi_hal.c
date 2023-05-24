@@ -11580,6 +11580,7 @@ static int rxStatsInfo_callback(struct nl_msg *msg, void *arg) {
            return NL_SKIP;
        }
    }
+    if (tb[NL80211_ATTR_VHT_CAPABILITY]) {
 
        if( nla_data(tb[NL80211_ATTR_VHT_CAPABILITY]) )
        {
