@@ -7448,77 +7448,167 @@ INT wifi_setApBridgeInfo(INT apIndex, CHAR *bridgeName, CHAR *IP, CHAR *subnet)
 // reset the vlan configuration for this ap
 INT wifi_resetApVlanCfg(INT apIndex)
 {
-    char original_config_file[64] = {0};
-    char current_config_file[64] = {0};
-    char buf[64] = {0};
-    char cmd[64] = {0};
-    char vlan_file[64] = {0};
-    char vlan_tagged_interface[16] = {0};
-    char vlan_bridge[16] = {0};
-    char vlan_naming[16] = {0};
-    struct params list[4] = {0};
-    wifi_band band;
 	char interface_name[16] = {0};
+	int if_idx, ret = 0;
+	struct nl_msg *msg	= NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+	struct unl unl_ins;
+	struct vlan_policy_param vlan_param;
 
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    band = wifi_index_to_band(apIndex);
-    if (band == band_2_4)
-        snprintf(original_config_file, sizeof(original_config_file), "/etc/hostapd-2G.conf");
-    else if (band == band_5)
-        snprintf(original_config_file, sizeof(original_config_file), "/etc/hostapd-5G.conf");
-    else if (band == band_6)
-        snprintf(original_config_file, sizeof(original_config_file), "/etc/hostapd-6G.conf");
+	if (apIndex > MAX_APS) {
+		wifi_debug(DEBUG_ERROR, "Invalid apIndex %d\n", apIndex);
+		return RETURN_ERR;
+	}
 
-    wifi_hostapdRead(original_config_file, "vlan_file", vlan_file, sizeof(vlan_file));
-
-    if (strlen(vlan_file) == 0)
-        strcpy(vlan_file, VLAN_FILE);
-
-    // The file should exist or this vap would not work.
-    if (access(vlan_file, F_OK) != 0) {
-        snprintf(cmd, sizeof(cmd), "touch %s", vlan_file);
-        _syscmd(cmd, buf, sizeof(buf));
-    }
-    list[0].name = "vlan_file";
-    list[0].value = vlan_file;
-
-    wifi_hostapdRead(original_config_file, "vlan_tagged_interface", vlan_tagged_interface, sizeof(vlan_tagged_interface));
-    list[1].name = "vlan_tagged_interface";
-    list[1].value = vlan_tagged_interface;
-
-    wifi_hostapdRead(original_config_file, "vlan_bridge", vlan_bridge, sizeof(vlan_bridge));
-    list[2].name = "vlan_bridge";
-    list[2].value = vlan_bridge;
-
-    wifi_hostapdRead(original_config_file, "vlan_naming", vlan_naming, sizeof(vlan_naming));
-    list[3].name = "vlan_naming";
-    list[3].value = vlan_naming;
-
-    snprintf(current_config_file, sizeof(current_config_file), "%s%d.conf", CONFIG_PREFIX, apIndex);
-    wifi_hostapdWrite(current_config_file, list, 4);
-    //Reapply vlan settings
-    // wifi_pushBridgeInfo(apIndex);
-
-    // restart this ap
-    wifi_setApEnable(apIndex, FALSE);
-    wifi_setApEnable(apIndex, TRUE);
+	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
 		return RETURN_ERR;
-	snprintf(cmd, sizeof(cmd),	"mwctl dev %s set vlan_tag 0\n", interface_name);
-	_syscmd(cmd, buf, sizeof(buf));
-	snprintf(cmd, sizeof(cmd),	"mwctl dev %s set vlan_priority 0\n", interface_name);
-	_syscmd(cmd, buf, sizeof(buf));
-	snprintf(cmd, sizeof(cmd),	"mwctl dev %s set vlan_id 0\n", interface_name);
-	_syscmd(cmd, buf, sizeof(buf));
-	snprintf(cmd, sizeof(cmd),	"mwctl dev %s set vlan_en 0\n", interface_name);
-	_syscmd(cmd, buf, sizeof(buf));
-	snprintf(cmd, sizeof(cmd),	"mwctl dev %s set vlan_policy 0:4\n", interface_name);
-	_syscmd(cmd, buf, sizeof(buf));
-	snprintf(cmd, sizeof(cmd),	"mwctl dev %s set vlan_policy 1:0\n", interface_name);
-	_syscmd(cmd, buf, sizeof(buf));
-    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
-    return RETURN_OK;
+	/*step 1. mwctl dev %s set vlan_tag 0*/
+	if_idx = if_nametoindex(interface_name);
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_VLAN;
+	param.if_type = NL80211_ATTR_IFINDEX;
+	param.if_idx = if_idx;
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+
+	if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_VLAN_TAG_INFO, 0)) {
+		printf("Nla put attribute error\n");
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vendor msg fails\n");
+		goto err;
+	}
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_NOTICE, "set vlan_tag 0 cmd success.\n");
+
+	/*step 2. mwctl dev %s set vlan_priority 0*/
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+
+	if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_VLAN_PRIORITY_INFO, 0)) {
+		printf("Nla put attribute error\n");
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vendor msg fails\n");
+		goto err;
+	}
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_NOTICE, "set vlan_priority 0 cmd success.\n");
+
+	/*step 3. mwctl dev %s set vlan_id 0*/
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+
+	if (nla_put_u16(msg, MTK_NL80211_VENDOR_ATTR_VLAN_ID_INFO, 0)) {
+		printf("Nla put attribute error\n");
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vendor msg fails\n");
+		goto err;
+	}
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_NOTICE, "set vlan_id cmd success.\n");
+
+	/*step 4. mwctl dev %s set vlan_en 0*/
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+
+	if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_VLAN_EN_INFO, 0)) {
+		printf("Nla put attribute error\n");
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vendor msg fails\n");
+		goto err;
+	}
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_NOTICE, "set vlan_id cmd success.\n");
+
+	/*step 5. mwctl dev %s set vlan_policy 0:4*/
+	vlan_param.direction = 0;
+	vlan_param.policy = 4;
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+	if (nla_put(msg, MTK_NL80211_VENDOR_ATTR_VLAN_POLICY_INFO, sizeof(vlan_param), &vlan_param)) {
+		printf("Nla put attribute error\n");
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vendor msg fails\n");
+		goto err;
+	}
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_NOTICE, "set vlan_policy 0:4 cmd success.\n");
+
+	/*step 6. mwctl dev %s set vlan_policy 1:0*/
+	vlan_param.direction = 1;
+	vlan_param.policy = 0;
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+
+	if (nla_put(msg, MTK_NL80211_VENDOR_ATTR_VLAN_POLICY_INFO, sizeof(vlan_param), &vlan_param)) {
+		printf("Nla put attribute error\n");
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vendor msg fails\n");
+		goto err;
+	}
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_NOTICE, "set vlan_policy 1:0 cmd success.\n");
+
+	/*TODO need to modify VLAN config in dat file*/
+	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
+	return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR, "set cmd fails.\n");
+	return RETURN_ERR;
 }
 
 // creates configuration variables needed for WPA/WPS.  These variables are implementation dependent and in some implementations these variables are used by hostapd when it is started.  Specific variables that are needed are dependent on the hostapd implementation. These variables are set by WPA/WPS security functions in this wifi HAL.  If not needed for a particular implementation this function may simply return no error.
@@ -13477,6 +13567,10 @@ int main(int argc,char **argv)
     {
         wifi_getSSIDNameStatus(index,buf);
         printf("%s %d: active ssid : %s\n",argv[1], index,buf);
+        return 0;
+    } else if(strstr(argv[1], "wifi_resetApVlanCfg")!=NULL) {
+        wifi_resetApVlanCfg(index);
+        printf("%s %d: wifi_resetApVlanCfg : %s\n",argv[1], index,buf);
         return 0;
     }
     else if(strstr(argv[1], "getSSIDTrafficStats2")!=NULL) {
