@@ -1779,7 +1779,7 @@ wifi_PrepareDefaultHostapdConfigs(void)
 			ap_idx = array_index_to_vap_index(radio_idx, bss_idx);
 
 			snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, ap_idx);
-			snprintf(buf, sizeof(buf), "cp /etc/hostapd-%s.conf %s", band_str[radio_idx], config_file);
+			snprintf(buf, sizeof(buf), "cp /etc/hostapd-%s.conf %s", wifi_band_str[radio_idx], config_file);
 			_syscmd(buf, ret_buf, sizeof(ret_buf));
 
 			if (radio_idx == band_2_4) {
@@ -1975,8 +1975,6 @@ INT wifi_init()                            //RDKB
 
 	wifi_vap_status_reset();
 
-    wifi_BringUpInterfaces();
-
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
@@ -2019,8 +2017,6 @@ INT wifi_reset()
     sleep(2);
 
 	wifi_vap_status_reset();
-
-    wifi_BringUpInterfaces();
 
     return RETURN_OK;
 }
@@ -3617,7 +3613,7 @@ INT wifi_factoryResetAP(int apIndex)
 	vap_index_to_array_index(apIndex, &radio_idx, &bss_idx);
 
 	/*prepare new config file*/
-	snprintf(cmd, sizeof(cmd), "cp /etc/hostapd-%s.conf %s", band_str[radio_idx], ap_config_file);
+	snprintf(cmd, sizeof(cmd), "cp /etc/hostapd-%s.conf %s", wifi_band_str[radio_idx], ap_config_file);
 	_syscmd(cmd, ret_buf, sizeof(ret_buf));
 
 	if (radio_idx == band_2_4) {
@@ -7615,6 +7611,7 @@ INT wifi_getApEnable(INT apIndex, BOOL *output_bool)
 	char interface_name[IF_NAME_SIZE] = {0};
 	char cmd[MAX_CMD_SIZE] = {0};
 	char buf[MAX_BUF_SIZE] = {0};
+	int ret;
 
 	if ((!output_bool) || (apIndex < 0) || (apIndex >= MAX_APS))
 		return RETURN_ERR;
@@ -7626,8 +7623,10 @@ INT wifi_getApEnable(INT apIndex, BOOL *output_bool)
 			*output_bool = FALSE;
 			return RETURN_OK;
 		}
-		snprintf(cmd, MAX_CMD_SIZE, "ifconfig %s 2> /dev/null | grep UP", interface_name);
-		*output_bool = _syscmd(cmd, buf, sizeof(buf)) ? 0 : 1;
+		snprintf(cmd, sizeof(cmd), "hostapd_cli -i %s status", interface_name);
+		ret = system(cmd);
+		if (ret == 0)
+			*output_bool = 1;
 	}
 
 	return RETURN_OK;
@@ -14227,12 +14226,14 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
         }
         snprintf(map->vap_array[i].u.bss_info.ssid, sizeof(map->vap_array[i].u.bss_info.ssid), "%s", buf);
 
+#if 0
         ret = wifi_getSSIDEnable(vap_index, &enabled);
         if (ret != RETURN_OK) {
             printf("%s: wifi_getSSIDEnable return error\n", __func__);
             return RETURN_ERR;
         }
-        map->vap_array[i].u.bss_info.enabled = enabled;
+#endif
+        map->vap_array[i].u.bss_info.enabled = true;
 
         ret = wifi_getApSsidAdvertisementEnable(vap_index, &enabled);
         if (ret != RETURN_OK) {
@@ -14406,6 +14407,8 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
     char bssid[32] = {0};
     char psk_file[64] = {0};
     BOOL enable = FALSE;
+    int band_idx;
+
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     printf("Entering %s index = %d\n", __func__, (int)index);
@@ -14421,25 +14424,12 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 
         fprintf(stderr, "\nCreate VAP for ssid_index=%d (vap_num=%d)\n", vap_info->vap_index, i);
 
-        if (wifi_getApEnable(vap_info->vap_index, &enable) != RETURN_OK)
-            enable = FALSE;
+        band_idx = radio_index_to_band(index);
+        snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, vap_info->vap_index);
+        snprintf(cmd, sizeof(cmd), "cp /etc/hostapd-%s.conf %s", wifi_band_str[band_idx], config_file);
+        _syscmd(cmd, buf, sizeof(buf));
 
-        // multi-ap first up need to copy current radio config
-        if (vap_info->radio_index != vap_info->vap_index && enable == FALSE) {
-            snprintf(cmd, sizeof(cmd), "cp %s%d.conf %s%d.conf", CONFIG_PREFIX, vap_info->radio_index, CONFIG_PREFIX, vap_info->vap_index);
-            _syscmd(cmd, buf, sizeof(buf));
-            if (strlen(vap_info->vap_name) == 0)    // default name of the interface is wifiX
-                snprintf(vap_info->vap_name, 16, "wifi%d", vap_info->vap_index);
-        } else {
-            // Check whether the interface name is valid or this ap change it.
-            int apIndex = -1;
-            wifi_getApIndexFromName(vap_info->vap_name, &apIndex);
-            if (apIndex != -1 && apIndex != vap_info->vap_index)
-                continue;
-            prepareInterface(vap_info->vap_index, vap_info->vap_name);
-        }
-
-        struct params params[3];
+        struct params params[4];
         params[0].name = "interface";
         params[0].value = vap_info->vap_name;
         mac_addr_ntoa(bssid, vap_info->u.bss_info.bssid);
@@ -14448,9 +14438,11 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
         snprintf(psk_file, sizeof(psk_file), "\\/nvram\\/hostapd%d.psk", vap_info->vap_index);
         params[2].name = "wpa_psk_file";
         params[2].value = psk_file;
+        params[3].name = "ssid";
+        params[3].value = vap_info->u.bss_info.ssid;
 
         sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, vap_info->vap_index);
-        wifi_hostapdWrite(config_file, params, 3);
+        wifi_hostapdWrite(config_file, params, 4);
 
         snprintf(cmd, sizeof(cmd), "touch %s", psk_file);
         _syscmd(cmd, buf, sizeof(buf));
