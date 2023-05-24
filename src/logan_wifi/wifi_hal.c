@@ -11582,29 +11582,30 @@ static int rxStatsInfo_callback(struct nl_msg *msg, void *arg) {
        }
    }
 
-   if( nla_data(tb[NL80211_ATTR_VHT_CAPABILITY]) )
-   {
-       printf("Type is VHT\n");
-       if(rinfo[NL80211_RATE_INFO_VHT_NSS])
-           ((wifi_associated_dev_rate_info_rx_stats_t*)arg)->nss = nla_get_u8(rinfo[NL80211_RATE_INFO_VHT_NSS]);
+       if( nla_data(tb[NL80211_ATTR_VHT_CAPABILITY]) )
+       {
+           printf("Type is VHT\n");
+           if(rinfo[NL80211_RATE_INFO_VHT_NSS])
+               ((wifi_associated_dev_rate_info_rx_stats_t*)arg)->nss = nla_get_u8(rinfo[NL80211_RATE_INFO_VHT_NSS]);
 
-       if(rinfo[NL80211_RATE_INFO_40_MHZ_WIDTH])
-            ((wifi_associated_dev_rate_info_rx_stats_t*)arg)->bw = 1;
-       if(rinfo[NL80211_RATE_INFO_80_MHZ_WIDTH])
-            ((wifi_associated_dev_rate_info_rx_stats_t*)arg)->bw = 2;
-       if(rinfo[NL80211_RATE_INFO_80P80_MHZ_WIDTH])
-             ((wifi_associated_dev_rate_info_rx_stats_t*)arg)->bw = 2;
-       if(rinfo[NL80211_RATE_INFO_160_MHZ_WIDTH])
-             ((wifi_associated_dev_rate_info_rx_stats_t*)arg)->bw = 2;
-       if((rinfo[NL80211_RATE_INFO_10_MHZ_WIDTH]) || (rinfo[NL80211_RATE_INFO_5_MHZ_WIDTH]) )
-                         ((wifi_associated_dev_rate_info_rx_stats_t*)arg)->bw = 0;
-  }
-  else
-  {
-      printf(" OFDM or CCK \n");
-      ((wifi_associated_dev_rate_info_rx_stats_t*)arg)->bw = 0;
-      ((wifi_associated_dev_rate_info_rx_stats_t*)arg)->nss = 0;
-  }
+           if(rinfo[NL80211_RATE_INFO_40_MHZ_WIDTH])
+                ((wifi_associated_dev_rate_info_rx_stats_t*)arg)->bw = 1;
+           if(rinfo[NL80211_RATE_INFO_80_MHZ_WIDTH])
+                ((wifi_associated_dev_rate_info_rx_stats_t*)arg)->bw = 2;
+           if(rinfo[NL80211_RATE_INFO_80P80_MHZ_WIDTH])
+                 ((wifi_associated_dev_rate_info_rx_stats_t*)arg)->bw = 2;
+           if(rinfo[NL80211_RATE_INFO_160_MHZ_WIDTH])
+                 ((wifi_associated_dev_rate_info_rx_stats_t*)arg)->bw = 2;
+           if((rinfo[NL80211_RATE_INFO_10_MHZ_WIDTH]) || (rinfo[NL80211_RATE_INFO_5_MHZ_WIDTH]) )
+                             ((wifi_associated_dev_rate_info_rx_stats_t*)arg)->bw = 0;
+      }
+      else
+      {
+          printf(" OFDM or CCK \n");
+          ((wifi_associated_dev_rate_info_rx_stats_t*)arg)->bw = 0;
+          ((wifi_associated_dev_rate_info_rx_stats_t*)arg)->nss = 0;
+      }
+    }
 
   if(sinfo[NL80211_STA_INFO_RX_BITRATE]) {
       if(rinfo[NL80211_RATE_INFO_MCS])
@@ -11723,28 +11724,30 @@ static int txStatsInfo_callback(struct nl_msg *msg, void *arg) {
             return NL_SKIP;
         }
     }
-    if(nla_data(tb[NL80211_ATTR_VHT_CAPABILITY]))
-    {
-        printf("Type is VHT\n");
-        if(rinfo[NL80211_RATE_INFO_VHT_NSS])
-            ((wifi_associated_dev_rate_info_tx_stats_t*)arg)->nss = nla_get_u8(rinfo[NL80211_RATE_INFO_VHT_NSS]);
+    if (tb[NL80211_ATTR_VHT_CAPABILITY])) {
+        if(nla_data(tb[NL80211_ATTR_VHT_CAPABILITY]))
+        {
+            printf("Type is VHT\n");
+            if(rinfo[NL80211_RATE_INFO_VHT_NSS])
+                ((wifi_associated_dev_rate_info_tx_stats_t*)arg)->nss = nla_get_u8(rinfo[NL80211_RATE_INFO_VHT_NSS]);
 
-        if(rinfo[NL80211_RATE_INFO_40_MHZ_WIDTH])
-            ((wifi_associated_dev_rate_info_tx_stats_t*)arg)->bw = 1;
-        if(rinfo[NL80211_RATE_INFO_80_MHZ_WIDTH])
-            ((wifi_associated_dev_rate_info_tx_stats_t*)arg)->bw = 2;
-        if(rinfo[NL80211_RATE_INFO_80P80_MHZ_WIDTH])
-            ((wifi_associated_dev_rate_info_tx_stats_t*)arg)->bw = 2;
-        if(rinfo[NL80211_RATE_INFO_160_MHZ_WIDTH])
-            ((wifi_associated_dev_rate_info_tx_stats_t*)arg)->bw = 2;
-        if((rinfo[NL80211_RATE_INFO_10_MHZ_WIDTH]) || (rinfo[NL80211_RATE_INFO_5_MHZ_WIDTH]))
+            if(rinfo[NL80211_RATE_INFO_40_MHZ_WIDTH])
+                ((wifi_associated_dev_rate_info_tx_stats_t*)arg)->bw = 1;
+            if(rinfo[NL80211_RATE_INFO_80_MHZ_WIDTH])
+                ((wifi_associated_dev_rate_info_tx_stats_t*)arg)->bw = 2;
+            if(rinfo[NL80211_RATE_INFO_80P80_MHZ_WIDTH])
+                ((wifi_associated_dev_rate_info_tx_stats_t*)arg)->bw = 2;
+            if(rinfo[NL80211_RATE_INFO_160_MHZ_WIDTH])
+                ((wifi_associated_dev_rate_info_tx_stats_t*)arg)->bw = 2;
+            if((rinfo[NL80211_RATE_INFO_10_MHZ_WIDTH]) || (rinfo[NL80211_RATE_INFO_5_MHZ_WIDTH]))
+                ((wifi_associated_dev_rate_info_tx_stats_t*)arg)->bw = 0;
+        }
+        else
+        {
+            printf(" OFDM or CCK \n");
             ((wifi_associated_dev_rate_info_tx_stats_t*)arg)->bw = 0;
-    }
-    else
-    {
-        printf(" OFDM or CCK \n");
-        ((wifi_associated_dev_rate_info_tx_stats_t*)arg)->bw = 0;
-        ((wifi_associated_dev_rate_info_tx_stats_t*)arg)->nss = 0;
+            ((wifi_associated_dev_rate_info_tx_stats_t*)arg)->nss = 0;
+        }
     }
 
     if(sinfo[NL80211_STA_INFO_TX_BITRATE]) {
