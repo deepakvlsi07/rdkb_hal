@@ -5060,15 +5060,24 @@ INT wifi_getBaseBSSID(INT ssidIndex, CHAR *output_string)	//RDKB
 	if (wifi_GetInterfaceName(ssidIndex, inf_name) != RETURN_OK)
 		return RETURN_ERR;
 
-    if(ssidIndex >= 0 && ssidIndex < MAX_APS) {
-        snprintf(cmd, sizeof(cmd), "hostapd_cli -i %s get_config | grep bssid | cut -d '=' -f2 | tr -d '\\n'", inf_name);
-        _syscmd(cmd, output_string, 64);
-		return RETURN_OK;
-    }
+	if (ssidIndex < 0 || ssidIndex > MAX_APS) {
+		wifi_debug(DEBUG_ERROR, "innvalide ssidIdex(%d)\n", ssidIndex);
+		strncpy(output_string, "\0", 1);
+		return RETURN_ERR;
+	}
+	snprintf(cmd, sizeof(cmd), "hostapd_cli -i %s get_config | grep bssid | cut -d '=' -f2 | tr -d '\\n'", inf_name);
+	_syscmd(cmd, output_string, 64);
 
-    strncpy(output_string, "\0", 1);
+	/* if hostapd does not control interface even if this interface has been brought up,
+	 * try to get its mac address by iw command.
+	 */
+	if(strlen(output_string) == 0) {
+		memset(cmd, 0, sizeof(cmd));
+		snprintf(cmd, sizeof(cmd), "iw dev %s info | grep \"addr\" | awk \'{print $2}\'", inf_name);
+		_syscmd(cmd, output_string, 64);
+	}
 
-    return RETURN_ERR;
+	return RETURN_OK;
 }
 
 //Get the MAC address associated with this Wifi SSID
@@ -14599,14 +14608,10 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
             printf("%s: wifi_getBaseBSSID return error\n", __func__);
             return RETURN_ERR;
         }
-        sscanf(buf, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
-            &map->vap_array[i].u.bss_info.bssid[0],
-            &map->vap_array[i].u.bss_info.bssid[1],
-            &map->vap_array[i].u.bss_info.bssid[2],
-            &map->vap_array[i].u.bss_info.bssid[3],
-            &map->vap_array[i].u.bss_info.bssid[4],
-            &map->vap_array[i].u.bss_info.bssid[5]);
-        // fprintf(stderr, "%s index %d: mac: %02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx\n", __func__, vap_index, map->vap_array[i].u.bss_info.bssid[0], map->vap_array[i].u.bss_info.bssid[1], map->vap_array[i].u.bss_info.bssid[2], map->vap_array[i].u.bss_info.bssid[3], map->vap_array[i].u.bss_info.bssid[4], map->vap_array[i].u.bss_info.bssid[5]);
+		if (hwaddr_aton2(buf, map->vap_array[i].u.bss_info.bssid) < 0) {
+			printf("%s: hwaddr_aton2 fail\n", __func__);
+            return RETURN_ERR;
+		}
 
         ret = wifi_getRadioIGMPSnoopingEnable(map->vap_array[i].radio_index, &enabled);
         if (ret != RETURN_OK) {
