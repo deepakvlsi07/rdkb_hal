@@ -88,6 +88,7 @@ Licensed under the ISC license
 #define ROM_LOGAN_DAT_FILE "/rom/etc/wireless/mediatek/mt7990.b"
 
 #define NOACK_MAP_FILE "/tmp/NoAckMap"
+#define RADIO_RESET_FILE "/nvram/radio_reset"
 
 #define BRIDGE_NAME "brlan0"
 #define BASE_PHY_INDEX 1
@@ -1193,28 +1194,6 @@ static UCHAR get_bssnum_byindex(INT radio_index, UCHAR *bss_cnt)
     return RETURN_OK;
 }
 
-/* index: radio index or phy index
-   phy: true-> base phy command
-        false-> base radio command */
-static int wifi_mwctlSet(int index, struct params *mwctl, bool phy)
-{
-    char cmd[MAX_CMD_SIZE]={'\0'};
-    char buf[MAX_BUF_SIZE]={'\0'};
-    char interface_name[16] = {0};
-
-    if (phy == TRUE)
-        snprintf(cmd, sizeof(cmd), "mwctl phy phy%d set %s%s", index, mwctl->name, mwctl->value);
-    else {
-        if (wifi_GetInterfaceName(index, interface_name) != RETURN_OK)
-            return RETURN_ERR;
-        snprintf(cmd, sizeof(cmd), "mwctl %s set %s%s", interface_name, mwctl->name, mwctl->value);
-    }
-    if (_syscmd(cmd, buf, sizeof(buf)) == RETURN_ERR)
-        return RETURN_ERR;
-
-    return RETURN_OK;
-}
-
 static int wifi_hostapdProcessUpdate(int apIndex, struct params *list, int item_count)
 {
     char interface_name[16] = {0};
@@ -1554,6 +1533,42 @@ INT wifi_factoryResetRadios()
     return RETURN_ERR;
 }
 
+ULONG get_radio_reset_cnt(int radioIndex)
+{
+	char cmd[MAX_CMD_SIZE] = {0};
+	char buf[MAX_BUF_SIZE] = {0};
+	ULONG reset_count = 0;
+
+	snprintf(cmd, MAX_CMD_SIZE, "cat %s 2> /dev/null | grep \"^reset%d=\" | cut -d \"=\" -f 2 | head -n1 | tr -d \"\\n\"",
+		RADIO_RESET_FILE, radioIndex);
+	_syscmd(cmd, buf, sizeof(buf));
+
+	if (strlen(buf) == 0)
+		return 0;
+	else {
+		reset_count = atol(buf);
+		return reset_count;
+	}
+}
+void update_radio_reset_cnt(int radioIndex)
+{
+	char cmd[MAX_CMD_SIZE] = {0};
+	char buf[MAX_BUF_SIZE] = {0};
+	ULONG reset_count = 0;
+
+	snprintf(cmd, MAX_CMD_SIZE, "cat %s 2> /dev/null | grep \"^reset%d=\" | cut -d \"=\" -f 2 | head -n1 | tr -d \"\\n\"",
+		RADIO_RESET_FILE, radioIndex);
+	_syscmd(cmd, buf, sizeof(buf));
+
+	if (strlen(buf) == 0)
+		snprintf(cmd, sizeof(cmd), "sed -i -e '$a reset%d=1' %s", radioIndex, RADIO_RESET_FILE);
+	else {
+		reset_count = atol(buf);
+		reset_count++;
+		snprintf(cmd, sizeof(cmd), "sed -i \"s/^reset%d=.*/reset%d=%lu/\" %s", radioIndex, radioIndex, reset_count, RADIO_RESET_FILE);
+	}
+	_syscmd(cmd, buf, sizeof(buf));
+}
 
 /* wifi_factoryResetRadio() function */
 /**
@@ -1588,6 +1603,7 @@ INT wifi_factoryResetRadio(int radioIndex) 	//RDKB
 
 	/*TBD: check mbss issue*/
 	wifi_factoryResetAP(radioIndex);
+	update_radio_reset_cnt(radioIndex);
 
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n", __func__, __LINE__);
 	return RETURN_OK;
@@ -2027,6 +2043,20 @@ static void wifi_vap_status_reset()
 
 }
 
+static void wifi_radio_reset_count_reset()
+{
+    char cmd[MAX_CMD_SIZE] = {0};
+    char ret_buf[MAX_BUF_SIZE] = {0};
+
+	if (access(VAP_STATUS_FILE, F_OK) != 0) {
+		snprintf(cmd, MAX_CMD_SIZE, "touch %s", RADIO_RESET_FILE);
+		_syscmd(cmd, ret_buf, sizeof(ret_buf));
+	} else {
+		snprintf(cmd, MAX_CMD_SIZE, "echo '' > %s", RADIO_RESET_FILE);
+		_syscmd(cmd, ret_buf, sizeof(ret_buf));
+	}
+}
+
 // Initializes the wifi subsystem (all radios)
 INT wifi_init()                            //RDKB
 {
@@ -2041,7 +2071,7 @@ INT wifi_init()                            //RDKB
     sleep(2);
 
 	wifi_vap_status_reset();
-
+	wifi_radio_reset_count_reset();
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
@@ -2931,28 +2961,52 @@ enum WIFI_MODE {
 };
 
 #define RADIO_MODE_LEN 32
-INT wifi_getRadioMode(INT radioIndex, CHAR *output_string, UINT *pureMode)
+
+int get_radio_mode_handler(struct nl_msg *msg, void *cb)
 {
-    char cmd[MAX_CMD_SIZE] = {0};
-    char buf[MAX_BUF_SIZE] = {0};
-    wifi_band band;
-	unsigned int phymode;
+	struct nlattr *tb[NL80211_ATTR_MAX + 1];
+	struct nlattr *vndr_tb[MTK_NL80211_VENDOR_ATTR_GET_RUNTIME_INFO_MAX + 1];
+	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+	unsigned int *phymode;
+	int err = 0;
+	struct mtk_nl80211_cb_data *cb_data = cb;
+
+	if (!msg || !cb_data) {
+		wifi_debug(DEBUG_ERROR, "msg(0x%lx) or cb_data(0x%lx) is null,error.\n", msg, cb_data);
+		return NL_SKIP;
+	}
+
+	err = nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+			  genlmsg_attrlen(gnlh, 0), NULL);
+	if (err < 0) {
+		wifi_debug(DEBUG_ERROR, "nla_parse radio nl80211 msg fails,error.\n");
+		return NL_SKIP;
+	}
+
+	if (tb[NL80211_ATTR_VENDOR_DATA]) {
+		err = nla_parse_nested(vndr_tb, MTK_NL80211_VENDOR_ATTR_GET_RUNTIME_INFO_MAX,
+			tb[NL80211_ATTR_VENDOR_DATA], NULL);
+		if (err < 0)
+			return NL_SKIP;
+
+		if (vndr_tb[MTK_NL80211_VENDOR_ATTR_GET_RUNTIME_INFO_GET_WMODE]) {
+			phymode = (unsigned int *)nla_data(vndr_tb[MTK_NL80211_VENDOR_ATTR_GET_RUNTIME_INFO_GET_WMODE]);
+
+			memset(cb_data->out_buf, 0, cb_data->out_len);
+			memmove(cb_data->out_buf, phymode, sizeof(unsigned int));
+		}
+	} else
+		wifi_debug(DEBUG_ERROR, "No Stats from driver.\n");
+
+	return NL_OK;
+}
+
+void phymode_to_puremode(INT radioIndex, CHAR *output_string, UINT *pureMode, UINT phymode)
+{
+	wifi_band band;
 	unsigned char radio_mode_tem_len;
-	char interface_name[IF_NAME_SIZE] = {0};
 
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    if(NULL == output_string || NULL == pureMode)
-        return RETURN_ERR;
-
-	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
-		return RETURN_ERR;
-
-	snprintf(cmd, sizeof(cmd),  "mwctl %s dump radio_info | grep 'phymode' | cut -d ' ' -f2", interface_name);
-    _syscmd(cmd, buf, sizeof(buf));
-
-	phymode = strtoul(buf, NULL, 10);
 	band = wifi_index_to_band(radioIndex);
-
 	// puremode is a bit map
     *pureMode = 0;
 	memset(output_string, 0, RADIO_MODE_LEN);
@@ -3034,8 +3088,73 @@ INT wifi_getRadioMode(INT radioIndex, CHAR *output_string, UINT *pureMode)
 	if (strlen(output_string) != 0)
         output_string[strlen(output_string)-1] = '\0';
 
+}
+
+INT wifi_getRadioMode(INT radioIndex, CHAR *output_string, UINT *pureMode)
+{
+	unsigned int phymode;
+	char interface_name[IF_NAME_SIZE] = {0};
+	struct mtk_nl80211_param params;
+	int ret = -1;
+	unsigned int if_idx = 0;
+	struct unl unl_ins;
+	struct nl_msg *msg  = NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+	struct mtk_nl80211_cb_data cb_data;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    if(NULL == output_string || NULL == pureMode)
+        return RETURN_ERR;
+
+	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+		return RETURN_ERR;
+
+	if_idx = if_nametoindex(interface_name);
+	if (!if_idx) {
+		wifi_debug(DEBUG_ERROR, "can't finde ifname(%s) index,ERROR\n", interface_name);
+		return RETURN_ERR;
+	}
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_GET_RUNTIME_INFO;
+	param.if_type = NL80211_ATTR_IFINDEX;
+	param.if_idx = if_idx;
+
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+
+	/*add mtk vendor cmd data*/
+	if (nla_put_u16(msg, MTK_NL80211_VENDOR_ATTR_GET_RUNTIME_INFO_GET_WMODE, 0)) {
+		wifi_debug(DEBUG_ERROR, "Nla put GET_RUNTIME_INFO_GET_WMODE attribute error\n");
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	/*send mtk nl80211 vendor msg*/
+	cb_data.out_buf = (char *)&phymode;
+	cb_data.out_len = sizeof(unsigned int);
+
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, get_radio_mode_handler, &cb_data);
+
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		goto err;
+	}
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+
+	phymode_to_puremode(radioIndex, output_string, pureMode, phymode);
+	wifi_debug(DEBUG_NOTICE,"send cmd success\n");
+
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR,"send cmd fails\n");
+	return RETURN_ERR;
 }
 
 // Set the radio operating mode, and pure mode flag.
@@ -3168,7 +3287,7 @@ typedef enum _RT_802_11_PHY_MODE {
 unsigned int puremode_to_wireless_mode(INT radioIndex, UINT pureMode)
 {
 	int band_idx = 0;
-	unsigned int wireless_mode = PHY_MODE_MAX;
+	unsigned char wireless_mode = PHY_MODE_MAX;
 
 	band_idx = radio_index_to_band(radioIndex);
 
@@ -3212,12 +3331,15 @@ unsigned int puremode_to_wireless_mode(INT radioIndex, UINT pureMode)
 // Set the radio operating mode, and pure mode flag.
 INT wifi_setRadioMode(INT radioIndex, CHAR *channelMode, UINT pureMode)
 {
-	unsigned int wireless_mode = PHY_MODE_MAX;
+	unsigned char wireless_mode = PHY_MODE_MAX;
 
 	char interface_name[IF_NAME_SIZE] = {0};
-	char cmd[MAX_CMD_SIZE] = {0};
-    char buf[MAX_BUF_SIZE] = {0};
-	int i;
+	int ret = -1;
+	unsigned int if_idx = 0;
+	struct unl unl_ins;
+	struct nl_msg *msg  = NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s_%d:%d\n", __func__, channelMode, pureMode, __LINE__);
 
@@ -3230,21 +3352,53 @@ INT wifi_setRadioMode(INT radioIndex, CHAR *channelMode, UINT pureMode)
 
 	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
-	snprintf(cmd, sizeof(cmd),  "mwctl %s set phymode %d", interface_name, wireless_mode);
-    _syscmd(cmd, buf, sizeof(buf));
+
+	if_idx = if_nametoindex(interface_name);
+	if (!if_idx) {
+		wifi_debug(DEBUG_ERROR,"can't finde ifname(%s) index,ERROR\n", interface_name);
+		return RETURN_ERR;
+	}
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_AP_BSS;
+	param.if_type = NL80211_ATTR_IFINDEX;
+	param.if_idx = if_idx;
+
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+
+	/*add mtk vendor cmd data*/
+	if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_AP_WIRELESS_MODE, wireless_mode)) {
+		wifi_debug(DEBUG_ERROR, "Nla put AP_WIRELESS_MODE attribute error\n");
+		nlmsg_free(msg);
+		goto err;
+	}
+	/*send mtk nl80211 vendor msg*/
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		goto err;
+	}
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_NOTICE, "set cmd success.\n");
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
     return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR, "set cmd fails.\n");
+	return RETURN_ERR;
 }
 
 INT wifi_setRadioMode_by_dat(INT radioIndex, UINT pureMode)
 {
-	unsigned int wireless_mode = PHY_MODE_MAX;
+	unsigned char wireless_mode = PHY_MODE_MAX;
 	char interface_name[IF_NAME_SIZE] = {0};
-	char cmd[MAX_CMD_SIZE] = {0};
     char buf[MAX_BUF_SIZE] = {0};
-	int i;
 	char dat_file[MAX_BUF_SIZE] = {0};
 	struct params params={0};
 
@@ -3976,6 +4130,95 @@ INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) 
 
     return RETURN_OK;
 }
+
+enum mwctl_chan_width {
+	MWCTL_CHAN_WIDTH_20,
+	MWCTL_CHAN_WIDTH_40,
+	MWCTL_CHAN_WIDTH_80,
+	MWCTL_CHAN_WIDTH_160,
+	MWCTL_CHAN_WIDTH_320,
+};
+
+struct bw_option  {
+	unsigned int bandwith;
+	enum mwctl_chan_width mode;
+};
+
+struct bw_option bw_opt[] = {
+	{20, MWCTL_CHAN_WIDTH_20},
+	{40, MWCTL_CHAN_WIDTH_40},
+	{80, MWCTL_CHAN_WIDTH_80},
+	{160, MWCTL_CHAN_WIDTH_160},
+	{320, MWCTL_CHAN_WIDTH_320},
+};
+
+INT wifi_setChannel_netlink(INT radioIndex, UINT* channel, UINT *bandwidth)
+{
+	int ret = -1;
+	int i;
+	struct unl unl_ins;
+	struct nl_msg *msg  = NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+	bool b_match = FALSE;
+
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_CHANNEL;
+	param.if_type = NL80211_ATTR_WIPHY;
+	param.if_idx = radio_index_to_phy(radioIndex);
+
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+
+	/*add mtk vendor cmd data*/
+	if (channel != NULL)
+		if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_CHAN_SET_NUM, *channel)) {
+			wifi_debug(DEBUG_ERROR, "Nla put CHAN_SET_NUM attribute error\n");
+			nlmsg_free(msg);
+			goto err;
+		}
+
+	if (bandwidth != NULL) {
+		for (i = 0; i < (sizeof(bw_opt)/sizeof(bw_opt[0])); i++) {
+			if (bw_opt[i].bandwith == *bandwidth) {
+				b_match = true;
+				if (nla_put_u32(msg, MTK_NL80211_VENDOR_ATTR_CHAN_SET_BW, bw_opt[i].mode)) {
+					wifi_debug(DEBUG_ERROR, "Nla put CHAN_SET_BW attribute error\n");
+					nlmsg_free(msg);
+					goto err;
+				}
+				break;
+			}
+		}
+
+		if (!b_match) {
+			wifi_debug(DEBUG_ERROR, "Cannot find bandwith error\n");
+			nlmsg_free(msg);
+			goto err;
+		}
+	}
+
+	/*send mtk nl80211 vendor msg*/
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		goto err;
+	}
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_NOTICE, "set cmd success.\n");
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
+    return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR, "set cmd fails.\n");
+	return RETURN_ERR;
+}
+
 //Set the Operating Channel Bandwidth.
 INT wifi_setRadioOperatingChannelBandwidth(INT radioIndex, CHAR *bandwidth) //Tr181	//AP only
 {
@@ -3985,9 +4228,8 @@ INT wifi_setRadioOperatingChannelBandwidth(INT radioIndex, CHAR *bandwidth) //Tr
     char eht_value[16];
     struct params dat[3];
     wifi_band band = band_invalid;
-    char cmd[MAX_CMD_SIZE] = {0};
-    char buf[MAX_BUF_SIZE] = {0};
-    int bw = 20;
+    unsigned int bw = 20;
+	int ret = 0;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -4014,7 +4256,7 @@ INT wifi_setRadioOperatingChannelBandwidth(INT radioIndex, CHAR *bandwidth) //Tr
         snprintf(ht_value, sizeof(ht_value), "%d", HT_BW_40);
         snprintf(vht_value, sizeof(vht_value), "%d", VHT_BW_2040);
         snprintf(eht_value, sizeof(eht_value), "%d", EHT_BW_40);
-         bw = 40;
+        bw = 40;
     } else if(strstr(bandwidth,"20") != NULL) {
         snprintf(ht_value, sizeof(ht_value), "%d", HT_BW_20);
         snprintf(vht_value, sizeof(vht_value), "%d", VHT_BW_2040);
@@ -4033,8 +4275,11 @@ INT wifi_setRadioOperatingChannelBandwidth(INT radioIndex, CHAR *bandwidth) //Tr
     dat[2].name = "EHT_ApBw";
     dat[2].value = eht_value;
     wifi_datfileWrite(config_file, dat, 3);
-    snprintf(cmd, sizeof(cmd),	"mwctl phy phy%d set channel bw=%d\n", band, bw);
-    _syscmd(cmd, buf, sizeof(buf));
+    ret = wifi_setChannel_netlink(radioIndex, NULL, &bw);
+	if (ret != RETURN_OK) {
+        fprintf(stderr, "%s: wifi_setChannel return error.\n", __func__);
+        return RETURN_ERR;
+    }
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
@@ -4371,11 +4616,15 @@ INT wifi_setRadioTransmitPower(INT radioIndex, ULONG TransmitPower)	//RDKB
 {
     char interface_name[16] = {0};
     char *support;
-    char cmd[128]={0};
     char buf[128]={0};
     char txpower_str[64] = {0};
 	char pwr_file[128]={0};
     FILE *f = NULL;
+	int if_idx, ret = 0;
+	struct nl_msg *msg  = NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+	struct unl unl_ins;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -4396,10 +4645,40 @@ INT wifi_setRadioTransmitPower(INT radioIndex, ULONG TransmitPower)	//RDKB
         }
         support = strtok(NULL, ",");
     }
-	snprintf(cmd, sizeof(cmd),	"mwctl dev %s set pwr PercentageCtrl=1\n", interface_name);
-	_syscmd(cmd, buf, sizeof(buf));
-	snprintf(cmd, sizeof(cmd),	"mwctl dev %s set pwr PowerDropCtrl=%lu\n", interface_name, TransmitPower);
-	_syscmd(cmd, buf, sizeof(buf));
+
+	if_idx = if_nametoindex(interface_name);
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_TXPOWER;
+	param.if_type = NL80211_ATTR_IFINDEX;
+	param.if_idx = if_idx;
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+	/*add mtk vendor cmd data*/
+	if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_TXPWR_PERCENTAGE_EN, 1)) {
+		wifi_debug(DEBUG_ERROR, "Nla put attribute error\n");
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_TXPWR_DROP_CTRL, TransmitPower)) {
+		wifi_debug(DEBUG_ERROR, "Nla put attribute error\n");
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	/*send mtk nl80211 vendor msg*/
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		goto err;
+	}
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_NOTICE, "set cmd success.\n");
+
     snprintf(pwr_file, sizeof(pwr_file), "%s%d.txt", POWER_PERCENTAGE, radioIndex);
     f = fopen(pwr_file, "w");
     if (f == NULL) {
@@ -4434,6 +4713,10 @@ INT wifi_setRadioTransmitPower(INT radioIndex, ULONG TransmitPower)	//RDKB
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 */
 	return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR, "set cmd fails.\n");
+	return RETURN_ERR;
 }
 
 //get 80211h Supported.  80211h solves interference with satellites and radar using the same 5 GHz frequency band
@@ -6495,7 +6778,7 @@ INT wifi_getRadioResetCount(INT radioIndex, ULONG *output_int)
 {
     if (NULL == output_int)
         return RETURN_ERR;
-    *output_int = (radioIndex==0)? 1: 3;
+    *output_int = get_radio_reset_cnt(radioIndex);
 
     return RETURN_OK;
 }
@@ -10606,8 +10889,6 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
     // Sample commands:
     //   hostapd_cli -i wifi1 chan_switch 30 5200 sec_channel_offset=-1 center_freq1=5190 bandwidth=40 ht vht
     //   hostapd_cli -i wifi0 chan_switch 30 2437
-    char cmd[MAX_CMD_SIZE] = {0};
-    char buf[MAX_BUF_SIZE] = {0};
     int freq = 0, ret = 0;
     char center_freq1_str[32] = ""; // center_freq1=%d
     char opt_chan_info_str[32] = ""; // bandwidth=%d ht vht
@@ -10624,8 +10905,6 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
     wifi_band band = band_invalid;
     int center_chan = 0;
     int center_freq1 = 0;
-    struct params mwctl = {0};
-    char str_channel[8]={0};
 
     snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
 
@@ -10687,16 +10966,9 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
             snprintf(sec_chan_offset_str, sizeof(sec_chan_offset_str), "sec_channel_offset=%d", sec_chan_offset);
 
         // Only the first AP, other are hanging on the same radio
-        int apIndex = radioIndex;
-        /* snprintf(cmd, sizeof(cmd), "hostapd_cli  -i %s chan_switch %d %d %s %s %s",
-            interface_name, csa_beacon_count, freq,
-            sec_chan_offset_str, center_freq1_str, opt_chan_info_str); */
-        snprintf(str_channel, sizeof(str_channel), "%d", channel);
-        mwctl.name = "channel num=";
-        mwctl.value = str_channel;
-        ret = wifi_mwctlSet(radioIndex, &mwctl, BASE_PHY_INDEX);
+        ret = wifi_setChannel_netlink(radioIndex, &channel, NULL);
         if (ret != RETURN_OK) {
-            fprintf(stderr, "%s: wifi_mwctlSet return error.\n", __func__);
+            fprintf(stderr, "%s: wifi_setChannel return error.\n", __func__);
             return RETURN_ERR;
         }
         /* wifi_dbg_printf("execute: '%s'\n", cmd);
@@ -11374,20 +11646,51 @@ INT wifi_getApManagementFramePowerControl(INT apIndex, INT *output_dBm)
 INT wifi_setApManagementFramePowerControl(INT wlanIndex, INT dBm)
 {
 	char interface_name[16] = {0};
-	char cmd[128]={0};
-	char buf[128]={0};
 	char mgmt_pwr_file[128]={0};
 	FILE *f = NULL;
+	int if_idx, ret = 0;
+	struct nl_msg *msg  = NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+	struct unl unl_ins;
+	char power[16] = {0};
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
 	if (wifi_GetInterfaceName(wlanIndex, interface_name) != RETURN_OK)
 		return RETURN_ERR;
-	snprintf(cmd, sizeof(cmd),	"mwctl dev %s set pwr mgmt_frame_pwr=%d", interface_name, dBm);
-    if (_syscmd(cmd, buf, sizeof(buf)) == RETURN_ERR) {
-        wifi_dbg_printf("%s: failed to execute '%s'\n", __FUNCTION__, cmd);
-        return RETURN_ERR;
-    }
+
+	if_idx = if_nametoindex(interface_name);
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_TXPOWER;
+	param.if_type = NL80211_ATTR_IFINDEX;
+	param.if_idx = if_idx;
+
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+
+	/*add mtk vendor cmd data*/
+	snprintf(power, sizeof(power), "%d", dBm);
+	if (nla_put(msg, MTK_NL80211_VENDOR_ATTR_TXPWR_MGMT, strlen(power), power)) {
+		wifi_debug(DEBUG_ERROR, "Nla put attribute error\n");
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	/*send mtk nl80211 vendor msg*/
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		goto err;
+	}
+
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_NOTICE, "set cmd success.\n");
+
 	snprintf(mgmt_pwr_file, sizeof(mgmt_pwr_file), "%s%d.txt", MGMT_POWER_CTRL, wlanIndex);
 	f = fopen(mgmt_pwr_file, "w");
 	if (f == NULL) {
@@ -11397,6 +11700,10 @@ INT wifi_setApManagementFramePowerControl(INT wlanIndex, INT dBm)
 	fprintf(f, "%d", dBm);
 	fclose(f);
    return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR, "set cmd fails.\n");
+	return RETURN_ERR;
 }
 INT wifi_getRadioDcsChannelMetrics(INT radioIndex,wifi_channelMetrics_t *input_output_channelMetrics_array,INT size)
 {
@@ -13603,6 +13910,51 @@ int main(int argc,char **argv)
     {
         wifi_getApName(index,buf);
         printf("Ap name is %s \n",buf);
+        return 0;
+    }
+	if(strstr(argv[1], "wifi_setRadioMode")!=NULL)
+    {
+		UINT pureMode = atoi(argv[3]);
+
+        wifi_setRadioMode(index, NULL, pureMode);
+        printf("Ap SET Radio mode 0x%x\n", pureMode);
+        return 0;
+    }
+	if(strstr(argv[1], "wifi_setRadioTransmitPower")!=NULL)
+    {
+		ULONG TransmitPower = atoi(argv[3]);
+
+        wifi_setRadioTransmitPower(index, TransmitPower);
+        printf("Ap SET TransmitPower %lu\n", TransmitPower);
+        return 0;
+    }
+	if(strstr(argv[1], "wifi_setApManagementFramePowerControl")!=NULL)
+    {
+		INT TransmitPower = atoi(argv[3]);
+
+        wifi_setApManagementFramePowerControl(index, TransmitPower);
+        printf("Ap SET Mgnt TransmitPower %d\n", TransmitPower);
+        return 0;
+    }
+	if(strstr(argv[1], "wifi_setRadioBW")!=NULL)
+    {
+		CHAR *bandwith = argv[3];
+
+        wifi_setRadioOperatingChannelBandwidth(index, bandwith);
+        printf("Ap SET bw %s\n", bandwith);
+        return 0;
+    }
+	if(strstr(argv[1], "wifi_factoryResetRadio")!=NULL)
+    {
+        wifi_factoryResetRadio(index);
+        printf("wifi_factoryResetRadio ok!\n");
+        return 0;
+    }
+	if(strstr(argv[1], "wifi_getRadioResetCount")!=NULL)
+    {
+    	ULONG rst_cnt;
+        wifi_getRadioResetCount(index, &rst_cnt);
+        printf("wifi_factoryResetRadio rst_cnt = %lu\n", rst_cnt);
         return 0;
     }
 	if (strncmp(argv[1], "wifi_addApAclDevice", strlen(argv[1])) == 0) {
