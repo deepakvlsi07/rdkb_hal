@@ -871,13 +871,13 @@ static int wifi_datfileRead(char *conf_file, char *param, char *output, int outp
     return 0;
 }
 
-static int wifi_datfileRead2(char *conf_file, int vap_idx, char *param, char *output, int output_size)
+static int wifi_datfileRead2(char *conf_file, int idx, char *param, char *output, int output_size)
 {
     char cmd[MAX_CMD_SIZE] = {0};
     int ret = 0;
     int len;
 
-    ret = snprintf(cmd, sizeof(cmd), "datconf -f %s get %d %s", conf_file, vap_idx, param);
+    ret = snprintf(cmd, sizeof(cmd), "datconf -f %s get %s %d", conf_file, param, idx);
     if (ret < 0) {
         printf("%s: snprintf error!", __func__);
         return -1;
@@ -917,14 +917,14 @@ static int wifi_datfileWrite(char *conf_file, struct params *list, int item_coun
     return 0;
 }
 
-static int wifi_datfileWrite2(char *conf_file, int vap_idx, struct params *list, int item_count)
+static int wifi_datfileWrite2(char *conf_file, int idx, struct params *list, int item_count)
 {
     int ret;
     char cmd[MAX_CMD_SIZE] = {0};
     char buf[MAX_BUF_SIZE] = {0};
 
     for (int i = 0; i < item_count; i++) {
-        ret = snprintf(cmd, sizeof(cmd), "datconf -f %s set %s %d \"%s\"", conf_file, list[i].name, vap_idx, list[i].value);
+        ret = snprintf(cmd, sizeof(cmd), "datconf -f %s set %s %d \"%s\"", conf_file, list[i].name, idx, list[i].value);
         if (ret < 0) {
             printf("%s: snprintf error!", __func__);
             return -1;
@@ -957,6 +957,28 @@ static int wifi_l1ProfileRead(char *param, char *output, int output_size)
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
+
+static int wifi_l1ProfileRead2(char *param, int idx, char *output, int output_size)
+{
+    char buf[MAX_BUF_SIZE] = {0};
+    int ret;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    if (!param || !output || (output_size <= 0)) {
+        fprintf(stderr, "%s: invalid parameters", __func__);
+        return RETURN_ERR;
+    }
+
+    ret = wifi_datfileRead2(l1profile, idx, param, output, output_size);
+    if (ret != 0) {
+        fprintf(stderr, "%s: wifi_datfileRead2 %s from %s failed, ret:%d", __func__, param, l1profile, ret);
+        return RETURN_ERR;
+    }
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
+}
+
 
 static int wifi_CardProfileRead(int card_idx, char *param, char *output, int output_size)
 {
@@ -1027,7 +1049,7 @@ static int wifi_BandProfileRead(int card_idx,
 
 static int wifi_BandProfileRead2(int card_idx,
                                  int radio_idx,
-                                 int vap_idx,
+                                 int idx,
                                  char *param,
                                  char *output,
                                  int output_size,
@@ -1050,7 +1072,7 @@ static int wifi_BandProfileRead2(int card_idx,
         return RETURN_ERR;
     }
 
-    ret = wifi_datfileRead2(band_profile_path, vap_idx, param, output, output_size);
+    ret = wifi_datfileRead2(band_profile_path, idx, param, output, output_size);
     if (ret != 0) {
         if (default_value) {
             snprintf(output, output_size, "%s", default_value);
@@ -1094,7 +1116,7 @@ static int wifi_BandProfileWrite(int card_idx, int radio_idx, struct params *lis
 
 static int wifi_BandProfileWrite2(int card_idx,
                                   int radio_idx,
-                                  int vap_idx,
+                                  int idx,
                                   struct params *list,
                                   int item_count)
 {
@@ -1113,7 +1135,7 @@ static int wifi_BandProfileWrite2(int card_idx,
         return RETURN_ERR;
     }
 
-    ret = wifi_datfileWrite2(band_profile_path, vap_idx, list, item_count);
+    ret = wifi_datfileWrite2(band_profile_path, idx, list, item_count);
     if (ret != 0) {
         fprintf(stderr, "%s: wifi_datfileWrite failed, ret:%d", __func__);
         return RETURN_ERR;
@@ -2247,23 +2269,31 @@ INT wifi_getSSIDNumberOfEntries(ULONG *output) //Tr181
 //Get the Radio enable config parameter
 INT wifi_getRadioEnable(INT radioIndex, BOOL *output_bool)      //RDKB
 {
-    char interface_name[16] = {0};
+    char option[64] = {};
     char buf[128] = {0}, cmd[128] = {0};
+    int ret;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
     if (NULL == output_bool)
         return RETURN_ERR;
 
-    *output_bool = FALSE;
-    if (radioIndex >= MAX_NUM_RADIOS)// Target has two wifi radios
+    snprintf(option, sizeof(option), "INDEX%d_main_ifname", 0);
+    ret = wifi_l1ProfileRead2(option, radioIndex, buf, sizeof(buf));
+    if ((ret != 0) || (strlen(buf) <= 0)) {
+        *output_bool = 0;
         return RETURN_ERR;
+    }
 
-	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
-		return RETURN_ERR;
-	sprintf(cmd, "hostapd_cli -i %s status | grep state | cut -d '=' -f2", interface_name);
-	_syscmd(cmd, buf, sizeof(buf));
+    snprintf(cmd, sizeof(cmd), "iw %s info | grep channel", buf);
+    _syscmd(cmd, buf, sizeof(buf));
+    if (strlen(buf) == 0) {
+        *output_bool = 0;
+    } else {
+        *output_bool = 1;
+    }
 
-	if(strncmp(buf, "ENABLED", 7) == 0 || strncmp(buf, "ACS", 3) == 0 || strncmp(buf, "HT_SCAN", 7) == 0 || strncmp(buf, "DFS", 3) == 0)
-		*output_bool = TRUE;
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
 
