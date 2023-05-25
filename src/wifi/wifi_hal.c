@@ -5135,7 +5135,7 @@ INT wifi_setRadioIGMPSnoopingEnable(INT radioIndex, BOOL enable)
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
     // bridge
-    snprintf(cmd, sizeof(cmd),  "echo %d > /sys/devices/virtual/net/%s/bridge/multicast_snooping", enable, BRIDGE_NAME);
+    snprintf(cmd, sizeof(cmd),  "sleep 1 && echo %d > /sys/devices/virtual/net/%s/bridge/multicast_snooping", enable, BRIDGE_NAME);
     _syscmd(cmd, buf, sizeof(buf));
 
     wifi_getMaxRadioNumber(&max_num_radios);
@@ -5144,7 +5144,7 @@ INT wifi_setRadioIGMPSnoopingEnable(INT radioIndex, BOOL enable)
         apIndex = radioIndex + i*max_num_radios;
         if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
             continue;
-        snprintf(cmd, sizeof(cmd),  "echo %d > /sys/devices/virtual/net/%s/brif/%s/multicast_to_unicast", enable, BRIDGE_NAME, interface_name);
+        snprintf(cmd, sizeof(cmd),  "sleep 1 && echo %d > /sys/devices/virtual/net/%s/brif/%s/multicast_to_unicast", enable, BRIDGE_NAME, interface_name);
         _syscmd(cmd, buf, sizeof(buf));
     }
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
@@ -7322,7 +7322,7 @@ INT wifi_setApWpsButtonPush(INT apIndex)
     if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
 
-    snprintf(cmd, sizeof(cmd), "hostapd_cli -i%s wps_cancel; hostapd_cli -i%s wps_pbc", interface_name, interface_name);
+    snprintf(cmd, sizeof(cmd), "sleep 1 && hostapd_cli -i%s wps_cancel && hostapd_cli -i%s wps_pbc", interface_name, interface_name);
     _syscmd(cmd, buf, sizeof(buf));
 
     if((strstr(buf, "OK"))!=NULL)
@@ -12983,7 +12983,7 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
         multiple_set = FALSE;
 
         // If config use hostapd_cli to set, we calling these type of functions after enable the ap.
-        if (vap_info->u.bss_info.wps.methods && WIFI_ONBOARDINGMETHODS_PUSHBUTTON) {
+        if (vap_info->u.bss_info.wps.enable && vap_info->u.bss_info.wps.methods && WIFI_ONBOARDINGMETHODS_PUSHBUTTON) {
             // The set wps methods function should check whether wps is configured.
             ret = wifi_setApWpsButtonPush(vap_info->vap_index);
             if (ret != RETURN_OK) {
