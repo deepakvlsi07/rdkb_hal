@@ -9489,94 +9489,71 @@ static const char *get_line_from_str_buf(const char *buf, char *line)
 
 INT wifi_getApAssociatedDeviceDiagnosticResult3(INT apIndex, wifi_associated_dev3_t **associated_dev_array, UINT *output_array_size)
 {
-    unsigned int assoc_cnt = 0;
-    char interface_name[50] = {0};
-    char buf[MAX_BUF_SIZE * 50]= {'\0'}; // Increase this buffer if more fields are added to 'iw dev' output filter
-    char cmd[MAX_CMD_SIZE] = {'\0'};
-    char line[256] = {'\0'};
-    int i = 0;
-    int ret = 0;
-    const char *ptr = NULL;
-    char *key = NULL;
-    char *val = NULL;
-    wifi_associated_dev3_t *temp = NULL;
-    int rssi;
+    char interface_name[16] = {0};
+    FILE *f = NULL;
+    int auth_temp= -1;
+    char cmd[256] = {0}, buf[2048] = {0};
+    char *param = NULL, *value = NULL, *line=NULL;
+    size_t len = 0;
+    wifi_associated_dev3_t *dev=NULL;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    *associated_dev_array = NULL;
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+        return RETURN_ERR;
+    sprintf(cmd, "hostapd_cli -i%s all_sta | grep AUTHORIZED | wc -l", interface_name);
+    _syscmd(cmd, buf, sizeof(buf));
+    *output_array_size = atoi(buf);
 
-    if (wifi_getApName(apIndex, interface_name) != RETURN_OK) {
-        wifi_dbg_printf("%s: wifi_getApName failed\n",  __FUNCTION__);
+    if (*output_array_size <= 0)
+        return RETURN_OK;
+
+    dev=(wifi_associated_dev3_t *) calloc (*output_array_size, sizeof(wifi_associated_dev3_t));
+    *associated_dev_array = dev;
+    sprintf(cmd, "hostapd_cli -i%s all_sta > /tmp/diagnostic3_devices.txt" , interface_name);
+    _syscmd(cmd,buf,sizeof(buf));
+    f = fopen("/tmp/diagnostic3_devices.txt", "r");
+    if (f == NULL)
+    {
+        *output_array_size=0;
         return RETURN_ERR;
     }
+    while ((getline(&line, &len, f)) != -1)
+    {
+        param = strtok(line, "=");
+        value = strtok(NULL, "=");
 
-    // Example filtered output of 'iw dev' command:
-    //    Station 0a:69:72:10:d2:fa (on wifi0)
-    //    signal avg:-67 [-71, -71] dBm
-    //    Station 28:c2:1f:25:5f:99 (on wifi0)
-    //    signal avg:-67 [-71, -70] dBm
-    if (sprintf(cmd,"iw dev %s station dump | tr -d '\\t' | grep 'Station\\|signal avg'", interface_name) < 0) {
-        wifi_dbg_printf("%s: failed to build iw dev command for %s\n", __FUNCTION__, interface_name);
-        return RETURN_ERR;
-    }
-
-    ret = _syscmd(cmd, buf, sizeof(buf));
-    if (ret == RETURN_ERR) {
-        wifi_dbg_printf("%s: failed to execute '%s' for %s\n", __FUNCTION__, cmd, interface_name);
-        return RETURN_ERR;
-    }
-
-    *output_array_size = count_occurences(buf, "Station");
-    if (*output_array_size == 0) return RETURN_OK;
-
-    temp = calloc(*output_array_size, sizeof(wifi_associated_dev3_t));
-    if (temp == NULL) {
-        wifi_dbg_printf("%s: failed to allocate dev array for %s\n", __FUNCTION__, interface_name);
-        return RETURN_ERR;
-    }
-    *associated_dev_array = temp;
-
-    wifi_dbg_printf("%s: array_size = %u\n", __FUNCTION__, *output_array_size);
-    ptr = get_line_from_str_buf(buf, line);
-    i = -1;
-    while (ptr) {
-        if (strstr(line, "Station")) {
-            i++;
-            key = strtok(line, " ");
-            val = strtok(NULL, " ");
-            if (sscanf(val, "%02x:%02x:%02x:%02x:%02x:%02x",
-                &temp[i].cli_MACAddress[0],
-                &temp[i].cli_MACAddress[1],
-                &temp[i].cli_MACAddress[2],
-                &temp[i].cli_MACAddress[3],
-                &temp[i].cli_MACAddress[4],
-                &temp[i].cli_MACAddress[5]) != MACADDRESS_SIZE) {
-                    wifi_dbg_printf("%s: failed to parse MAC of client connected to %s\n", __FUNCTION__, interface_name);
-                    free(*associated_dev_array);
-                    return RETURN_ERR;
+        if( strcmp("flags",param) == 0 )
+        {
+            value[strlen(value)-1]='\0';
+            if(strstr (value,"AUTHORIZED") != NULL )
+            {
+                auth_temp++;
+                dev[auth_temp].cli_AuthenticationState = 1;
+                dev[auth_temp].cli_Active = 1;
             }
+        } else if (auth_temp < 0) {
+            continue;
+        } else if( strcmp("dot11RSNAStatsSTAAddress", param) == 0 )
+        {
+            value[strlen(value)-1]='\0';
+            sscanf(value, "%x:%x:%x:%x:%x:%x",
+                    (unsigned int *)&dev[auth_temp].cli_MACAddress[0],
+                    (unsigned int *)&dev[auth_temp].cli_MACAddress[1],
+                    (unsigned int *)&dev[auth_temp].cli_MACAddress[2],
+                    (unsigned int *)&dev[auth_temp].cli_MACAddress[3],
+                    (unsigned int *)&dev[auth_temp].cli_MACAddress[4],
+                    (unsigned int *)&dev[auth_temp].cli_MACAddress[5]);
+        } else if (strcmp("signal", param) == 0) {
+            value[strlen(value)-1]='\0';
+            sscanf(value, "%d", &dev[auth_temp].cli_RSSI);
+            dev[auth_temp].cli_SNR = 95 + dev[auth_temp].cli_RSSI;
         }
-        else if (i < 0) {
-            ptr = get_line_from_str_buf(ptr, line);
-            continue; // We didn't detect 'station' entry yet
-        }
-        else if (strstr(line, "signal avg")) {
-            key = strtok(line, ":");
-            val = strtok(NULL, " ");
-            if (sscanf(val, "%d", &rssi) <= 0 ) {
-                wifi_dbg_printf("%s: failed to parse RSSI of client connected to %s\n", __FUNCTION__, interface_name);
-                free(*associated_dev_array);
-                return RETURN_ERR;
-            }
-            temp[i].cli_RSSI = rssi;
-            temp[i].cli_SNR = 95 + rssi; // We use constant -95 noise floor
-        }
-        // Here other fields can be parsed if added to filter of 'iw dev' command
-
-        ptr = get_line_from_str_buf(ptr, line);
-    };
-
+    }
+	if (line)
+    	free(line);
+    fclose(f);
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
-
     return RETURN_OK;
 }
 
