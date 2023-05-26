@@ -6651,28 +6651,149 @@ INT wifi_setRadioReverseDirectionGrantEnable(INT radioIndex, BOOL enable)
 	return RETURN_OK;
 }
 
+
+int mtk_get_ba_auto_status_callback(struct nl_msg *msg, void *data)
+{
+	struct nlattr *tb[NL80211_ATTR_MAX + 1];
+	struct nlattr *vndr_tb[MTK_NL80211_VENDOR_AP_BA_ATTR_MAX + 1];
+	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+	unsigned char status;
+	unsigned char *out_status = data;
+	int err = 0;
+
+	err = nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+			  genlmsg_attrlen(gnlh, 0), NULL);
+	if (err < 0){
+		wifi_debug(DEBUG_ERROR, "get NL80211_ATTR_MAX fails\n");
+		return err;
+	}
+
+	if (tb[NL80211_ATTR_VENDOR_DATA]) {
+		err = nla_parse_nested(vndr_tb, MTK_NL80211_VENDOR_AP_BA_ATTR_MAX,
+			tb[NL80211_ATTR_VENDOR_DATA], NULL);
+		if (err < 0){
+			wifi_debug(DEBUG_ERROR, "get MTK_NL80211_VENDOR_AP_BA_ATTR_MAX fails\n");
+			return err;
+		}
+
+		if (vndr_tb[MTK_NL80211_VENDOR_ATTR_AP_BA_EN_INFO]) {
+			status = nla_get_u8(vndr_tb[MTK_NL80211_VENDOR_ATTR_AP_BA_EN_INFO]);
+			if (status == 0) {
+				wifi_debug(DEBUG_NOTICE, "disabled\n");
+			} else {
+				wifi_debug(DEBUG_NOTICE, "enabled\n");
+			}
+			*out_status = status;
+		}
+	}
+
+	return 0;
+}
+
+int mtk_get_ba_decline_status_callback(struct nl_msg *msg, void *data)
+{
+	struct nlattr *tb[NL80211_ATTR_MAX + 1];
+	struct nlattr *vndr_tb[MTK_NL80211_VENDOR_AP_BA_ATTR_MAX + 1];
+	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+	unsigned char status;
+	unsigned char *out_status = data;
+	int err = 0;
+
+	err = nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+			  genlmsg_attrlen(gnlh, 0), NULL);
+	if (err < 0) {
+		wifi_debug(DEBUG_ERROR, "get NL80211_ATTR_MAX fails\n");
+		return err;
+	}
+
+	if (tb[NL80211_ATTR_VENDOR_DATA]) {
+		err = nla_parse_nested(vndr_tb, MTK_NL80211_VENDOR_AP_BA_ATTR_MAX,
+			tb[NL80211_ATTR_VENDOR_DATA], NULL);
+		if (err < 0) {
+			wifi_debug(DEBUG_ERROR, "get MTK_NL80211_VENDOR_AP_BA_ATTR_MAX fails\n");
+			return err;
+		}
+
+		if (vndr_tb[MTK_NL80211_VENDOR_ATTR_AP_BA_DECLINE_INFO]) {
+			status = nla_get_u8(vndr_tb[MTK_NL80211_VENDOR_ATTR_AP_BA_DECLINE_INFO]);
+			if (status == 0) {
+				wifi_debug(DEBUG_NOTICE, "disabled\n");
+			} else {
+				wifi_debug(DEBUG_NOTICE, "enabled\n");
+			}
+			*out_status = status;
+		}
+	}
+
+	return NL_OK;
+}
+
+INT mtk_wifi_get_ba_decl_auto_status(
+	INT apIndex, INT vendor_data_attr, mtk_nl80211_cb call_back, BOOL *output_bool)
+{
+	char inf_name[IF_NAME_SIZE] = {0};
+	struct mtk_nl80211_param params;
+	unsigned int if_idx = 0;
+	int ret = -1;
+	struct unl unl_ins;
+	struct nl_msg *msg	= NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+
+	if (wifi_GetInterfaceName(apIndex, inf_name) != RETURN_OK)
+		return RETURN_ERR;
+	if_idx = if_nametoindex(inf_name);
+	if (!if_idx) {
+		wifi_debug(DEBUG_ERROR,"can't finde ifname(%s) index,ERROR\n", inf_name);
+		return RETURN_ERR;
+	}
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_BA;
+	param.if_type = NL80211_ATTR_IFINDEX;
+	param.if_idx = if_idx;
+
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+	/*add mtk vendor cmd data*/
+	if (nla_put_u8(msg, vendor_data_attr, 0xf)) {
+		wifi_debug(DEBUG_ERROR, "Nla put vendor_data_attr(%d) attribute error\n", vendor_data_attr);
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	/*send mtk nl80211 vendor msg*/
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, call_back, output_bool);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		goto err;
+	}
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_NOTICE,"send cmd success, get output_bool:%d\n", *output_bool);
+	return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR,"send cmd fails\n");
+	return RETURN_ERR;
+}
 //Get radio ADDBA enable setting
 INT wifi_getRadioDeclineBARequestEnable(INT radioIndex, BOOL *output_bool)
 {
-    char interface_name[16] = {0};
-    char cmd[128]={0};
-    char buf[10]={0};
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-
-    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
-        return RETURN_ERR;
-
-    snprintf(cmd, sizeof(cmd),  "mwctl %s set ba_decline s", interface_name);
-    _syscmd(cmd, buf, sizeof(buf));
-
-    if (strncmp(buf, "enabled", 7) == 0)
-        *output_bool = TRUE;
-    else
-        *output_bool = FALSE;
-
-    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
-
-    return RETURN_OK;
+	if (output_bool == NULL) {
+		wifi_debug(DEBUG_ERROR, "invalid: output_bool is null\n");
+		return RETURN_ERR;
+	}
+	if (mtk_wifi_get_ba_decl_auto_status(radioIndex,
+	 	MTK_NL80211_VENDOR_ATTR_AP_BA_DECLINE_INFO, mtk_get_ba_decline_status_callback, output_bool) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "cmd MTK_NL80211_VENDOR_ATTR_AP_BA_DECLINE_INFO(0x%x) fails\n",
+			MTK_NL80211_VENDOR_ATTR_AP_BA_DECLINE_INFO);
+		return RETURN_ERR;
+	}
+	wifi_debug(DEBUG_NOTICE, "cmd success:output_bool(%d)\n", *output_bool);
+	return RETURN_OK;
 }
 
 //Set radio ADDBA enable setting
@@ -6684,24 +6805,20 @@ INT wifi_setRadioDeclineBARequestEnable(INT radioIndex, BOOL enable)
 //Get radio auto block ack enable setting
 INT wifi_getRadioAutoBlockAckEnable(INT radioIndex, BOOL *output_bool)
 {
-    char interface_name[16] = {0};
-    char cmd[128]={0};
-    char buf[10]={0};
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+	if (output_bool == NULL) {
+		wifi_debug(DEBUG_ERROR, "invalid: output_bool is null\n");
+		return RETURN_ERR;
+	}
 
-    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
-        return RETURN_ERR;
-
-    snprintf(cmd, sizeof(cmd),  "mwctl %s set ba_auto s", interface_name);
-    _syscmd(cmd, buf, sizeof(buf));
-    if (strncmp(buf, "enabled", 7) == 0)
-        *output_bool = TRUE;
-    else
-        *output_bool = FALSE;
-
-    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
-
-    return RETURN_OK;
+    if (mtk_wifi_get_ba_decl_auto_status(radioIndex,
+	 	MTK_NL80211_VENDOR_ATTR_AP_BA_EN_INFO,
+	 	mtk_get_ba_auto_status_callback, output_bool) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "cmd  MTK_NL80211_VENDOR_ATTR_AP_BA_EN_INFO(0x%x) fails\n",
+			MTK_NL80211_VENDOR_ATTR_AP_BA_EN_INFO);
+		return RETURN_ERR;
+	}
+	wifi_debug(DEBUG_NOTICE, "cmd success:output_bool(%d)\n", *output_bool);
+	return RETURN_OK;
 }
 
 //Set radio auto block ack enable setting
@@ -6734,42 +6851,130 @@ INT wifi_setRadio11nGreenfieldEnable(INT radioIndex, BOOL enable)
     return RETURN_ERR;
 }
 
+
+int mtk_get_igmp_status_callback(struct nl_msg *msg, void *data)
+{
+	struct nlattr *tb[NL80211_ATTR_MAX + 1];
+	struct nlattr *vndr_tb[MTK_NL80211_VENDOR_MCAST_SNOOP_ATTR_MAX + 1];
+	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+	unsigned char status = 0, *out_status = data;
+	int err = 0;
+
+	err = nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+			  genlmsg_attrlen(gnlh, 0), NULL);
+	if (err < 0) {
+		wifi_debug(DEBUG_ERROR, "get NL80211_ATTR_MAX fails\n");
+		return err;
+	}
+
+	if (tb[NL80211_ATTR_VENDOR_DATA]) {
+		err = nla_parse_nested(vndr_tb, MTK_NL80211_VENDOR_MCAST_SNOOP_ATTR_MAX,
+			tb[NL80211_ATTR_VENDOR_DATA], NULL);
+		if (err < 0){
+			wifi_debug(DEBUG_ERROR, "get MTK_NL80211_VENDOR_MCAST_SNOOP_ATTR_MAX fails\n");
+			return err;
+		}
+
+		if (vndr_tb[MTK_NL80211_VENDOR_ATTR_MCAST_SNOOP_ENABLE]) {
+			status = nla_get_u8(vndr_tb[MTK_NL80211_VENDOR_ATTR_MCAST_SNOOP_ENABLE]);
+			if (status == 0) {
+				wifi_debug(DEBUG_NOTICE, "disabled\n");
+			} else {
+				wifi_debug(DEBUG_NOTICE, "enabled\n");
+			}
+			*out_status = status;
+			wifi_debug(DEBUG_NOTICE, "status: %d\n", *out_status);
+		}
+	}
+
+	return 0;
+}
+
+INT mtk_wifi_set_igmp_en_status(
+	INT apIndex, INT vendor_data_attr, mtk_nl80211_cb call_back,
+	unsigned char in_en_stat, BOOL *output_bool)
+{
+	char inf_name[IF_NAME_SIZE] = {0};
+	struct mtk_nl80211_param params;
+	unsigned int if_idx = 0;
+	int ret = -1;
+	struct unl unl_ins;
+	struct nl_msg *msg	= NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+
+	if (wifi_GetInterfaceName(apIndex, inf_name) != RETURN_OK)
+		return RETURN_ERR;
+	if_idx = if_nametoindex(inf_name);
+	if (!if_idx) {
+		wifi_debug(DEBUG_ERROR,"can't finde ifname(%s) index,ERROR\n", inf_name);
+		return RETURN_ERR;
+	}
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_MULTICAST_SNOOPING;
+	param.if_type = NL80211_ATTR_IFINDEX;
+	param.if_idx = if_idx;
+
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+	/*add mtk vendor cmd data*/
+	if (nla_put_u8(msg, vendor_data_attr, in_en_stat)) {
+		wifi_debug(DEBUG_ERROR, "Nla put vendor_data_attr(%d) attribute error\n", vendor_data_attr);
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	/*send mtk nl80211 vendor msg*/
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, call_back, output_bool);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		goto err;
+	}
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+	if (output_bool) {
+		wifi_debug(DEBUG_NOTICE, "send cmd success, get output_bool:%d\n", *output_bool);
+	} else {
+		wifi_debug(DEBUG_NOTICE, "send cmd success.\n");
+	}
+	return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR,"send cmd fails\n");
+	return RETURN_ERR;
+}
+
+
 //Get radio IGMP snooping enable setting
 INT wifi_getRadioIGMPSnoopingEnable(INT radioIndex, BOOL *output_bool)
 {
-    char interface_name[16] = {0};
-    char cmd[128]={0};
-    char buf[10]={0};
-    bool bridge = FALSE, mac80211 = FALSE;
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-
-    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
-        return RETURN_ERR;
-
-    snprintf(cmd, sizeof(cmd), "mwctl %s set multicast_snooping enable=s", interface_name);
-    _syscmd(cmd, buf, sizeof(buf));
-    if (strncmp(buf, "enabled", 7) == 0)
-        *output_bool = TRUE;
-    else
-        *output_bool = FALSE;
-
-    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+	if (output_bool == NULL) {
+		wifi_debug(DEBUG_ERROR, "invalid: output_bool is null\n");
+		return RETURN_ERR;
+	}
+    if (mtk_wifi_set_igmp_en_status
+		(radioIndex, MTK_NL80211_VENDOR_ATTR_MCAST_SNOOP_ENABLE,
+		mtk_get_igmp_status_callback, 0xf, output_bool)!= RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "send MTK_NL80211_VENDOR_ATTR_MCAST_SNOOP_ENABLE cmd fails\n");
+		return RETURN_ERR;
+	}
+	wifi_debug(DEBUG_ERROR, "send cmd success: get igmp status:(%d)\n", *output_bool);
     return RETURN_OK;
 }
 
 //Set radio IGMP snooping enable setting
 INT wifi_setRadioIGMPSnoopingEnable(INT radioIndex, BOOL enable)
 {
-    char interface_name[16] = {0};
-    char cmd[128]={0};
-    char buf[4]={0};
-
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
-        return RETURN_ERR;
-    snprintf(cmd, sizeof(cmd),  "mwctl %s set multicast_snooping enable=1", interface_name);
-    _syscmd(cmd, buf, sizeof(buf));
-    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+   if (mtk_wifi_set_igmp_en_status
+		(radioIndex, MTK_NL80211_VENDOR_ATTR_MCAST_SNOOP_ENABLE,
+		NULL, enable, NULL) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "send  MTK_NL80211_VENDOR_ATTR_MCAST_SNOOP_ENABLE cmd fails\n");
+		return RETURN_ERR;
+	}
+	wifi_debug(DEBUG_ERROR, "send cmd success: set igmp enable(%d)\n", enable);
     return RETURN_OK;
 }
 
@@ -13981,6 +14186,44 @@ int main(int argc,char **argv)
         }
 		filter_mode = atoi(argv[3]);
 		wifi_setApMacAddressControlMode(index,filter_mode);
+		return 0;
+	}
+		if (strncmp(argv[1], "wifi_getRadioDeclineBARequestEnable", strlen(argv[1])) == 0) {
+		BOOL output_bool = 0;
+		wifi_getRadioDeclineBARequestEnable(index, &output_bool);
+		wifi_debug(DEBUG_NOTICE, "Ap get radio ba decline enable: %d\n", output_bool);
+		return 0;
+	}
+	if (strncmp(argv[1], "wifi_getRadioAutoBlockAckEnable", strlen(argv[1])) == 0) {
+		BOOL output_bool = 0;
+		wifi_getRadioAutoBlockAckEnable(index, &output_bool);
+		wifi_debug(DEBUG_NOTICE, "Ap get radio auto_ba enable: %d\n", output_bool);
+		return 0;
+	}
+
+	if (strncmp(argv[1], "wifi_getApMacAddressControlMode", strlen(argv[1])) == 0) {
+		int filter_mode = 0;
+		wifi_getApMacAddressControlMode(index, &filter_mode);
+		wifi_debug(DEBUG_NOTICE, "Ap MacAddress Control Mode: %d\n", filter_mode);
+		return 0;
+	}
+	if (strncmp(argv[1], "wifi_setRadioIGMPSnoopingEnable", strlen(argv[1])) == 0) {
+		int enable = 0;
+		if(argc <= 3 )
+        {
+            wifi_debug(DEBUG_ERROR, "Insufficient arguments \n");
+            exit(-1);
+        }
+		enable = (BOOL)atoi(argv[3]);
+		wifi_setRadioIGMPSnoopingEnable(index, enable);
+		wifi_debug(DEBUG_NOTICE, "Ap set IGMP Snooping Enable: %d\n", enable);
+		return 0;
+	}
+
+	if (strncmp(argv[1], "wifi_getRadioIGMPSnoopingEnable", strlen(argv[1])) == 0) {
+		BOOL out_status = 0;
+		wifi_getRadioIGMPSnoopingEnable(index, &out_status);
+		wifi_debug(DEBUG_NOTICE, "Ap get IGMP Snooping Enable: %d\n", out_status);
 		return 0;
 	}
 
