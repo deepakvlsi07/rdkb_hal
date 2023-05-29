@@ -12349,26 +12349,28 @@ static int rxStatsInfo_callback(struct nl_msg *msg, void *arg) {
       }
     }
 
-  if(sinfo[NL80211_STA_INFO_RX_BITRATE]) {
-      if(rinfo[NL80211_RATE_INFO_MCS])
-          ((wifi_associated_dev_rate_info_rx_stats_t*)arg)->mcs = nla_get_u8(rinfo[NL80211_RATE_INFO_MCS]);
-      }
-      if(sinfo[NL80211_STA_INFO_RX_BYTES64])
-          ((wifi_associated_dev_rate_info_rx_stats_t*)arg)->bytes = nla_get_u64(sinfo[NL80211_STA_INFO_RX_BYTES64]);
-      else if (sinfo[NL80211_STA_INFO_RX_BYTES])
-          ((wifi_associated_dev_rate_info_rx_stats_t*)arg)->bytes = nla_get_u32(sinfo[NL80211_STA_INFO_RX_BYTES]);
+	if(sinfo[NL80211_STA_INFO_RX_BITRATE]) {
+		if(rinfo[NL80211_RATE_INFO_MCS])
+			((wifi_associated_dev_rate_info_rx_stats_t*)arg)->mcs = nla_get_u8(rinfo[NL80211_RATE_INFO_MCS]);
+	}
+	if(sinfo[NL80211_STA_INFO_RX_BYTES64])
+		((wifi_associated_dev_rate_info_rx_stats_t*)arg)->bytes = nla_get_u64(sinfo[NL80211_STA_INFO_RX_BYTES64]);
+	else if (sinfo[NL80211_STA_INFO_RX_BYTES])
+		((wifi_associated_dev_rate_info_rx_stats_t*)arg)->bytes = nla_get_u32(sinfo[NL80211_STA_INFO_RX_BYTES]);
 
-      if(stats_info[NL80211_TID_STATS_RX_MSDU])
-          ((wifi_associated_dev_rate_info_rx_stats_t*)arg)->msdus = nla_get_u64(stats_info[NL80211_TID_STATS_RX_MSDU]);
+	if(sinfo[NL80211_STA_INFO_TID_STATS]) {
+		if(stats_info[NL80211_TID_STATS_RX_MSDU])
+			((wifi_associated_dev_rate_info_rx_stats_t*)arg)->msdus = nla_get_u64(stats_info[NL80211_TID_STATS_RX_MSDU]);
+	}
 
-      if (sinfo[NL80211_STA_INFO_SIGNAL])
-           ((wifi_associated_dev_rate_info_rx_stats_t*)arg)->rssi_combined = nla_get_u8(sinfo[NL80211_STA_INFO_SIGNAL]);
-      //Assigning 0 for RETRIES ,PPDUS and MPDUS as we dont have rx retries attribute in libnl_3.3.0
-           ((wifi_associated_dev_rate_info_rx_stats_t*)arg)->retries = 0;
-           ((wifi_associated_dev_rate_info_rx_stats_t*)arg)->ppdus = 0;
-           ((wifi_associated_dev_rate_info_rx_stats_t*)arg)->msdus = 0;
-      //rssi_array need to be filled
-      return NL_SKIP;
+	if (sinfo[NL80211_STA_INFO_SIGNAL])
+		((wifi_associated_dev_rate_info_rx_stats_t*)arg)->rssi_combined = nla_get_u8(sinfo[NL80211_STA_INFO_SIGNAL]);
+	//Assigning 0 for RETRIES ,PPDUS and MPDUS as we dont have rx retries attribute in libnl_3.3.0
+	((wifi_associated_dev_rate_info_rx_stats_t*)arg)->retries = 0;
+	((wifi_associated_dev_rate_info_rx_stats_t*)arg)->ppdus = 0;
+	((wifi_associated_dev_rate_info_rx_stats_t*)arg)->msdus = 0;
+	//rssi_array need to be filled
+	return NL_SKIP;
 }
 #endif
 
@@ -12503,17 +12505,19 @@ static int txStatsInfo_callback(struct nl_msg *msg, void *arg) {
         ((wifi_associated_dev_rate_info_tx_stats_t*)arg)->bytes = nla_get_u32(sinfo[NL80211_STA_INFO_TX_BYTES]);
 
     //Assigning  0 for mpdus and ppdus , as we do not have attributes in netlink
-        ((wifi_associated_dev_rate_info_tx_stats_t*)arg)->mpdus = 0;
-        ((wifi_associated_dev_rate_info_tx_stats_t*)arg)->mpdus = 0;
+    ((wifi_associated_dev_rate_info_tx_stats_t*)arg)->mpdus = 0;
+    ((wifi_associated_dev_rate_info_tx_stats_t*)arg)->mpdus = 0;
 
-    if(stats_info[NL80211_TID_STATS_TX_MSDU])
-        ((wifi_associated_dev_rate_info_tx_stats_t*)arg)->msdus = nla_get_u64(stats_info[NL80211_TID_STATS_TX_MSDU]);
+    if(sinfo[NL80211_STA_INFO_TID_STATS]) {
+        if(stats_info[NL80211_TID_STATS_TX_MSDU])
+            ((wifi_associated_dev_rate_info_tx_stats_t*)arg)->msdus = nla_get_u64(stats_info[NL80211_TID_STATS_TX_MSDU]);
+    }
 
     if(sinfo[NL80211_STA_INFO_TX_RETRIES])
         ((wifi_associated_dev_rate_info_tx_stats_t*)arg)->retries = nla_get_u32(sinfo[NL80211_STA_INFO_TX_RETRIES]);
 
-    if(sinfo[NL80211_STA_INFO_TX_FAILED])
-                 ((wifi_associated_dev_rate_info_tx_stats_t*)arg)->attempts = nla_get_u32(sinfo[NL80211_STA_INFO_TX_PACKETS]) + nla_get_u32(sinfo[NL80211_STA_INFO_TX_FAILED]);
+    if(sinfo[NL80211_STA_INFO_TX_FAILED] && sinfo[NL80211_STA_INFO_TX_PACKETS])
+        ((wifi_associated_dev_rate_info_tx_stats_t*)arg)->attempts = nla_get_u32(sinfo[NL80211_STA_INFO_TX_PACKETS]) + nla_get_u32(sinfo[NL80211_STA_INFO_TX_FAILED]);
 
     return NL_SKIP;
 }
