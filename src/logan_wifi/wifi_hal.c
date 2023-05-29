@@ -8253,12 +8253,16 @@ INT wifi_setApEnable(INT apIndex, BOOL enable)
 	if (enable == TRUE) {
 		int radioIndex = apIndex % max_radio_num;
 		phyId = radio_index_to_phy(radioIndex);
+		snprintf(cmd, MAX_CMD_SIZE, "ifconfig %s up", interface_name);
+		_syscmd(cmd, buf, sizeof(buf));
 
 		snprintf(config_file, MAX_BUF_SIZE, "%s%d.conf", CONFIG_PREFIX, apIndex);
 		snprintf(cmd, MAX_CMD_SIZE, "hostapd_cli -i global raw ADD bss_config=phy%d:%s", phyId, config_file);
 		_syscmd(cmd, buf, sizeof(buf));
 	} else {
 		snprintf(cmd, MAX_CMD_SIZE, "hostapd_cli -i global raw REMOVE %s", interface_name);
+		_syscmd(cmd, buf, sizeof(buf));
+		snprintf(cmd, MAX_CMD_SIZE, "ifconfig %s down", interface_name);
 		_syscmd(cmd, buf, sizeof(buf));
 	}
 	snprintf(cmd, MAX_CMD_SIZE, "sed -i -n -e '/^%s=/!p' -e '$a%s=%d' %s",
