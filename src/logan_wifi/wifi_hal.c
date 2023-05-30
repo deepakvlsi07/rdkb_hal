@@ -2061,17 +2061,21 @@ static void wifi_radio_reset_count_reset()
 INT wifi_init()                            //RDKB
 {
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+	static int CallOnce = 1;
     //Not intitializing macfilter for Turris-Omnia Platform for now
     //macfilter_init();
-    wifi_ParseProfile();
-    wifi_PrepareDefaultHostapdConfigs();
-	wifi_psk_file_reset();
-    //system("/usr/sbin/iw reg set US");
-    system("systemctl start hostapd.service");
-    sleep(2);
+    if (CallOnce) {
+		wifi_ParseProfile();
+		wifi_PrepareDefaultHostapdConfigs();
+		wifi_psk_file_reset();
+		//system("/usr/sbin/iw reg set US");
+		system("systemctl start hostapd.service");
+		sleep(2);
 
-	wifi_vap_status_reset();
-	wifi_radio_reset_count_reset();
+		wifi_vap_status_reset();
+		wifi_radio_reset_count_reset();
+		CallOnce = 0;
+    }
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
