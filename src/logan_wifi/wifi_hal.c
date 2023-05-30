@@ -3605,19 +3605,32 @@ INT wifi_getRadioChannel(INT radioIndex, ULONG *output_ulong)	//RDKB
 {
     char channel_str[16] = {0};
     char config_file[128] = {0};
+    char buf[MAX_BUF_SIZE] = {0};
+    char cmd[MAX_CMD_SIZE] = {0};
+    char interface_name[IF_NAME_SIZE] = {0};
     wifi_band band = band_invalid;
+    bool *output_bool = FALSE;
+    int channel = 0;
+    ULONG iwChannel = 0;
+
 
     if (output_ulong == NULL)
         return RETURN_ERR;
     band = wifi_index_to_band(radioIndex);
     snprintf(config_file, sizeof(config_file), "%s%d.dat", LOGAN_DAT_FILE, band);
     wifi_datfileRead(config_file, "Channel", channel_str, sizeof(channel_str));
-
     *output_ulong = strtoul(channel_str, NULL, 10);
+    if (*output_ulong == 0) {
+        if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+            return RETURN_ERR;
+        snprintf(cmd, sizeof(cmd), "iw dev %s info |grep channel | cut -d ' ' -f2", interface_name);
+        _syscmd(cmd,buf,sizeof(buf));
+        sscanf(buf, "%lu", &iwChannel);
+        *output_ulong = iwChannel;
+    }
 
     return RETURN_OK;
 }
-
 
 INT wifi_getApChannel(INT apIndex,ULONG *output_ulong) //RDKB
 {
@@ -3628,9 +3641,10 @@ INT wifi_getApChannel(INT apIndex,ULONG *output_ulong) //RDKB
     if (NULL == output_ulong)
         return RETURN_ERR;
 
-    snprintf(cmd, sizeof(cmd), "iw dev %s info |grep channel | cut -d ' ' -f2",interface_name);
-    if (wifi_getApName(apIndex,interface_name) != RETURN_OK)
+    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
+
+    snprintf(cmd, sizeof(cmd), "iw dev %s info |grep channel | cut -d ' ' -f2", interface_name);
     _syscmd(cmd,buf,sizeof(buf));
     *output_ulong = (strlen(buf) >= 1)? atol(buf): 0;
     if (*output_ulong == 0) {
@@ -3640,7 +3654,6 @@ INT wifi_getApChannel(INT apIndex,ULONG *output_ulong) //RDKB
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
-
 //Storing the previous channel value
 INT wifi_storeprevchanval(INT radioIndex)
 {
@@ -3773,9 +3786,18 @@ INT wifi_setRadioAutoChannelEnable(INT radioIndex, BOOL enable) //RDKB
     int count = 0;
     ULONG Value = 0;
     FILE *fp = NULL;
-    if(enable == TRUE)
-    {
+    char config_file_dat[128] = {0};
+    struct params acs = {0};
+    wifi_band band = band_invalid;
+
+    if(enable == TRUE) {
         wifi_setRadioChannel(radioIndex,Value);
+    } else {
+        acs.name = "AutoChannelSelect";
+        acs.value = "0";
+        band = wifi_index_to_band(radioIndex);
+        snprintf(config_file_dat, sizeof(config_file_dat), "%s%d.dat", LOGAN_DAT_FILE, band);
+        wifi_datfileWrite(config_file_dat, &acs, 1);
     }
     return RETURN_OK;
 }
@@ -5491,9 +5513,12 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
     snprintf(file_name, sizeof(file_name), "%s%d.txt", ESSID_FILE, radioIndex);
     f = fopen(file_name, "r");
     if (f != NULL) {
-        fgets(filter_SSID, sizeof(file_name), f);
-        if (strlen(filter_SSID) != 0)
-            filter_enable = true;
+        fgets(buf, sizeof(file_name), f);
+        if ((strncmp(buf, "0", 1)) != 0) {
+            fgets(filter_SSID, sizeof(file_name), f);
+            if (strlen(filter_SSID) != 0)
+                filter_enable = true;
+        }
         fclose(f);
     }
 
@@ -10626,6 +10651,8 @@ INT wifi_getRadioAutoChannelEnable(INT radioIndex, BOOL *output_bool)
     wifi_datfileRead(config_file, "AutoChannelSelect" , output, sizeof(output));
 
     if (output == NULL)
+        *output_bool = FALSE;
+    else if (strncmp(output, "0", 1) == 0)
         *output_bool = FALSE;
     else if (strncmp(output, "1", 1) == 0)
         *output_bool = TRUE;
