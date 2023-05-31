@@ -14298,7 +14298,7 @@ int main(int argc,char **argv)
 		wifi_debug(DEBUG_NOTICE, "wifi_getRadioStatus enable: %d\n", (int)enable);
 		return 0;
 	}
-	
+
 	if (strncmp(argv[1], "wifi_getApWMMCapability", strlen(argv[1])) == 0) {
 		BOOL enable = 0;
 
@@ -14729,28 +14729,33 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
             fprintf(stderr, "%s: wifi_setRadioAutoChannelEnable return error.\n", __func__);
             return RETURN_ERR;
         }
+        drv_dat_change = TRUE;
     }
+    if (current_param.channelWidth != operationParam->channelWidth ||
+        current_param.channel != operationParam->channel ||
+        current_param.autoChannelEnabled != operationParam->autoChannelEnabled) {
+        if (operationParam->channelWidth == WIFI_CHANNELBANDWIDTH_20MHZ)
+            bandwidth = 20;
+        else if (operationParam->channelWidth == WIFI_CHANNELBANDWIDTH_40MHZ)
+            bandwidth = 40;
+        else if (operationParam->channelWidth == WIFI_CHANNELBANDWIDTH_80MHZ)
+            bandwidth = 80;
+        else if (operationParam->channelWidth == WIFI_CHANNELBANDWIDTH_160MHZ || operationParam->channelWidth == WIFI_CHANNELBANDWIDTH_80_80MHZ)
+            bandwidth = 160;
 
-    if (operationParam->channelWidth == WIFI_CHANNELBANDWIDTH_20MHZ)
-        bandwidth = 20;
-    else if (operationParam->channelWidth == WIFI_CHANNELBANDWIDTH_40MHZ)
-        bandwidth = 40;
-    else if (operationParam->channelWidth == WIFI_CHANNELBANDWIDTH_80MHZ)
-        bandwidth = 80;
-    else if (operationParam->channelWidth == WIFI_CHANNELBANDWIDTH_160MHZ || operationParam->channelWidth == WIFI_CHANNELBANDWIDTH_80_80MHZ)
-        bandwidth = 160;
-    if (operationParam->autoChannelEnabled){
-        if (wifi_pushRadioChannel2(index, 0, bandwidth, operationParam->csa_beacon_count) != RETURN_OK) {
-            fprintf(stderr, "%s: wifi_pushRadioChannel2 return error.\n", __func__);
-            return RETURN_ERR;
+        if (operationParam->autoChannelEnabled) {
+            if (wifi_pushRadioChannel2(index, 0, bandwidth, operationParam->csa_beacon_count) != RETURN_OK) {
+                fprintf(stderr, "%s: wifi_pushRadioChannel2 return error.\n", __func__);
+                return RETURN_ERR;
+            }
+        } else {
+            if (wifi_pushRadioChannel2(index, operationParam->channel, bandwidth, operationParam->csa_beacon_count) != RETURN_OK) {
+                fprintf(stderr, "%s: wifi_pushRadioChannel2 return error.\n", __func__);
+                return RETURN_ERR;
+            }
         }
-    }else{
-        if (wifi_pushRadioChannel2(index, operationParam->channel, bandwidth, operationParam->csa_beacon_count) != RETURN_OK) {
-            fprintf(stderr, "%s: wifi_pushRadioChannel2 return error.\n", __func__);
-            return RETURN_ERR;
-        }
+        drv_dat_change = TRUE;
     }
-
     if (current_param.variant != operationParam->variant) {
         // Two different definition bit map, so need to check every bit.
         if (operationParam->variant & WIFI_80211_VARIANT_A)
@@ -15381,7 +15386,7 @@ int hostapd_raw_remove_bss(int apIndex)
 }
 
 int hostapd_raw_restart_bss(int apIndex)
-{	
+{
 	hostapd_raw_remove_bss(apIndex);
 	hostapd_raw_add_bss(apIndex);
 }
@@ -15515,7 +15520,7 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
             fprintf(stderr, "%s: wifi_setApSecurity return error\n", __func__);
             return RETURN_ERR;
         }
-		
+
 		hostapd_raw_restart_bss(vap_info->vap_index);
 
         multiple_set = FALSE;
