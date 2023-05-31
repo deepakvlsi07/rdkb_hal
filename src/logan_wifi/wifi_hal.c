@@ -3916,6 +3916,8 @@ INT wifi_factoryResetAP(int apIndex)
 		_syscmd(cmd, ret_buf, sizeof(ret_buf));
 	}
 
+	wifi_setApEnable(apIndex, FALSE);
+	wifi_setApEnable(apIndex, TRUE);
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
 	return RETURN_OK;
