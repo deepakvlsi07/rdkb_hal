@@ -10658,14 +10658,14 @@ INT wifi_getRadioAutoChannelEnable(INT radioIndex, BOOL *output_bool)
 {
     char output[16]={'\0'};
     char config_file[MAX_BUF_SIZE] = {0};
+    wifi_band band = band_invalid;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
+    band = wifi_index_to_band(radioIndex);
+    snprintf(config_file, sizeof(config_file), "%s%d.dat", LOGAN_DAT_FILE, band);
     wifi_datfileRead(config_file, "AutoChannelSelect" , output, sizeof(output));
 
-    if (output == NULL)
-        *output_bool = FALSE;
-    else if (strncmp(output, "0", 1) == 0)
+    if (strncmp(output, "0", 1) == 0)
         *output_bool = FALSE;
     else if (strncmp(output, "1", 1) == 0)
         *output_bool = TRUE;
