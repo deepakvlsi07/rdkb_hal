@@ -262,8 +262,6 @@ char *                  wifi_get_str_by_key(wifi_secur_list *list, int list_sz, 
 static int ieee80211_channel_to_frequency(int channel, int *freqMHz);
 static void wifi_PrepareDefaultHostapdConfigs(void);
 static void wifi_psk_file_reset();
-static void wifi_psk_file_reset_by_radio(char radio_idx);
-static void wifi_dat_file_reset();
 static void wifi_dat_file_reset_by_radio(char radio_idx);
 static int util_get_sec_chan_offset(int channel, const char* ht_mode);
 int hostapd_raw_add_bss(int apIndex);
@@ -413,23 +411,6 @@ int mtk_nl80211_deint(struct unl *nl) {
 	unl_free(nl);
 	return 0;
 }
-
-
-static wifi_secur_list map_security[] =
-{
-    WIFI_ITEM_STR(wifi_security_mode_none,                    "None"),
-    WIFI_ITEM_STR(wifi_security_mode_wep_64,                  "WEP-64"),
-    WIFI_ITEM_STR(wifi_security_mode_wep_128,                 "WEP-128"),
-    WIFI_ITEM_STR(wifi_security_mode_wpa_personal,            "WPA-Personal"),
-    WIFI_ITEM_STR(wifi_security_mode_wpa_enterprise,          "WPA-Enterprise"),
-    WIFI_ITEM_STR(wifi_security_mode_wpa2_personal,           "WPA2-Personal"),
-    WIFI_ITEM_STR(wifi_security_mode_wpa2_enterprise,         "WPA2-Enterprise"),
-    WIFI_ITEM_STR(wifi_security_mode_wpa_wpa2_personal,       "WPA-WPA2-Personal"),
-    WIFI_ITEM_STR(wifi_security_mode_wpa_wpa2_enterprise,     "WPA-WPA2-Enterprise"),
-    WIFI_ITEM_STR(wifi_security_mode_wpa3_personal,           "WPA3-Personal"),
-    WIFI_ITEM_STR(wifi_security_mode_wpa3_transition,         "WPA3-Personal-Transition"),
-    WIFI_ITEM_STR(wifi_security_mode_wpa3_enterprise,         "WPA3-Enterprise")
-};
 
 wifi_secur_list * wifi_get_item_by_key(wifi_secur_list *list, int list_sz, int key)
 {
@@ -695,8 +676,6 @@ typedef struct wifi_device_info {
 #endif
 
 //For 5g Alias Interfaces
-static BOOL priv_flag = TRUE;
-static BOOL pub_flag = TRUE;
 static BOOL Radio_flag = TRUE;
 //wifi_setApBeaconRate(1, beaconRate);
 
@@ -880,32 +859,6 @@ static int wifi_datfileRead(char *conf_file, char *param, char *output, int outp
     return 0;
 }
 
-static int wifi_datfileRead2(char *conf_file, int idx, char *param, char *output, int output_size)
-{
-    char cmd[MAX_CMD_SIZE] = {0};
-    int ret = 0;
-    int len;
-
-    ret = snprintf(cmd, sizeof(cmd), "datconf -f %s get %s %d", conf_file, param, idx);
-    if (ret < 0) {
-        printf("%s: snprintf error!", __func__);
-        return -1;
-    }
-
-    ret = _syscmd(cmd, output, output_size);
-    if ((ret != 0) && (strlen(output) == 0)) {
-        printf("%s: _syscmd error!", __func__);
-        return -1;
-    }
-
-    len = strlen(output);
-    if ((len > 0) && (output[len - 1] == '\n')) {
-        output[len - 1] = '\0';
-    }
-
-    return 0;
-}
-
 static int wifi_datfileWrite(char *conf_file, struct params *list, int item_count)
 {
     int ret;
@@ -914,26 +867,6 @@ static int wifi_datfileWrite(char *conf_file, struct params *list, int item_coun
 
     for (int i = 0; i < item_count; i++) {
         ret = snprintf(cmd, sizeof(cmd), "datconf -f %s set %s \"%s\"", conf_file, list[i].name, list[i].value);
-        if (ret < 0) {
-            printf("%s: snprintf error!", __func__);
-            return -1;
-        }
-
-        if(_syscmd(cmd, buf, sizeof(buf)))
-            return -1;
-    }
-
-    return 0;
-}
-
-static int wifi_datfileWrite2(char *conf_file, int idx, struct params *list, int item_count)
-{
-    int ret;
-    char cmd[MAX_CMD_SIZE] = {0};
-    char buf[MAX_BUF_SIZE] = {0};
-
-    for (int i = 0; i < item_count; i++) {
-        ret = snprintf(cmd, sizeof(cmd), "datconf -f %s set %s %d \"%s\"", conf_file, list[i].name, idx, list[i].value);
         if (ret < 0) {
             printf("%s: snprintf error!", __func__);
             return -1;
@@ -965,27 +898,6 @@ static int wifi_l1ProfileRead(char *param, char *output, int output_size)
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
-
-static int wifi_l1ProfileRead2(char *param, int idx, char *output, int output_size)
-{
-    int ret;
-
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    if (!param || !output || (output_size <= 0)) {
-        fprintf(stderr, "%s: invalid parameters", __func__);
-        return RETURN_ERR;
-    }
-
-    ret = wifi_datfileRead2(l1profile, idx, param, output, output_size);
-    if (ret != 0) {
-        fprintf(stderr, "%s: wifi_datfileRead2 %s from %s failed, ret:%d", __func__, param, l1profile, ret);
-        return RETURN_ERR;
-    }
-
-    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
-    return RETURN_OK;
-}
-
 
 static int wifi_CardProfileRead(int card_idx, char *param, char *output, int output_size)
 {
@@ -1053,105 +965,6 @@ static int wifi_BandProfileRead(int card_idx,
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
-
-static int wifi_BandProfileRead2(int card_idx,
-                                 int radio_idx,
-                                 int idx,
-                                 char *param,
-                                 char *output,
-                                 int output_size,
-                                 char* default_value)
-{
-    char option[64];
-    char band_profile_path[64];
-    int ret;
-
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    if (!param || !output || (output_size <= 0)) {
-        fprintf(stderr, "%s: invalid parameters", __func__);
-        return RETURN_ERR;
-    }
-
-    snprintf(option, sizeof(option), "BN%d_profile_path", radio_idx);
-    ret = wifi_CardProfileRead(card_idx, option, band_profile_path, sizeof(band_profile_path));
-    if (ret != 0) {
-        fprintf(stderr, "%s: wifi_CardProfileRead %s failed, ret:%d", __func__, option, ret);
-        return RETURN_ERR;
-    }
-
-    ret = wifi_datfileRead2(band_profile_path, idx, param, output, output_size);
-    if (ret != 0) {
-        if (default_value) {
-            snprintf(output, output_size, "%s", default_value);
-        } else {
-            output[0] = '\0';
-        }
-    }
-
-    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
-    return RETURN_OK;
-
-}
-
-static int wifi_BandProfileWrite(int card_idx, int radio_idx, struct params *list, int item_count)
-{
-    char option[64];
-    char band_profile_path[64];
-    int ret;
-
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-
-    snprintf(option, sizeof(option), "BN%d_profile_path", radio_idx);
-    ret = wifi_CardProfileRead(card_idx, option, band_profile_path, sizeof(band_profile_path));
-    if (ret != 0) {
-        fprintf(stderr, "%s: wifi_CardProfileRead %s failed, ret:%d", __func__, option, ret);
-        return RETURN_ERR;
-    }
-
-    for (int i = 0; i < item_count; i++) {
-    }
-    ret = wifi_datfileWrite(band_profile_path, list, item_count);
-    if (ret != 0) {
-        fprintf(stderr, "%s: wifi_datfileWrite failed, ret:%d", __func__, ret);
-        return RETURN_ERR;
-    }
-
-    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
-    return RETURN_OK;
-
-}
-
-static int wifi_BandProfileWrite2(int card_idx,
-                                  int radio_idx,
-                                  int idx,
-                                  struct params *list,
-                                  int item_count)
-{
-    char option[64];
-    char band_profile_path[64];
-    int ret;
-
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-
-    snprintf(option, sizeof(option), "BN%d_profile_path", radio_idx);
-    ret = wifi_CardProfileRead(card_idx, option, band_profile_path, sizeof(band_profile_path));
-    if (ret != 0) {
-        fprintf(stderr, "%s: wifi_CardProfileRead %s failed, ret:%d", __func__, option, ret);
-        return RETURN_ERR;
-    }
-
-    ret = wifi_datfileWrite2(band_profile_path, idx, list, item_count);
-    if (ret != 0) {
-        fprintf(stderr, "%s: wifi_datfileWrite failed, ret:%d", __func__, ret);
-        return RETURN_ERR;
-    }
-
-    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
-    return RETURN_OK;
-
-}
-
-
 
 //For Getting Current Interface Name from corresponding hostapd configuration
 static int wifi_GetInterfaceName(int apIndex, char *interface_name)
@@ -1347,27 +1160,6 @@ static int writeBandWidth(int radioIndex,char *bw_value)
 
     sprintf(cmd,"sed -i 's/^SET_BW%d=.*$/SET_BW%d=%s/' %s",radioIndex,radioIndex,bw_value,BW_FNAME);
     _syscmd(cmd,buf,sizeof(buf));
-    return RETURN_OK;
-}
-
-static int readBandWidth(int radioIndex,char *bw_value)
-{
-    char buf[MAX_BUF_SIZE] = {0};
-    char cmd[MAX_CMD_SIZE] = {0};
-    sprintf(cmd,"grep 'SET_BW%d=' %s | sed 's/^.*=//'",radioIndex,BW_FNAME);
-    _syscmd(cmd,buf,sizeof(buf));
-    if(NULL!=strstr(buf,"20MHz"))
-        strcpy(bw_value,"20MHz");
-    else if(NULL!=strstr(buf,"40MHz"))
-        strcpy(bw_value,"40MHz");
-    else if(NULL!=strstr(buf,"80MHz"))
-        strcpy(bw_value,"80MHz");
-    else if(NULL!=strstr(buf,"160MHz"))
-        strcpy(bw_value,"160MHz");
-    else if(NULL!=strstr(buf,"320MHz"))
-        strcpy(bw_value,"320MHz");
-    else
-        return RETURN_ERR;
     return RETURN_OK;
 }
 
@@ -1846,63 +1638,6 @@ wifi_PrepareDefaultHostapdConfigs(void)
 }
 
 static void
-wifiBringUpInterfacesForRadio(int radio_idx)
-{
-	int bss_idx;
-	int ap_idx;
-	char cmd[MAX_CMD_SIZE] = {0};
-	char config_file[MAX_BUF_SIZE] = {0};
-	char ret_buf[MAX_BUF_SIZE] = {0};
-	char inf_name[IF_NAME_SIZE] = {0};
-
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-
-	bss_idx = 0;
-	/*TBD: we need refine setup flow and mbss flow*/
-//    for (bss_idx = 0; bss_idx < 5; bss_idx++) {
-		ap_idx = array_index_to_vap_index(radio_idx, bss_idx);
-
-		snprintf(cmd, sizeof(cmd), "touch %s%d.psk", PSK_FILE, ap_idx);
-		_syscmd(cmd, ret_buf, sizeof(ret_buf));
-
-		memset(cmd, 0, MAX_CMD_SIZE);
-		memset(ret_buf, 0, MAX_BUF_SIZE);
-
-		snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, ap_idx);
-		snprintf(cmd, sizeof(cmd), "hostapd_cli -i global raw ADD bss_config=phy%d:%s", radio_idx, config_file);
-		_syscmd(cmd, ret_buf, sizeof(ret_buf));
-
-		wifi_GetInterfaceName(ap_idx, inf_name);
-
-		memset(cmd, 0, MAX_CMD_SIZE);
-		memset(ret_buf, 0, MAX_BUF_SIZE);
-
-		/* fix vap-status file */
-		snprintf(cmd, sizeof(cmd), "sed -i \"s/^%s=.*/%s=1/\" %s", inf_name, inf_name, VAP_STATUS_FILE);
-		_syscmd(cmd, ret_buf, sizeof(ret_buf));
-//    }
-
-    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
-}
-
-static void
-wifi_BringUpInterfaces(void)
-{
-    int radio_idx;
-    int band_idx;
-
-    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    for (radio_idx = 0; radio_idx < MAX_NUM_RADIOS; radio_idx++) {
-        band_idx = radio_index_to_band(radio_idx);
-        if (band_idx < 0) {
-            break;
-        }
-        wifiBringUpInterfacesForRadio(radio_idx);
-    }
-    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
-}
-
-static void
 wifi_BringDownInterfacesForRadio(int radio_idx)
 {
     char cmd[MAX_BUF_SIZE] = {0};
@@ -1932,14 +1667,6 @@ wifi_BringDownInterfaces(void)
         wifi_BringDownInterfacesForRadio(radio_idx);
     }
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
-}
-
-static void wifi_dat_file_reset()
-{
-	char radio_idx = 0;
-
-	for (radio_idx = 0; radio_idx < MAX_NUM_RADIOS; radio_idx++)
-		wifi_dat_file_reset_by_radio(radio_idx);
 }
 
 static void wifi_dat_file_reset_by_radio(char radio_idx)
@@ -1975,28 +1702,6 @@ static void wifi_psk_file_reset()
 		}
 	}
 }
-
-static void wifi_psk_file_reset_by_radio(char radio_idx)
-{
-	char cmd[MAX_CMD_SIZE] = {0};
-	char ret_buf[MAX_BUF_SIZE] = {0};
-	char psk_file[MAX_CMD_SIZE]= {0};
-	char vap_idx = 0;
-
-	for (vap_idx = radio_idx; vap_idx < MAX_APS; vap_idx += MAX_NUM_RADIOS) {
-		snprintf(psk_file, sizeof(psk_file), "%s%d.psk", PSK_FILE, vap_idx);
-
-		if (access(psk_file, F_OK) != 0) {
-			snprintf(cmd, MAX_CMD_SIZE, "touch %s", psk_file);
-			_syscmd(cmd, ret_buf, sizeof(ret_buf));
-		} else {
-			snprintf(cmd, MAX_CMD_SIZE, "echo '' > %s", psk_file);
-			_syscmd(cmd, ret_buf, sizeof(ret_buf));
-		}
-	}
-
-}
-
 
 static void wifi_vap_status_reset()
 {
@@ -2194,8 +1899,10 @@ INT wifi_setRadioCountryCode(INT radioIndex, CHAR *CountryCode)
 		return RETURN_ERR;
 	}
 
-	if (!strlen(CountryCode))
-		strncpy(CountryCode, "US", strlen("US")); /*default set the code to US*/
+	if (!strlen(CountryCode)) {
+		memcpy(CountryCode, "US", strlen("US")); /*default set the code to US*/
+		CountryCode[2] = '\0';
+	}
 
 	params.name = "country_code";
 	params.value = CountryCode;
@@ -3498,7 +3205,7 @@ INT wifi_getRadioPossibleChannels(INT radioIndex, CHAR *output_string)	//RDKB
         snprintf(cmd, sizeof(cmd), "iw phy phy%d info | grep -e '\\*.*MHz .*dBm' | grep -v 'radar\\|no IR\\|5340\\|5480' | cut -d '[' -f2 | cut -d ']' -f1 | tr '\\n' ',' | sed 's/.$//'", phyId);
 
     _syscmd(cmd,buf,sizeof(buf));
-    strncpy(output_string, buf, strlen(buf));
+    strncpy(output_string, buf, strlen(buf) < sizeof(buf) ? strlen(buf) : sizeof(buf));
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
@@ -5527,22 +5234,31 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
 
             filter_BSS = false;
             sscanf(line, "BSS %17s", scan_array[index].ap_BSSID);
-            strncpy(scan_array[index].ap_Mode, "Infrastructure", strlen("Infrastructure"));
-            strncpy(scan_array[index].ap_SecurityModeEnabled, "None", strlen("None"));
-            strncpy(scan_array[index].ap_EncryptionMode, "None", strlen("None"));
+			memset(scan_array[index].ap_Mode, 0, sizeof(scan_array[index].ap_Mode));
+            memcpy(scan_array[index].ap_Mode, "Infrastructure", strlen("Infrastructure"));
+			memset(scan_array[index].ap_SecurityModeEnabled, 0, sizeof(scan_array[index].ap_SecurityModeEnabled));
+            memcpy(scan_array[index].ap_SecurityModeEnabled, "None", strlen("None"));
+			memset(scan_array[index].ap_EncryptionMode, 0, sizeof(scan_array[index].ap_EncryptionMode));
+            memcpy(scan_array[index].ap_EncryptionMode, "None", strlen("None"));
         } else if (strstr(line, "freq") != NULL) {
             sscanf(line,"	freq: %d", &freq);
             scan_array[index].ap_Channel = ieee80211_frequency_to_channel(freq);
 
             if (freq >= 2412 && freq <= 2484) {
-                strncpy(scan_array[index].ap_OperatingFrequencyBand, "2.4GHz", strlen("2.4GHz"));
-                strncpy(scan_array[index].ap_SupportedStandards, "b,g", strlen("b,g"));
-                strncpy(scan_array[index].ap_OperatingStandards, "g", strlen("g"));
+				memset(scan_array[index].ap_OperatingFrequencyBand, 0, sizeof(scan_array[index].ap_OperatingFrequencyBand));
+                memcpy(scan_array[index].ap_OperatingFrequencyBand, "2.4GHz", strlen("2.4GHz"));
+				memset(scan_array[index].ap_SupportedStandards, 0, sizeof(scan_array[index].ap_SupportedStandards));
+                memcpy(scan_array[index].ap_SupportedStandards, "b,g", strlen("b,g"));
+				memset(scan_array[index].ap_OperatingStandards, 0, sizeof(scan_array[index].ap_OperatingStandards));
+                memcpy(scan_array[index].ap_OperatingStandards, "g", strlen("g"));
             }
             else if (freq >= 5160 && freq <= 5805) {
-                strncpy(scan_array[index].ap_OperatingFrequencyBand, "5GHz", strlen("5GHz"));
-                strncpy(scan_array[index].ap_SupportedStandards, "a", strlen("a"));
-                strncpy(scan_array[index].ap_OperatingStandards, "a", strlen("a"));
+				memset(scan_array[index].ap_OperatingFrequencyBand, 0, sizeof(scan_array[index].ap_OperatingFrequencyBand));
+                memcpy(scan_array[index].ap_OperatingFrequencyBand, "5GHz", strlen("5GHz"));
+				memset(scan_array[index].ap_SupportedStandards, 0, sizeof(scan_array[index].ap_SupportedStandards));
+                memcpy(scan_array[index].ap_SupportedStandards, "a", strlen("a"));
+				memset(scan_array[index].ap_OperatingStandards, 0, sizeof(scan_array[index].ap_OperatingStandards));
+                memcpy(scan_array[index].ap_OperatingStandards, "a", strlen("a"));
             }
 
             scan_array[index].ap_Noise = 0;
@@ -7203,6 +6919,7 @@ INT wifi_getApWpaEncryptionMode(INT apIndex, CHAR *output_string)
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     char *param_name = NULL;
     char buf[32] = {0}, config_file[MAX_BUF_SIZE] = {0};
+	unsigned int len;
 
     if(NULL == output_string)
         return RETURN_ERR;
@@ -7231,12 +6948,19 @@ INT wifi_getApWpaEncryptionMode(INT apIndex, CHAR *output_string)
     }
     wifi_dbg_printf("\n%s output_string=%s",__func__,output_string);
 
-    if(strcmp(output_string,"TKIP CCMP") == 0)
-        strncpy(output_string,"TKIPandAESEncryption", strlen("TKIPandAESEncryption"));
-    else if(strcmp(output_string,"TKIP") == 0)
-        strncpy(output_string,"TKIPEncryption", strlen("TKIPEncryption"));
-    else if(strcmp(output_string,"CCMP") == 0)
-        strncpy(output_string,"AESEncryption", strlen("AESEncryption"));
+    if(strcmp(output_string,"TKIP CCMP") == 0) {
+		len = strlen("TKIPandAESEncryption");
+		memcpy(output_string,"TKIPandAESEncryption", len);
+		output_string[len] = '\0';
+	} else if(strcmp(output_string,"TKIP") == 0) {
+		len = strlen("TKIPEncryption");
+		memcpy(output_string,"TKIPEncryption", len);
+		output_string[len] = '\0';
+	} else if(strcmp(output_string,"CCMP") == 0) {
+		len = strlen("AESEncryption");
+		memcpy(output_string,"AESEncryption", len);
+		output_string[len] = '\0';
+	}
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
@@ -7834,10 +7558,6 @@ INT wifi_getApAclDeviceNum(INT apIndex, UINT *output_uint)
 	free(mac_arry);
 	mac_arry = NULL;
 	return RETURN_OK;
-err:
-	free(mac_arry);
-	mac_arry = NULL;
-	return RETURN_ERR;
 }
 
 INT apply_rules(INT apIndex, CHAR *client_mac,CHAR *action,CHAR *interface)
@@ -8199,14 +7919,6 @@ INT wifi_restartHostApd()
     system("systemctl restart hostapd-global");
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
-    return RETURN_OK;
-}
-
-static int align_hostapd_config(int index)
-{
-    ULONG lval;
-    wifi_getRadioChannel(index%2, &lval);
-    wifi_setRadioChannel(index%2, lval);
     return RETURN_OK;
 }
 
@@ -9915,20 +9627,6 @@ static char * hostapd_st_get_param(struct hostapd_sta_param * params, char *key)
 
 } */
 
-static unsigned int count_occurences(const char *buf, const char *word)
-{
-    unsigned int n = 0;
-    char *ptr = strstr(buf, word);
-
-    while (ptr++) {
-        n++;
-        ptr = strstr(ptr, word);
-    }
-
-    wifi_dbg_printf("%s: found %u of '%s'\n",  __FUNCTION__, n, word);
-    return n;
-}
-
 static const char *get_line_from_str_buf(const char *buf, char *line)
 {
     int i;
@@ -11039,7 +10737,7 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
     // Sample commands:
     //   hostapd_cli -i wifi1 chan_switch 30 5200 sec_channel_offset=-1 center_freq1=5190 bandwidth=40 ht vht
     //   hostapd_cli -i wifi0 chan_switch 30 2437
-    int freq = 0, ret = 0;
+    int ret = 0;
     char center_freq1_str[32] = ""; // center_freq1=%d
     char opt_chan_info_str[32] = ""; // bandwidth=%d ht vht
     char sec_chan_offset_str[32] = ""; // sec_channel_offset=%d
@@ -11221,22 +10919,31 @@ INT wifi_getNeighboringWiFiStatus(INT radio_index, wifi_neighbor_ap2_t **neighbo
 
             filter_BSS = false;
             sscanf(line, "BSS %17s", scan_array[index].ap_BSSID);
-            strncpy(scan_array[index].ap_Mode, "Infrastructure", strlen("Infrastructure"));
-            strncpy(scan_array[index].ap_SecurityModeEnabled, "None", strlen("None"));
-            strncpy(scan_array[index].ap_EncryptionMode, "None", strlen("None"));
+			memset(scan_array[index].ap_Mode, 0, sizeof(scan_array[index].ap_Mode));
+            memcpy(scan_array[index].ap_Mode, "Infrastructure", strlen("Infrastructure"));
+			memset(scan_array[index].ap_SecurityModeEnabled, 0, sizeof(scan_array[index].ap_SecurityModeEnabled));
+            memcpy(scan_array[index].ap_SecurityModeEnabled, "None", strlen("None"));
+			memset(scan_array[index].ap_EncryptionMode, 0, sizeof(scan_array[index].ap_EncryptionMode));
+            memcpy(scan_array[index].ap_EncryptionMode, "None", strlen("None"));
         } else if (strstr(line, "freq") != NULL) {
             sscanf(line,"	freq: %d", &freq);
             scan_array[index].ap_Channel = ieee80211_frequency_to_channel(freq);
 
             if (freq >= 2412 && freq <= 2484) {
-                strncpy(scan_array[index].ap_OperatingFrequencyBand, "2.4GHz", strlen("2.4GHz"));
-                strncpy(scan_array[index].ap_SupportedStandards, "b,g", strlen("b,g"));
-                strncpy(scan_array[index].ap_OperatingStandards, "g", strlen("g"));
+				memset(scan_array[index].ap_OperatingFrequencyBand, 0, sizeof(scan_array[index].ap_OperatingFrequencyBand));
+                memcpy(scan_array[index].ap_OperatingFrequencyBand, "2.4GHz", strlen("2.4GHz"));
+				memset(scan_array[index].ap_SupportedStandards, 0, sizeof(scan_array[index].ap_SupportedStandards));
+                memcpy(scan_array[index].ap_SupportedStandards, "b,g", strlen("b,g"));
+				memset(scan_array[index].ap_OperatingStandards, 0, sizeof(scan_array[index].ap_OperatingStandards));
+                memcpy(scan_array[index].ap_OperatingStandards, "g", strlen("g"));
             }
             else if (freq >= 5160 && freq <= 5805) {
-                strncpy(scan_array[index].ap_OperatingFrequencyBand, "5GHz", strlen("5GHz"));
-                strncpy(scan_array[index].ap_SupportedStandards, "a", strlen("a"));
-                strncpy(scan_array[index].ap_OperatingStandards, "a", strlen("a"));
+				memset(scan_array[index].ap_OperatingFrequencyBand, 0, sizeof(scan_array[index].ap_OperatingFrequencyBand));
+                memcpy(scan_array[index].ap_OperatingFrequencyBand, "5GHz", strlen("5GHz"));
+				memset(scan_array[index].ap_SupportedStandards, 0, sizeof(scan_array[index].ap_SupportedStandards));
+                memcpy(scan_array[index].ap_SupportedStandards, "a", strlen("a"));
+				memset(scan_array[index].ap_OperatingStandards, 0, sizeof(scan_array[index].ap_OperatingStandards));
+                memcpy(scan_array[index].ap_OperatingStandards, "a", strlen("a"));
             }
 
             scan_array[index].ap_Noise = 0;
@@ -15205,41 +14912,6 @@ void checkVapStatus(int apIndex, BOOL *enable)
     if (strlen(buf) > 0)
         *enable = TRUE;
     return;
-}
-
-static int prepareInterface(UINT apIndex, char *new_interface)
-{
-    char cur_interface[16] = {0};
-    char config_file[128] = {0};
-    char cmd[MAX_CMD_SIZE] = {0};
-    char buf[MAX_BUF_SIZE] = {0};
-    int max_radio_num = 0;
-    int radioIndex = -1;
-    int phyIndex = -1;
-	struct params params;
-
-    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, apIndex);
-    wifi_hostapdRead(config_file, "interface", cur_interface, sizeof(cur_interface));
-
-    if (strncmp(cur_interface, new_interface, sizeof(cur_interface)) != 0) {
-		wifi_getMaxRadioNumber(&max_radio_num);
-        radioIndex = apIndex % max_radio_num;
-        phyIndex = radio_index_to_phy(radioIndex);
-        // disable and del old interface, then add new interface
-        wifi_setApEnable(apIndex, FALSE);
-
-	   	params.name = "interface";
-	   	params.value = new_interface;
-		wifi_hostapdWrite(config_file, &params, 1);
-
-		snprintf(cmd, MAX_CMD_SIZE, "hostapd_cli -i global raw ADD bss_config=phy%d:%s", phyIndex, config_file);
-		_syscmd(cmd, buf, sizeof(buf));
-    }
-
-    // update the vap status file
-    snprintf(cmd, sizeof(cmd), "sed -i -n -e '/^%s=/!p' -e '$a%s=1' %s", cur_interface, new_interface, VAP_STATUS_FILE);
-    _syscmd(cmd, buf, sizeof(buf));
-    return RETURN_OK;
 }
 
 int hostapd_manage_bss(INT apIndex, BOOL enable)
