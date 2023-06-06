@@ -318,7 +318,7 @@ int mtk_nl80211_init(struct unl *nl, struct nl_msg **msg,
 	/*sanity check here*/
 	if (!nl || !param) {
 		(void)fprintf(stderr,
-		"[%s][%d]:nl(0x%lx) or param(0x%lx) is null, error!\n",
+		"[%s][%d]:nl(%p) or param(%p) is null, error!\n",
 		__func__, __LINE__, nl, param);
 		return -1;
 	}
@@ -383,7 +383,7 @@ int mtk_nl80211_send(struct unl *nl, struct nl_msg *msg,
 	/*sanity check*/
 	if (!nl || !msg || !msg_data) {
 		(void)fprintf(stderr,
-		"[%s][%d]:nl(0x%lx),msg(0x%lx) or msg_data(0x%lx) is null, error!\n",
+		"[%s][%d]:nl(%p),msg(%p) or msg_data(%p) is null, error!\n",
 		__func__, __LINE__, nl, msg, msg_data);
 		return -1;
 	}
@@ -561,7 +561,7 @@ typedef struct {
 
 static int mac_addr_aton(unsigned char *mac_addr, char *arg)
 {
-    unsigned int mac_addr_int[6]={};
+    unsigned char mac_addr_int[6]={};
     sscanf(arg, "%02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx", mac_addr_int+0, mac_addr_int+1, mac_addr_int+2, mac_addr_int+3, mac_addr_int+4, mac_addr_int+5);
     mac_addr[0] = mac_addr_int[0];
     mac_addr[1] = mac_addr_int[1];
@@ -1035,7 +1035,7 @@ static int wifi_BandProfileRead(int card_idx,
     snprintf(option, sizeof(option), "BN%d_profile_path", radio_idx);
     ret = wifi_CardProfileRead(card_idx, option, band_profile_path, sizeof(band_profile_path));
     if (ret != 0) {
-        fprintf(stderr, "%s: wifi_CardProfileRead %s failed, ret:%d", __func__, option);
+        fprintf(stderr, "%s: wifi_CardProfileRead %s failed, ret:%d", __func__, option, ret);
         return RETURN_ERR;
     }
 
@@ -1073,7 +1073,7 @@ static int wifi_BandProfileRead2(int card_idx,
     snprintf(option, sizeof(option), "BN%d_profile_path", radio_idx);
     ret = wifi_CardProfileRead(card_idx, option, band_profile_path, sizeof(band_profile_path));
     if (ret != 0) {
-        fprintf(stderr, "%s: wifi_CardProfileRead %s failed, ret:%d", __func__, option);
+        fprintf(stderr, "%s: wifi_CardProfileRead %s failed, ret:%d", __func__, option, ret);
         return RETURN_ERR;
     }
 
@@ -1102,7 +1102,7 @@ static int wifi_BandProfileWrite(int card_idx, int radio_idx, struct params *lis
     snprintf(option, sizeof(option), "BN%d_profile_path", radio_idx);
     ret = wifi_CardProfileRead(card_idx, option, band_profile_path, sizeof(band_profile_path));
     if (ret != 0) {
-        fprintf(stderr, "%s: wifi_CardProfileRead %s failed, ret:%d", __func__, option);
+        fprintf(stderr, "%s: wifi_CardProfileRead %s failed, ret:%d", __func__, option, ret);
         return RETURN_ERR;
     }
 
@@ -1110,7 +1110,7 @@ static int wifi_BandProfileWrite(int card_idx, int radio_idx, struct params *lis
     }
     ret = wifi_datfileWrite(band_profile_path, list, item_count);
     if (ret != 0) {
-        fprintf(stderr, "%s: wifi_datfileWrite failed, ret:%d", __func__);
+        fprintf(stderr, "%s: wifi_datfileWrite failed, ret:%d", __func__, ret);
         return RETURN_ERR;
     }
 
@@ -1134,13 +1134,13 @@ static int wifi_BandProfileWrite2(int card_idx,
     snprintf(option, sizeof(option), "BN%d_profile_path", radio_idx);
     ret = wifi_CardProfileRead(card_idx, option, band_profile_path, sizeof(band_profile_path));
     if (ret != 0) {
-        fprintf(stderr, "%s: wifi_CardProfileRead %s failed, ret:%d", __func__, option);
+        fprintf(stderr, "%s: wifi_CardProfileRead %s failed, ret:%d", __func__, option, ret);
         return RETURN_ERR;
     }
 
     ret = wifi_datfileWrite2(band_profile_path, idx, list, item_count);
     if (ret != 0) {
-        fprintf(stderr, "%s: wifi_datfileWrite failed, ret:%d", __func__);
+        fprintf(stderr, "%s: wifi_datfileWrite failed, ret:%d", __func__, ret);
         return RETURN_ERR;
     }
 
@@ -1434,7 +1434,7 @@ INT wifi_getApBeaconRate(INT radioIndex, CHAR *beaconRate)
         _syscmd(cmd, buf, sizeof(buf));
         snprintf(temp_output, sizeof(temp_output), "%sMbps", buf);
     }
-    strncpy(beaconRate, temp_output, sizeof(temp_output));
+    strncpy(beaconRate, temp_output, strlen(temp_output));
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
     return RETURN_OK;
@@ -2193,7 +2193,7 @@ INT wifi_setRadioCountryCode(INT radioIndex, CHAR *CountryCode)
 	}
 
 	if (!strlen(CountryCode))
-		strncpy(CountryCode, "US", sizeof("US")); /*default set the code to US*/
+		strncpy(CountryCode, "US", strlen("US")); /*default set the code to US*/
 
 	params.name = "country_code";
 	params.value = CountryCode;
@@ -2958,7 +2958,7 @@ int get_radio_mode_handler(struct nl_msg *msg, void *cb)
 	struct mtk_nl80211_cb_data *cb_data = cb;
 
 	if (!msg || !cb_data) {
-		wifi_debug(DEBUG_ERROR, "msg(0x%lx) or cb_data(0x%lx) is null,error.\n", msg, cb_data);
+		wifi_debug(DEBUG_ERROR, "msg(%p) or cb_data(%p) is null,error.\n", msg, cb_data);
 		return NL_SKIP;
 	}
 
@@ -3089,8 +3089,8 @@ INT wifi_getRadioMode(INT radioIndex, CHAR *output_string, UINT *pureMode)
 	struct mtk_nl80211_cb_data cb_data;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    if(NULL == output_string || NULL == pureMode)
-        return RETURN_ERR;
+    if (NULL == output_string || NULL == pureMode)
+		return RETURN_ERR;
 
 	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
 		return RETURN_ERR;
@@ -3496,7 +3496,7 @@ INT wifi_getRadioPossibleChannels(INT radioIndex, CHAR *output_string)	//RDKB
         snprintf(cmd, sizeof(cmd), "iw phy phy%d info | grep -e '\\*.*MHz .*dBm' | grep -v 'radar\\|no IR\\|5340\\|5480' | cut -d '[' -f2 | cut -d ']' -f1 | tr '\\n' ',' | sed 's/.$//'", phyId);
 
     _syscmd(cmd,buf,sizeof(buf));
-    strncpy(output_string, buf, sizeof(buf));
+    strncpy(output_string, buf, strlen(buf));
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
@@ -4679,7 +4679,7 @@ INT wifi_setRadioTransmitPower(INT radioIndex, ULONG TransmitPower)	//RDKB
         fprintf(stderr, "%s: fopen failed\n", __func__);
         return RETURN_ERR;
     }
-    fprintf(f, "%d", TransmitPower);
+    fprintf(f, "%lu", TransmitPower);
     fclose(f);
 /*    snprintf(cmd, sizeof(cmd),  "hostapd_cli -i %s status | grep max_txpower | cut -d '=' -f2 | tr -d '\n'", interface_name);
     _syscmd(cmd, buf, sizeof(buf));
@@ -5326,7 +5326,7 @@ INT wifi_getBaseBSSID(INT ssidIndex, CHAR *output_string)	//RDKB
 	char inf_name[IF_NAME_SIZE] = {0};
 
     if (!output_string)
-        return RETURN_ERR;
+		return RETURN_ERR;
 
 	if (wifi_GetInterfaceName(ssidIndex, inf_name) != RETURN_OK)
 		return RETURN_ERR;
@@ -5583,7 +5583,7 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
             SRate[strlen(SRate) - 1] = '\0';
             strcpy(scan_array[index].ap_SupportedDataTransferRates, SRate);
         } else if (strstr(line, "DTIM") != NULL) {
-            sscanf(line,"DTIM Period %d", scan_array[index].ap_DTIMPeriod, buf);
+            sscanf(line,"DTIM Period %u", &(scan_array[index].ap_DTIMPeriod), buf);
         } else if (strstr(line, "VHT capabilities") != NULL) {
             strcat(scan_array[index].ap_SupportedStandards, ",ac");
             strcpy(scan_array[index].ap_OperatingStandards, "ac");
@@ -5602,7 +5602,7 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
                 continue;
         } else if (strstr(line, "HT operation") != NULL) {
             ret = fgets(line, sizeof(line), f);
-            sscanf(line,"		 * secondary channel offset: %s", &buf);
+            sscanf(line,"		 * secondary channel offset: %s", buf);
             if (!strcmp(buf, "above")) {
                 //40Mhz +
                 snprintf(scan_array[index].ap_OperatingChannelBandwidth, sizeof(scan_array[index].ap_OperatingChannelBandwidth), "11N%s_HT40PLUS", radioIndex%1 ? "A": "G");
@@ -5973,9 +5973,10 @@ static int AssoDevInfo_callback(struct nl_msg *msg, void *arg) {
         }
 
         if(sinfo[NL80211_STA_INFO_TX_BITRATE]) {
-            if(rinfo[NL80211_RATE_INFO_BITRATE])
+            if(rinfo[NL80211_RATE_INFO_BITRATE]) {
                 rate=nla_get_u16(rinfo[NL80211_RATE_INFO_BITRATE]);
                 out->wifi_devTxRate = rate/10;
+            }
         }
 
         if(nla_parse_nested(rinfo, NL80211_RATE_INFO_MAX, sinfo[NL80211_STA_INFO_RX_BITRATE], rate_policy)) {
@@ -5984,9 +5985,10 @@ static int AssoDevInfo_callback(struct nl_msg *msg, void *arg) {
         }
 
         if(sinfo[NL80211_STA_INFO_RX_BITRATE]) {
-            if(rinfo[NL80211_RATE_INFO_BITRATE])
+            if(rinfo[NL80211_RATE_INFO_BITRATE]) {
                 rate=nla_get_u16(rinfo[NL80211_RATE_INFO_BITRATE]);
                 out->wifi_devRxRate = rate/10;
+            }
         }
         if(sinfo[NL80211_STA_INFO_SIGNAL_AVG])
             out->wifi_devSignalStrength = (int8_t)nla_get_u8(sinfo[NL80211_STA_INFO_SIGNAL_AVG]);
@@ -6483,6 +6485,7 @@ INT fitChainMask(INT radioIndex, int antcount)
         list[1].value = "1";
     }
     wifi_hostapdWrite(config_file, list, 2);
+	return RETURN_OK;
 }
 
 //P2  // sets the number of Tx streams to an enviornment variable
@@ -7479,7 +7482,7 @@ int mtk_acl_list_dump_callback(struct nl_msg *msg, void *cb)
 	unsigned short acl_result_len = 0;
 	struct mtk_nl80211_cb_data *cb_data = cb;
 	if (!msg || !cb_data) {
-		wifi_debug(DEBUG_ERROR, "msg(0x%lx) or cb_data(0x%lx) is null,error.\n", msg, cb_data);
+		wifi_debug(DEBUG_ERROR, "msg(%p) or cb_data(%p) is null,error.\n", msg, cb_data);
 		return NL_SKIP;
 	}
 	err = nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
@@ -7798,14 +7801,14 @@ INT wifi_getApAclDeviceNum(INT apIndex, UINT *output_uint)
 	UINT sta_num = 0;
 	unsigned char mac[ETH_ALEN] = {0};
     if(output_uint == NULL)
-        return RETURN_ERR;
+		return RETURN_ERR;
 
 	mac_arry = (char *)malloc(buf_size);
 	if (mac_arry == NULL) {
 		wifi_debug(DEBUG_ERROR, "malloc mac_arry fails\n");
 		return RETURN_ERR;
 	}
-	memset(mac_arry, buf_size, 0);
+	memset(mac_arry, 0, buf_size);
 	/*mac_arry str format: 00:11:22:33:44:55\n00:11:22:33:44:66\0*/
 	if (wifi_getApAclDevices(apIndex, mac_arry, buf_size)!= RETURN_OK) {
 		wifi_debug(DEBUG_ERROR, "get acl list entries fails\n");
@@ -8391,7 +8394,7 @@ INT wifi_getApWMMCapability(INT apIndex, BOOL *output)
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     if(!output)
-        return RETURN_ERR;
+		return RETURN_ERR;
 
 	if (apIndex > MAX_APS) {
 		wifi_debug(DEBUG_ERROR, "Invalid apIndex %d\n", apIndex);
@@ -8399,7 +8402,7 @@ INT wifi_getApWMMCapability(INT apIndex, BOOL *output)
 	}
 
     if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
-        return RETURN_ERR;
+		return RETURN_ERR;
 
 	if_idx = if_nametoindex(interface_name);
 	/*init mtk nl80211 vendor cmd*/
@@ -9030,7 +9033,7 @@ INT wifi_setApSecurityReset(INT apIndex)
         strcpy(wpa_psk_file, PSK_FILE);
 
     if (access(wpa_psk_file, F_OK) != 0) {
-        sprintf(cmd, "touch %s", wpa_psk_file);
+		snprintf(cmd, MAX_CMD_SIZE, "touch %s", wpa_psk_file);
         _syscmd(cmd, buf, sizeof(buf));
     }
     list[3].name = "wpa_psk_file";
@@ -11281,7 +11284,7 @@ INT wifi_getNeighboringWiFiStatus(INT radio_index, wifi_neighbor_ap2_t **neighbo
             SRate[strlen(SRate) - 1] = '\0';
             strcpy(scan_array[index].ap_SupportedDataTransferRates, SRate);
         } else if (strstr(line, "DTIM") != NULL) {
-            sscanf(line,"DTIM Period %d", scan_array[index].ap_DTIMPeriod, buf);
+            sscanf(line,"DTIM Period %u", &(scan_array[index].ap_DTIMPeriod), buf);
         } else if (strstr(line, "VHT capabilities") != NULL) {
             strcat(scan_array[index].ap_SupportedStandards, ",ac");
             strcpy(scan_array[index].ap_OperatingStandards, "ac");
@@ -11300,7 +11303,7 @@ INT wifi_getNeighboringWiFiStatus(INT radio_index, wifi_neighbor_ap2_t **neighbo
                 continue;
         } else if (strstr(line, "HT operation") != NULL) {
             ret = fgets(line, sizeof(line), f);
-            sscanf(line,"		 * secondary channel offset: %s", &buf);
+            sscanf(line,"		 * secondary channel offset: %s", buf);
             if (!strcmp(buf, "above")) {
                 //40Mhz +
                 snprintf(scan_array[index].ap_OperatingChannelBandwidth, sizeof(scan_array[index].ap_OperatingChannelBandwidth), "11N%s_HT40PLUS", radio_index%1 ? "A": "G");
@@ -12709,7 +12712,7 @@ static int fetch_survey_from_buf(INT radioIndex, const char *buf, wifi_channelSt
     char *val = NULL;
     char line[256] = { '\0' };
 
-    while (ptr = get_line_from_str_buf(ptr, line)) {
+    while ((ptr = get_line_from_str_buf(ptr, line))) {
         if (strstr(line, "Frequency")) continue;
 
         key = strtok(line, ":");
@@ -13249,7 +13252,7 @@ INT wifi_getRadioChannels(INT radioIndex, wifi_channelMap_t *outputMap, INT outp
 
     ptr = channel_numbers_buf;
     i = 0;
-    while (ptr = get_line_from_str_buf(ptr, line)) {
+    while ((ptr = get_line_from_str_buf(ptr, line))) {
         if (i >= outputMapSize) {
                 wifi_dbg_printf("%s: DFS map size too small\n", __FUNCTION__);
                 return RETURN_ERR;
@@ -13325,7 +13328,7 @@ INT wifi_getRadioPercentageTransmitPower(INT apIndex, ULONG *txpwr_pcntg)
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     if(txpwr_pcntg == NULL)
-        return RETURN_ERR;
+		return RETURN_ERR;
 
 	wifi_getRadioTransmitPower(apIndex, &pwr_percentage);
 	*txpwr_pcntg = pwr_percentage;
@@ -13664,7 +13667,7 @@ INT wifi_setGuardInterval(INT radio_index, wifi_guard_interval_t guard_interval)
 	/*sanity check*/
 	if (((guard_interval == wifi_guard_interval_1600)
 		|| (guard_interval == wifi_guard_interval_3200))
-		&& (mode_map & (WIFI_MODE_BE | WIFI_MODE_AX) == 0)) {
+		&& ((mode_map & (WIFI_MODE_BE | WIFI_MODE_AX)) == 0)) {
         wifi_dbg_printf("%s: N/AC Mode not support 1600/3200ns GI\n", __func__);
         return RETURN_ERR;
 	}
@@ -13898,7 +13901,7 @@ INT wifi_getMultiPskKeys(INT apIndex, wifi_key_multi_psk_t *keys, INT keysNumber
         }
 
         if(strcmp(line,"keyid=")) {
-            sscanf(line, "keyid=%s", &(keys_it->wifi_keyId));
+            sscanf(line, "keyid=%s", keys_it->wifi_keyId);
             if (!(pos = index(line, ' '))) {
                 ret = RETURN_ERR;
                 goto close;
@@ -14608,7 +14611,7 @@ INT TransmitRatesToBitMap (char *BasicRatesList, UINT *basicRateBitMap)
 INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operationParam_t *operationParam)
 {
     char buf[128] = {0};
-    int bandwidth;
+    int bandwidth = 20;
     int set_mode = 0;
 	BOOL drv_dat_change = 0, hapd_conf_change = 0;
     wifi_radio_operationParam_t current_param;
@@ -15294,8 +15297,17 @@ int hostapd_raw_remove_bss(int apIndex)
 
 int hostapd_raw_restart_bss(int apIndex)
 {
-	hostapd_raw_remove_bss(apIndex);
-	hostapd_raw_add_bss(apIndex);
+	int ret = 0;
+
+	ret = hostapd_raw_remove_bss(apIndex);
+	if(ret != RETURN_OK)
+		return RETURN_ERR;
+
+	ret = hostapd_raw_add_bss(apIndex);
+	if(ret != RETURN_OK)
+		return RETURN_ERR;
+
+	return RETURN_OK;
 }
 
 INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
@@ -15570,7 +15582,7 @@ static int getRadioCapabilities(int radioIndex, wifi_radio_capabilities_t *rcap)
         rcap->supportedBitRate[i] |= (WIFI_BITRATE_6MBPS | WIFI_BITRATE_9MBPS |
                                     WIFI_BITRATE_11MBPS | WIFI_BITRATE_12MBPS);
     }
-    else if (rcap->band[i] & (WIFI_FREQUENCY_5_BAND ) | rcap->band[i] & (WIFI_FREQUENCY_6_BAND )) {
+    else if ((rcap->band[i] & (WIFI_FREQUENCY_5_BAND )) || (rcap->band[i] & (WIFI_FREQUENCY_6_BAND))) {
         rcap->supportedBitRate[i] |= (WIFI_BITRATE_6MBPS | WIFI_BITRATE_9MBPS |
                                     WIFI_BITRATE_12MBPS | WIFI_BITRATE_18MBPS | WIFI_BITRATE_24MBPS |
                                     WIFI_BITRATE_36MBPS | WIFI_BITRATE_48MBPS | WIFI_BITRATE_54MBPS);
@@ -15932,7 +15944,7 @@ INT wifi_getApSecurity(INT ap_index, wifi_vap_security_t *security)
             security->encr = wifi_encryption_aes_tkip;
     }
 
-    if (security->mode != wifi_encryption_none) {
+    if (security->mode != wifi_security_mode_none) {
         memset(buf, 0, sizeof(buf));
         // wpa3 can use one or both configs as password, so we check sae_password first.
         wifi_hostapdRead(config_file, "sae_password", buf, sizeof(buf));
