@@ -67,6 +67,8 @@ Licensed under the ISC license
 
 #define MAX_BUF_SIZE 256
 #define MAX_CMD_SIZE 256
+#define MAX_SUB_CMD_SIZE 200
+
 #define IF_NAME_SIZE 16
 #define CONFIG_PREFIX "/nvram/hostapd"
 #define ACL_PREFIX "/nvram/hostapd-acl"
@@ -1799,7 +1801,7 @@ wifi_PrepareDefaultHostapdConfigs(void)
 	int bss_idx;
 	int ap_idx;
 	char buf[MAX_BUF_SIZE] = {0};
-	char config_file[MAX_BUF_SIZE] = {0};
+	char config_file[MAX_SUB_CMD_SIZE] = {0};
 	char ssid[MAX_BUF_SIZE] = {0};
 	char interface[32] = {0};
 	char ret_buf[MAX_BUF_SIZE] = {0};
@@ -1942,14 +1944,14 @@ static void wifi_dat_file_reset()
 
 static void wifi_dat_file_reset_by_radio(char radio_idx)
 {
-	char cmd[MAX_CMD_SIZE] = {0};
+	char cmd[MAX_CMD_SIZE * 2] = {0};
 	char ret_buf[MAX_BUF_SIZE] = {0};
-	char rom_dat_file[MAX_CMD_SIZE]= {0};
-	char dat_file[MAX_CMD_SIZE]= {0};
+	char rom_dat_file[MAX_SUB_CMD_SIZE]= {0};
+	char dat_file[MAX_SUB_CMD_SIZE]= {0};
 
 	snprintf(rom_dat_file, sizeof(rom_dat_file), "%s%d.dat", ROM_LOGAN_DAT_FILE, radio_idx);
 	snprintf(dat_file, sizeof(dat_file), "%s%d.dat", LOGAN_DAT_FILE, radio_idx);
-	snprintf(cmd, MAX_CMD_SIZE, "cp -rf %s %s", rom_dat_file, dat_file);
+	snprintf(cmd, (MAX_CMD_SIZE * 2), "cp -rf %s %s", rom_dat_file, dat_file);
 	_syscmd(cmd, ret_buf, sizeof(ret_buf));
 
 }
@@ -1958,7 +1960,7 @@ static void wifi_psk_file_reset()
 {
 	char cmd[MAX_CMD_SIZE] = {0};
 	char ret_buf[MAX_BUF_SIZE] = {0};
-	char psk_file[MAX_CMD_SIZE]= {0};
+	char psk_file[MAX_SUB_CMD_SIZE]= {0};
 	char vap_idx = 0;
 
 	for (vap_idx = 0; vap_idx < MAX_APS; vap_idx++) {
@@ -3814,14 +3816,14 @@ INT wifi_setApEnableOnLine(ULONG wlanIndex,BOOL enable)
 
 INT wifi_factoryResetAP(int apIndex)
 {
-	char ap_config_file[MAX_CMD_SIZE] = {0};
+	char ap_config_file[MAX_SUB_CMD_SIZE] = {0};
 	char cmd[MAX_CMD_SIZE] = {0};
 	char ret_buf[MAX_BUF_SIZE] = {0};
 	int radio_idx = 0;
 	int bss_idx = 0;
 	char ssid[32] = {0};
 	char interface[IF_NAME_SIZE] = {0};
-	char psk_file[MAX_CMD_SIZE] = {0};
+	char psk_file[MAX_SUB_CMD_SIZE] = {0};
     struct params params[3] = {0};
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
@@ -4471,7 +4473,7 @@ INT wifi_getRadioMCS(INT radioIndex, INT *output_int) //Tr181
 {
     char buf[32]={0};
     char mcs_file[64] = {0};
-    char cmd[64] = {0};
+    char cmd[MAX_CMD_SIZE] = {0};
     int mode_bitmap = 0;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
@@ -4577,7 +4579,7 @@ INT wifi_getRadioTransmitPowerSupported(INT radioIndex, CHAR *output_list) //Tr1
 INT wifi_getRadioTransmitPower(INT radioIndex, ULONG *output_ulong)	//RDKB
 {
     char interface_name[16] = {0};
-    char cmd[128]={0};
+    char cmd[MAX_CMD_SIZE]={0};
     char buf[16]={0};
 	char pwr_file[128]={0};
 
@@ -5804,7 +5806,7 @@ INT wifi_getBasicTrafficStats(INT apIndex, wifi_basicTrafficStats_t *output_stru
 
 INT wifi_getWifiTrafficStats(INT apIndex, wifi_trafficStats_t *output_struct)
 {
-    char interface_name[MAX_BUF_SIZE] = {0};
+    char interface_name[IF_NAME_SIZE] = {0};
     char interface_status[MAX_BUF_SIZE] = {0};
     char Value[MAX_BUF_SIZE] = {0};
     char buf[MAX_CMD_SIZE] = {0};
@@ -6007,7 +6009,7 @@ INT wifi_getAssociatedDeviceDetail(INT apIndex, INT devIndex, wifi_device_t *out
 {
 #ifdef HAL_NETLINK_IMPL
     Netlink nl = {0};
-    char if_name[10] = {0};
+    char if_name[IF_NAME_SIZE] = {0};
     char interface_name[16] = {0};
 
     wifi_device_info_t info = {0};
@@ -8212,7 +8214,7 @@ static int align_hostapd_config(int index)
 INT wifi_setApEnable(INT apIndex, BOOL enable)
 {
 	char interface_name[16] = {0};
-	char config_file[MAX_BUF_SIZE] = {0};
+	char config_file[MAX_SUB_CMD_SIZE] = {0};
 	char cmd[MAX_CMD_SIZE] = {0};
 	char buf[MAX_BUF_SIZE] = {0};
 	BOOL status = FALSE;
@@ -8571,7 +8573,7 @@ INT wifi_setApWmmOgAckPolicy(INT apIndex, INT class, BOOL ackPolicy)  //RDKB
 {
     char interface_name[16] = {0};
     // assume class 0->BE, 1->BK, 2->VI, 3->VO
-    char cmd[128] = {0};
+    char cmd[MAX_CMD_SIZE] = {0};
     char buf[128] = {0};
     char ack_filepath[128] = {0};
     uint16_t bitmap = 0;
@@ -11425,7 +11427,7 @@ INT wifi_getApAssociatedDeviceStats(
 INT wifi_getSSIDNameStatus(INT apIndex, CHAR *output_string)
 {
     char interface_name[IF_NAME_SIZE] = {0};
-    char cmd[MAX_CMD_SIZE] = {0}, buf[MAX_BUF_SIZE] = {0};
+    char cmd[MAX_CMD_SIZE] = {0}, buf[32] = {0};
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
 
@@ -12006,8 +12008,8 @@ INT wifi_getApAssociatedDeviceTidStatsResult(INT radioIndex,  mac_address_t *cli
 {
 #ifdef HAL_NETLINK_IMPL
     Netlink nl;
-    char  if_name[10];
-    char interface_name[16] = {0};
+    char  if_name[IF_NAME_SIZE];
+    char interface_name[IF_NAME_SIZE] = {0};
 
     if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
@@ -12488,8 +12490,8 @@ INT wifi_getApAssociatedDeviceTxStatsResult(INT radioIndex, mac_address_t *clien
 {
 #ifdef HAL_NETLINK_IMPL
     Netlink nl;
-    char if_name[10];
-    char interface_name[16] = {0};
+    char if_name[IF_NAME_SIZE];
+    char interface_name[IF_NAME_SIZE] = {0};
     if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
 
@@ -13940,9 +13942,9 @@ INT wifi_setNeighborReports(UINT apIndex,
     char cmd[256] = { 0 };
     char hex_bssid[13] = { 0 };
     char bssid[18] = { 0 };
-    char nr[256] = { 0 };
-    char ssid[256];
-    char hex_ssid[256];
+    char nr[100] = { 0 };
+    char ssid[32];
+    char hex_ssid[32];
     char interface_name[16] = {0};
     INT ret;
 
@@ -15038,7 +15040,7 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
     int i = 0;
     int vap_index = 0;
     BOOL enabled = FALSE;
-    char buf[256] = {0};
+    char buf[32] = {0};
     wifi_vap_security_t security = {0};
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
@@ -15250,7 +15252,7 @@ static int prepareInterface(UINT apIndex, char *new_interface)
 int hostapd_manage_bss(INT apIndex, BOOL enable)
 {
 	char interface_name[16] = {0};
-	char config_file[MAX_BUF_SIZE] = {0};
+	char config_file[MAX_SUB_CMD_SIZE] = {0};
 	char cmd[MAX_CMD_SIZE] = {0};
 	char buf[MAX_BUF_SIZE] = {0};
 	BOOL status = FALSE;
@@ -15743,7 +15745,7 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
 {
     char buf[128] = {0};
     char config_file[128] = {0};
-    char cmd[128] = {0};
+    char cmd[MAX_CMD_SIZE] = {0};
     char password[64] = {0};
     char mfp[32] = {0};
     char wpa_mode[32] = {0};
