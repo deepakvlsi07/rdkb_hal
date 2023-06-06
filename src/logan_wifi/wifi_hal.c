@@ -1409,7 +1409,7 @@ INT wifi_setApBeaconRate(INT radioIndex,CHAR *beaconRate)
 INT wifi_getApBeaconRate(INT radioIndex, CHAR *beaconRate)
 {
     char config_file[128] = {'\0'};
-    char temp_output[128] = {'\0'};
+    char temp_output[MAX_BUF_SIZE] = {'\0'};
     char buf[128] = {'\0'};
     char cmd[128] = {'\0'};
     int rate = 0;
@@ -4081,7 +4081,7 @@ INT wifi_setRadioDfsRefreshPeriod(INT radioIndex, ULONG seconds) //Tr181
 //The output_string is a max length 64 octet string that is allocated by the RDKB code.  Implementations must ensure that strings are not longer than this.
 INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) //Tr181
 {
-    char cmd[MAX_CMD_SIZE] = {0}, buf[64] = {0};
+    char cmd[MAX_CMD_SIZE] = {0}, buf[32] = {0};
     char extchannel[128] = {0};
     char interface_name[64] = {0};
     int ret = 0, len=0;
@@ -11691,7 +11691,7 @@ INT wifi_getSSIDTrafficStats2(INT ssidIndex,wifi_ssidTrafficStats2_t *output_str
     if (strlen(str) == 0)   // interface not exist
         return RETURN_OK;
 
-    sscanf(str, "%*[^:]: %lu %lu %lu %lu %*%*%*%*%lu %lu %lu %lu", &out->ssid_BytesReceived, &out->ssid_PacketsReceived, &out->ssid_ErrorsReceived, \
+    sscanf(str, "%*[^:]: %lu %lu %lu %lu %lu %lu %lu %lu", &out->ssid_BytesReceived, &out->ssid_PacketsReceived, &out->ssid_ErrorsReceived, \
     &out->ssid_DiscardedPacketsReceived, &out->ssid_BytesSent, &out->ssid_PacketsSent, &out->ssid_ErrorsSent, &out->ssid_DiscardedPacketsSent);
 
     memset(str, 0, sizeof(str));
@@ -11703,7 +11703,7 @@ INT wifi_getSSIDTrafficStats2(INT ssidIndex,wifi_ssidTrafficStats2_t *output_str
     }
     fgets(str, sizeof(str), fp);
 
-    sscanf(str, "%*[^:]: %*%*%lu %lu %lu %lu", &out->ssid_MulticastPacketsReceived, &out->ssid_MulticastPacketsSent, &out->ssid_BroadcastPacketsRecevied, \
+    sscanf(str, "%*[^:]: %lu %lu %lu %lu", &out->ssid_MulticastPacketsReceived, &out->ssid_MulticastPacketsSent, &out->ssid_BroadcastPacketsRecevied, \
     &out->ssid_BroadcastPacketsSent);
     pclose(fp);
 
@@ -13498,7 +13498,7 @@ INT wifi_setDownlinkMuType(INT radio_index, wifi_dl_mu_type_t mu_type)
 
 INT wifi_getDownlinkMuType(INT radio_index, wifi_dl_mu_type_t *mu_type)
 {
-	UCHAR dat_file[64] = {0};
+	CHAR dat_file[64] = {0};
     wifi_band band = band_invalid;
     char ofdmabuf[32] = {'\0'};
     char mimobuf[32] = {'\0'};
