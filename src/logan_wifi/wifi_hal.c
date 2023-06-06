@@ -2002,7 +2002,7 @@ static void wifi_vap_status_reset()
 {
     char cmd[MAX_CMD_SIZE] = {0};
     char ret_buf[MAX_BUF_SIZE] = {0};
-	char radio_idx = 0;
+	int radio_idx = 0;
 	char bss_idx = 0;
 
 	if (access(VAP_STATUS_FILE, F_OK) != 0) {
@@ -4474,7 +4474,7 @@ INT wifi_getRadioMCS(INT radioIndex, INT *output_int) //Tr181
     char buf[32]={0};
     char mcs_file[64] = {0};
     char cmd[MAX_CMD_SIZE] = {0};
-    int mode_bitmap = 0;
+    UINT mode_bitmap = 0;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     if(output_int == NULL)
@@ -6499,7 +6499,7 @@ INT wifi_setRadioTxChainMask(INT radioIndex, INT numStreams)
     int cur_mask = 0;
     int antcountmsk = 0;
 	INT cur_nss = 0;
-	UCHAR dat_file[64] = {0};
+	CHAR dat_file[64] = {0};
     wifi_band band = band_invalid;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
@@ -10446,9 +10446,7 @@ INT wifi_pushChannel(INT radioIndex, UINT channel)
     char interface_name[16] = {0};
     char cmd[128];
     char buf[1024];
-    int  apIndex;
 
-    apIndex=(radioIndex==0)?0:1;
     if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
     snprintf(cmd, sizeof(cmd), "iwconfig %s freq %d",interface_name,channel);
@@ -11070,11 +11068,6 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
 
     // Get radio mode HT20|HT40|HT80 etc.
     if (channel){
-        if (band == band_6){
-            freq = util_6G_chan_to_freq(channel);
-        }else{
-            freq = util_chan_to_freq(channel);
-        }
         snprintf(ht_mode, sizeof(ht_mode), "HT%d", width);
 
         // Provide bandwith if specified
@@ -11698,7 +11691,7 @@ INT wifi_getSSIDTrafficStats2(INT ssidIndex,wifi_ssidTrafficStats2_t *output_str
     if (strlen(str) == 0)   // interface not exist
         return RETURN_OK;
 
-    sscanf(str, "%*[^:]: %lu %lu %lu %lu %* %* %* %* %lu %lu %lu %lu", &out->ssid_BytesReceived, &out->ssid_PacketsReceived, &out->ssid_ErrorsReceived, \
+    sscanf(str, "%*[^:]: %lu %lu %lu %lu %*%*%*%*%lu %lu %lu %lu", &out->ssid_BytesReceived, &out->ssid_PacketsReceived, &out->ssid_ErrorsReceived, \
     &out->ssid_DiscardedPacketsReceived, &out->ssid_BytesSent, &out->ssid_PacketsSent, &out->ssid_ErrorsSent, &out->ssid_DiscardedPacketsSent);
 
     memset(str, 0, sizeof(str));
@@ -11710,7 +11703,7 @@ INT wifi_getSSIDTrafficStats2(INT ssidIndex,wifi_ssidTrafficStats2_t *output_str
     }
     fgets(str, sizeof(str), fp);
 
-    sscanf(str, "%*[^:]: %* %* %lu %lu %lu %lu", &out->ssid_MulticastPacketsReceived, &out->ssid_MulticastPacketsSent, &out->ssid_BroadcastPacketsRecevied, \
+    sscanf(str, "%*[^:]: %*%*%lu %lu %lu %lu", &out->ssid_MulticastPacketsReceived, &out->ssid_MulticastPacketsSent, &out->ssid_BroadcastPacketsRecevied, \
     &out->ssid_BroadcastPacketsSent);
     pclose(fp);
 
@@ -13434,7 +13427,7 @@ INT wifi_isZeroDFSSupported(UINT radioIndex, BOOL *supported)
 
 INT wifi_setDownlinkMuType(INT radio_index, wifi_dl_mu_type_t mu_type)
 {
-	UCHAR dat_file[64] = {0};
+	CHAR dat_file[64] = {0};
     wifi_band band = band_invalid;
     char ofdmabuf[32] = {'\0'};
     char mimobuf[32] = {'\0'};
@@ -13547,7 +13540,7 @@ INT wifi_getDownlinkMuType(INT radio_index, wifi_dl_mu_type_t *mu_type)
 INT wifi_setUplinkMuType(INT radio_index, wifi_ul_mu_type_t mu_type)
 {
     // hemu onoff=<val> (bitmap- UL MU-MIMO(bit3), DL MU-MIMO(bit2), UL OFDMA(bit1), DL OFDMA(bit0))
-	UCHAR dat_file[64] = {0};
+	CHAR dat_file[64] = {0};
     wifi_band band = band_invalid;
     char ofdmabuf[32] = {'\0'};
     char mimobuf[32] = {'\0'};
@@ -13612,7 +13605,7 @@ INT wifi_setUplinkMuType(INT radio_index, wifi_ul_mu_type_t mu_type)
 
 INT wifi_getUplinkMuType(INT radio_index, wifi_ul_mu_type_t *mu_type)
 {
-	UCHAR dat_file[64] = {0};
+	CHAR dat_file[64] = {0};
     wifi_band band = band_invalid;
     char ofdmabuf[32] = {'\0'};
     char mimobuf[32] = {'\0'};
@@ -13654,7 +13647,7 @@ INT wifi_setGuardInterval(INT radio_index, wifi_guard_interval_t guard_interval)
     char buf[256] = {0};
     char config_file[64] = {0};
     char GI[8] = {0};
-    int mode_map = 0;
+    UINT mode_map = 0;
     FILE *f = NULL;
     wifi_band band = band_invalid;
     char dat_file[64] = {'\0'};
@@ -14118,7 +14111,7 @@ int main(int argc,char **argv)
 		return 0;
 	}
 	if (strncmp(argv[1], "wifi_getApAclDeviceNum", strlen(argv[1])) == 0) {
-		int acl_num = 0;
+		UINT acl_num = 0;
 		wifi_getApAclDeviceNum(index, &acl_num);
 		wifi_debug(DEBUG_NOTICE, "Ap acl numbers: %d\n", acl_num);
 		return 0;
@@ -14226,7 +14219,7 @@ int main(int argc,char **argv)
 	}
 	if(strstr(argv[1], "wifi_getRadioMode")!=NULL)
     {
-    	int mode = 0;
+		UINT mode = 0;
 
         wifi_getRadioMode(index, buf, &mode);
         printf("Ap Radio mode is %s , mode = 0x%x\n", buf, mode);
@@ -14776,9 +14769,9 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
     char buf[256] = {0};
     char config_file[64] = {0};
     char cmd[128] = {0};
-    int mode = 0;
+    UINT mode = 0;
     BOOL enabled = FALSE;
-	UINT dtimPeriod;
+	int dtimPeriod;
 	UINT beaconInterval;
 	UINT basicDataTransmitRates;
 	UINT operationalDataTransmitRates;
@@ -15036,7 +15029,7 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 {
     INT mode = 0;
     INT ret = -1;
-    INT output = 0;
+    UINT output = 0;
     int i = 0;
     int vap_index = 0;
     BOOL enabled = FALSE;
@@ -15746,7 +15739,7 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
     char buf[128] = {0};
     char config_file[128] = {0};
     char cmd[MAX_CMD_SIZE] = {0};
-    char password[64] = {0};
+    char password[65] = {0};
     char mfp[32] = {0};
     char wpa_mode[32] = {0};
     BOOL okc_enable = FALSE;
