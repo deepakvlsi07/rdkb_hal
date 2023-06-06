@@ -5583,7 +5583,7 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
             SRate[strlen(SRate) - 1] = '\0';
             strcpy(scan_array[index].ap_SupportedDataTransferRates, SRate);
         } else if (strstr(line, "DTIM") != NULL) {
-            sscanf(line,"DTIM Period %u", &(scan_array[index].ap_DTIMPeriod), buf);
+            sscanf(line,"DTIM Period %u", &(scan_array[index].ap_DTIMPeriod));
         } else if (strstr(line, "VHT capabilities") != NULL) {
             strcat(scan_array[index].ap_SupportedStandards, ",ac");
             strcpy(scan_array[index].ap_OperatingStandards, "ac");
@@ -11284,7 +11284,7 @@ INT wifi_getNeighboringWiFiStatus(INT radio_index, wifi_neighbor_ap2_t **neighbo
             SRate[strlen(SRate) - 1] = '\0';
             strcpy(scan_array[index].ap_SupportedDataTransferRates, SRate);
         } else if (strstr(line, "DTIM") != NULL) {
-            sscanf(line,"DTIM Period %u", &(scan_array[index].ap_DTIMPeriod), buf);
+            sscanf(line,"DTIM Period %u", &(scan_array[index].ap_DTIMPeriod));
         } else if (strstr(line, "VHT capabilities") != NULL) {
             strcat(scan_array[index].ap_SupportedStandards, ",ac");
             strcpy(scan_array[index].ap_OperatingStandards, "ac");
@@ -13465,7 +13465,7 @@ INT wifi_setDownlinkMuType(INT radio_index, wifi_dl_mu_type_t mu_type)
 	WIFI_ENTRY_EXIT_DEBUG("bss number: %d\n", bss_cnt);
 	if ((val_cnt >= sizeof(new_ofdmabuf))
 		|| (val_cnt >= sizeof(new_mimobuf))) {
-		printf("%s:bss cnt Error", __func__, bss_cnt);
+		printf("%s:bss cnt Error", __func__);
 		return RETURN_ERR;
 	}
 	/*translate set value*/
@@ -13578,7 +13578,7 @@ INT wifi_setUplinkMuType(INT radio_index, wifi_ul_mu_type_t mu_type)
 	printf("bssNumber:%d,ValCnt:%d\n", bss_cnt, val_cnt);
 	if ((val_cnt >= sizeof(new_ofdmabuf))
 		|| (val_cnt >= sizeof(new_mimobuf))) {
-		printf("%s:bss cnt Error\n", __func__, val_cnt);
+		printf("%s:bss cnt Error\n", __func__);
 		return RETURN_ERR;
 	}
 	/*translate set value*/
