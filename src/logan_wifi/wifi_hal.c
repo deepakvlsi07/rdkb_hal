@@ -412,6 +412,11 @@ int mtk_nl80211_deint(struct unl *nl) {
 	return 0;
 }
 
+static inline int os_snprintf_error(size_t size, int res)
+{
+	return res < 0 || (unsigned int) res >= size;
+}
+
 wifi_secur_list * wifi_get_item_by_key(wifi_secur_list *list, int list_sz, int key)
 {
     wifi_secur_list    *item;
@@ -1059,6 +1064,8 @@ static int wifi_quick_reload_ap(int apIndex)
 static int wifi_reloadAp(int apIndex)
 {
     char interface_name[16] = {0};
+	int res;
+
     if (multiple_set == TRUE)
         return RETURN_OK;
     char cmd[MAX_CMD_SIZE]="";
@@ -1066,15 +1073,27 @@ static int wifi_reloadAp(int apIndex)
 
     if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
-    snprintf(cmd, sizeof(cmd), "hostapd_cli -i %s reload", interface_name);
+    res = snprintf(cmd, sizeof(cmd), "hostapd_cli -i %s reload", interface_name);
+	if (os_snprintf_error(sizeof(cmd), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
     if (_syscmd(cmd, buf, sizeof(buf)) == RETURN_ERR)
         return RETURN_ERR;
 
-    snprintf(cmd, sizeof(cmd), "hostapd_cli -i %s disable", interface_name);
+    res = snprintf(cmd, sizeof(cmd), "hostapd_cli -i %s disable", interface_name);
+	if (os_snprintf_error(sizeof(cmd), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
     if (_syscmd(cmd, buf, sizeof(buf)) == RETURN_ERR)
         return RETURN_ERR;
 
-    snprintf(cmd, sizeof(cmd), "hostapd_cli -i %s enable", interface_name);
+    res = snprintf(cmd, sizeof(cmd), "hostapd_cli -i %s enable", interface_name);
+	if (os_snprintf_error(sizeof(cmd), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
     if (_syscmd(cmd, buf, sizeof(buf)) == RETURN_ERR)
         return RETURN_ERR;
 
