@@ -6500,6 +6500,57 @@ err:
 	wifi_debug(DEBUG_ERROR,"send cmd fails\n");
 	return RETURN_ERR;
 }
+
+INT mtk_wifi_set_auto_ba_en(
+	INT apIndex, INT vendor_data_attr, BOOL enable)
+{
+	char inf_name[IF_NAME_SIZE] = {0};
+	unsigned int if_idx = 0;
+	int ret = -1;
+	struct unl unl_ins;
+	struct nl_msg *msg	= NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+
+	if (wifi_GetInterfaceName(apIndex, inf_name) != RETURN_OK)
+		return RETURN_ERR;
+	if_idx = if_nametoindex(inf_name);
+	if (!if_idx) {
+		wifi_debug(DEBUG_ERROR,"can't finde ifname(%s) index,ERROR\n", inf_name);
+		return RETURN_ERR;
+	}
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_BA;
+	param.if_type = NL80211_ATTR_IFINDEX;
+	param.if_idx = if_idx;
+
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+	/*add mtk vendor cmd data*/
+	if (nla_put_u8(msg, vendor_data_attr, enable)) {
+		wifi_debug(DEBUG_ERROR, "Nla put vendor_data_attr(%d) attribute error\n", vendor_data_attr);
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	/*send mtk nl80211 vendor msg*/
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		goto err;
+	}
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+	return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR,"send cmd fails\n");
+	return RETURN_ERR;
+}
+
 //Get radio ADDBA enable setting
 INT wifi_getRadioDeclineBARequestEnable(INT radioIndex, BOOL *output_bool)
 {
@@ -6545,7 +6596,13 @@ INT wifi_getRadioAutoBlockAckEnable(INT radioIndex, BOOL *output_bool)
 //Set radio auto block ack enable setting
 INT wifi_setRadioAutoBlockAckEnable(INT radioIndex, BOOL enable)
 {
-    return RETURN_ERR;
+    if (mtk_wifi_set_auto_ba_en
+		(radioIndex, MTK_NL80211_VENDOR_ATTR_AP_BA_EN_INFO, enable) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "send  MTK_NL80211_VENDOR_ATTR_AP_BA_EN_INFO cmd fails\n");
+		return RETURN_ERR;
+	}
+	wifi_debug(DEBUG_ERROR, "send cmd success: set auto ba enable(%d)\n", enable);
+    return RETURN_OK;
 }
 
 //Get radio 11n pure mode enable support
@@ -13771,6 +13828,14 @@ int main(int argc,char **argv)
         wifi_setRadioMode(index, NULL, pureMode);
         printf("Ap SET Radio mode 0x%x\n", pureMode);
         return 0;
+    }
+    if (strstr(argv[1], "wifi_setRadioAutoBlockAckEnable") != NULL) {
+        unsigned char enable = atoi(argv[3]);
+        if (enable)
+            wifi_setRadioAutoBlockAckEnable(index, TRUE);
+        else
+            wifi_setRadioAutoBlockAckEnable(index, FALSE);
+        printf("%s handle wifi_setRadioAutoBlockAckEnable\n", __FUNCTION__);
     }
 	if(strstr(argv[1], "wifi_setRadioTransmitPower")!=NULL)
     {
