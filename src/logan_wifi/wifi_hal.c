@@ -8045,7 +8045,7 @@ INT wifi_getApEnable(INT apIndex, BOOL *output_bool)
 {
 	char interface_name[IF_NAME_SIZE] = {0};
 	char cmd[MAX_CMD_SIZE] = {0};
-	int ret;
+	char buf[MAX_BUF_SIZE] = {0};
 
 	if ((!output_bool) || (apIndex < 0) || (apIndex >= MAX_APS))
 		return RETURN_ERR;
@@ -8057,10 +8057,14 @@ INT wifi_getApEnable(INT apIndex, BOOL *output_bool)
 			*output_bool = FALSE;
 			return RETURN_OK;
 		}
-		snprintf(cmd, sizeof(cmd), "hostapd_cli -i %s status", interface_name);
-		ret = system(cmd);
-		if (ret == 0)
-			*output_bool = 1;
+
+		sprintf(cmd, "hostapd_cli -i %s status | grep state | cut -d '=' -f2", interface_name);
+		_syscmd(cmd, buf, sizeof(buf));
+
+		if(strncmp(buf, "ENABLED", 7) == 0 || strncmp(buf, "ACS", 3) == 0 ||
+			strncmp(buf, "HT_SCAN", 7) == 0 || strncmp(buf, "DFS", 3) == 0) {
+			*output_bool = TRUE;
+		}
 	}
 
 	return RETURN_OK;
@@ -10270,8 +10274,10 @@ INT wifi_pushSSID(INT apIndex, CHAR *ssid)
 
 INT wifi_pushSsidAdvertisementEnable(INT apIndex, BOOL enable)
 {
-    //Apply default Ssid Advertisement instantly
-    return RETURN_ERR;
+    int ret;
+	ret = wifi_setApSsidAdvertisementEnable(apIndex, enable);
+
+	return ret;
 }
 
 INT wifi_getRadioUpTime(INT radioIndex, ULONG *output)
@@ -13971,6 +13977,17 @@ int main(int argc,char **argv)
 		}
 		enable = atoi(argv[3]);
 		wifi_setApWmmEnable(index,enable);
+		return 0;
+	}
+	if (strncmp(argv[1], "wifi_pushSsidAdvertisementEnable", strlen(argv[1])) == 0) {
+		int enable = 0;
+		if(argc <= 3)
+		{
+			wifi_debug(DEBUG_ERROR, "Insufficient arguments \n");
+			exit(-1);
+		}
+		enable = atoi(argv[3]);
+		wifi_pushSsidAdvertisementEnable(index,enable);
 		return 0;
 	}
 	if (strncmp(argv[1], "wifi_down", strlen(argv[1])) == 0) {
