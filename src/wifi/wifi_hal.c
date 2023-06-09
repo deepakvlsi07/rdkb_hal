@@ -5135,7 +5135,7 @@ INT wifi_setRadioIGMPSnoopingEnable(INT radioIndex, BOOL enable)
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
     // bridge
-    snprintf(cmd, sizeof(cmd),  "sleep 1 && echo %d > /sys/devices/virtual/net/%s/bridge/multicast_snooping", enable, BRIDGE_NAME);
+    snprintf(cmd, sizeof(cmd),  "echo %d > /sys/devices/virtual/net/%s/bridge/multicast_snooping", enable, BRIDGE_NAME);
     _syscmd(cmd, buf, sizeof(buf));
 
     wifi_getMaxRadioNumber(&max_num_radios);
@@ -5144,7 +5144,7 @@ INT wifi_setRadioIGMPSnoopingEnable(INT radioIndex, BOOL enable)
         apIndex = radioIndex + i*max_num_radios;
         if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
             continue;
-        snprintf(cmd, sizeof(cmd),  "sleep 1 && echo %d > /sys/devices/virtual/net/%s/brif/%s/multicast_to_unicast", enable, BRIDGE_NAME, interface_name);
+        snprintf(cmd, sizeof(cmd),  "echo %d > /sys/devices/virtual/net/%s/brif/%s/multicast_to_unicast", enable, BRIDGE_NAME, interface_name);
         _syscmd(cmd, buf, sizeof(buf));
     }
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
@@ -12998,14 +12998,16 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
             }
         }
 
-        // IGMP Snooping enable should be placed after all hostapd_reload.
-        ret = wifi_setRadioIGMPSnoopingEnable(vap_info->radio_index, vap_info->u.bss_info.mcast2ucast);
-        if (ret != RETURN_OK) {
-            fprintf(stderr, "%s: wifi_setRadioIGMPSnoopingEnable return error\n", __func__);
-            return RETURN_ERR;
-        }
         // TODO mgmtPowerControl, interworking
     }
+
+	// IGMP Snooping enable should be placed after all hostapd_reload.
+	ret = wifi_setRadioIGMPSnoopingEnable(vap_info->radio_index, vap_info->u.bss_info.mcast2ucast);
+	if (ret != RETURN_OK) {
+		fprintf(stderr, "%s: wifi_setRadioIGMPSnoopingEnable return error\n", __func__);
+		return RETURN_ERR;
+	}
+
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
 }
