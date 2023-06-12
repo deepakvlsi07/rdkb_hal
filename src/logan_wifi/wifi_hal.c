@@ -8678,11 +8678,16 @@ INT wifi_getApSecurityPreSharedKey(INT apIndex, CHAR *output_string)
 {
     char buf[16] = {0};
     char config_file[MAX_BUF_SIZE] = {0};
+    int res;
 
     if(output_string==NULL)
         return RETURN_ERR;
 
-    sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,apIndex);
+    res = snprintf(config_file, sizeof(config_file), "%s%d.conf",CONFIG_PREFIX,apIndex);
+    if (os_snprintf_error(sizeof(config_file), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
     wifi_hostapdRead(config_file,"wpa",buf,sizeof(buf));
 
     if(strcmp(buf,"0")==0)
@@ -8692,7 +8697,11 @@ INT wifi_getApSecurityPreSharedKey(INT apIndex, CHAR *output_string)
     }
 
     wifi_dbg_printf("\nFunc=%s\n",__func__);
-    sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,apIndex);
+    res = snprintf(config_file, sizeof(config_file), "%s%d.conf",CONFIG_PREFIX,apIndex);
+    if (os_snprintf_error(sizeof(config_file), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
 	wifi_hostapdRead(config_file,"wpa_psk",output_string,65);
     wifi_dbg_printf("\noutput_string=%s\n",output_string);
 
@@ -8889,6 +8898,7 @@ INT wifi_setApSecurityRadiusServer(INT apIndex, CHAR *IPAddress, UINT port, CHAR
     char port_str[8] = {0};
     char cmd[256] = {0};
     char buf[128] = {0};
+    int res;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -8898,30 +8908,50 @@ INT wifi_setApSecurityRadiusServer(INT apIndex, CHAR *IPAddress, UINT port, CHAR
     if (strstr(buf, "Enterprise") == NULL)  // non Enterprise mode sould not set radius server info
         return RETURN_ERR;
 
-    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, apIndex);
+    res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, apIndex);
+    if (os_snprintf_error(sizeof(config_file), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
 
-    snprintf(cmd, sizeof(cmd), "cat %s | grep '# radius 1'", config_file);
+    res = snprintf(cmd, sizeof(cmd), "cat %s | grep '# radius 1'", config_file);
+    if (os_snprintf_error(sizeof(cmd), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
     _syscmd(cmd, buf, sizeof(buf));
     memset(cmd, 0, sizeof(cmd));
 
     snprintf(port_str, sizeof(port_str), "%d", port);
-    if (strlen(buf) == 0)
+    if (strlen(buf) == 0) {
         // Append
-        snprintf(cmd, sizeof(cmd), "echo -e '# radius 1\\n"
+        res = snprintf(cmd, sizeof(cmd), "echo -e '# radius 1\\n"
                                 "auth_server_addr=%s\\n"
                                 "auth_server_port=%s\\n"
                                 "auth_server_shared_secret=%s' >> %s", IPAddress, port_str, RadiusSecret, config_file);
-    else {
+        if (os_snprintf_error(sizeof(cmd), res)) {
+    		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+    		return RETURN_ERR;
+    	}
+    } else {
         // Delete the three lines setting after the "# radius 1" comment
-        snprintf(cmd, sizeof(cmd), "sed -i '/# radius 1/{n;N;N;d}' %s", config_file);
+        res = snprintf(cmd, sizeof(cmd), "sed -i '/# radius 1/{n;N;N;d}' %s", config_file);
+        if (os_snprintf_error(sizeof(cmd), res)) {
+    		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+    		return RETURN_ERR;
+    	}
         _syscmd(cmd, buf, sizeof(buf));
         memset(cmd, 0, sizeof(cmd));
         // Use "# radius 1" comment to find the location to insert the radius setting
-        snprintf(cmd, sizeof(cmd), "sed -i 's/# radius 1/"
+        res = snprintf(cmd, sizeof(cmd), "sed -i 's/# radius 1/"
                                 "# radius 1\\n"
                                 "auth_server_addr=%s\\n"
                                 "auth_server_port=%s\\n"
                                 "auth_server_shared_secret=%s/' %s", IPAddress, port_str, RadiusSecret, config_file);
+        if (os_snprintf_error(sizeof(cmd), res)) {
+    		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+    		return RETURN_ERR;
+    	}
     }
     if(_syscmd(cmd, buf, sizeof(buf))) {
         wifi_dbg_printf("%s: command failed, cmd: %s\n", __func__, cmd);
@@ -8970,6 +9000,7 @@ INT wifi_setApSecuritySecondaryRadiusServer(INT apIndex, CHAR *IPAddress, UINT p
     char port_str[8] = {0};
     char cmd[256] = {0};
     char buf[128] = {0};
+    int res;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -8979,30 +9010,54 @@ INT wifi_setApSecuritySecondaryRadiusServer(INT apIndex, CHAR *IPAddress, UINT p
     if (strstr(buf, "Enterprise") == NULL)  // non Enterprise mode sould not set radius server info
         return RETURN_ERR;
 
-    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, apIndex);
+    res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, apIndex);
+    if (os_snprintf_error(sizeof(config_file), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
 
-    snprintf(cmd, sizeof(cmd), "cat %s | grep '# radius 2'", config_file);
+    res = snprintf(cmd, sizeof(cmd), "cat %s | grep '# radius 2'", config_file);
+    if (os_snprintf_error(sizeof(cmd), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
     _syscmd(cmd, buf, sizeof(buf));
     memset(cmd, 0, sizeof(cmd));
 
-    snprintf(port_str, sizeof(port_str), "%d", port);
-    if (strlen(buf) == 0)
+    res = snprintf(port_str, sizeof(port_str), "%d", port);
+    if (os_snprintf_error(sizeof(port_str), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
+    if (strlen(buf) == 0) {
         // Append
-        snprintf(cmd, sizeof(cmd), "echo -e '# radius 2\\n"
+        res = snprintf(cmd, sizeof(cmd), "echo -e '# radius 2\\n"
                                 "auth_server_addr=%s\\n"
                                 "auth_server_port=%s\\n"
                                 "auth_server_shared_secret=%s' >> %s", IPAddress, port_str, RadiusSecret, config_file);
-    else {
+        if (os_snprintf_error(sizeof(cmd), res)) {
+    		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+    		return RETURN_ERR;
+    	}
+    } else {
         // Delete the three lines setting after the "# radius 2" comment
-        snprintf(cmd, sizeof(cmd), "sed -i '/# radius 2/{n;N;N;d}' %s", config_file);
+        res = snprintf(cmd, sizeof(cmd), "sed -i '/# radius 2/{n;N;N;d}' %s", config_file);
+        if (os_snprintf_error(sizeof(cmd), res)) {
+    		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+    		return RETURN_ERR;
+    	}
         _syscmd(cmd, buf, sizeof(buf));
         memset(cmd, 0, sizeof(cmd));
         // Use "# radius 2" comment to find the location to insert the radius setting
-        snprintf(cmd, sizeof(cmd), "sed -i 's/# radius 2/"
+        res = snprintf(cmd, sizeof(cmd), "sed -i 's/# radius 2/"
                                 "# radius 2\\n"
                                 "auth_server_addr=%s\\n"
                                 "auth_server_port=%s\\n"
                                 "auth_server_shared_secret=%s/' %s", IPAddress, port_str, RadiusSecret, config_file);
+        if (os_snprintf_error(sizeof(cmd), res)) {
+    		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+    		return RETURN_ERR;
+    	}
     }
     if(_syscmd(cmd, buf, sizeof(buf))) {
         wifi_dbg_printf("%s: command failed, cmd: %s\n", __func__, cmd);
@@ -9306,12 +9361,17 @@ INT wifi_getApAssociatedDeviceDiagnosticResult(INT apIndex, wifi_associated_dev_
     char *param = NULL, *value = NULL, *line=NULL;
     size_t len = 0;
     wifi_associated_dev_t *dev=NULL;
+    int res;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     *associated_dev_array = NULL;
     if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
-    sprintf(cmd, "hostapd_cli -i%s all_sta | grep AUTHORIZED | wc -l", interface_name);
+    res = snprintf(cmd, sizeof(cmd), "hostapd_cli -i%s all_sta | grep AUTHORIZED | wc -l", interface_name);
+    if (os_snprintf_error(sizeof(cmd), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
     _syscmd(cmd,buf,sizeof(buf));
     *output_array_size = atoi(buf);
 
@@ -9320,7 +9380,11 @@ INT wifi_getApAssociatedDeviceDiagnosticResult(INT apIndex, wifi_associated_dev_
 
     dev=(wifi_associated_dev_t *) calloc (*output_array_size, sizeof(wifi_associated_dev_t));
     *associated_dev_array = dev;
-    sprintf(cmd, "hostapd_cli -i%s all_sta > /tmp/connected_devices.txt" , interface_name);
+    res = snprintf(cmd, sizeof(cmd), "hostapd_cli -i%s all_sta > /tmp/connected_devices.txt" , interface_name);
+    if (os_snprintf_error(sizeof(cmd), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
     _syscmd(cmd,buf,sizeof(buf));
     f = fopen("/tmp/connected_devices.txt", "r");
     if (f==NULL)
@@ -10310,11 +10374,16 @@ INT wifi_getApSecurityMFPConfig(INT apIndex, CHAR *output_string)
 {
     char output[16]={'\0'};
     char config_file[MAX_BUF_SIZE] = {0};
+    int res;
 
     if (!output_string)
         return RETURN_ERR;
 
-    sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, apIndex);
+    res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, apIndex);
+    if (os_snprintf_error(sizeof(config_file), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
     wifi_hostapdRead(config_file, "ieee80211w", output, sizeof(output));
 
     if (strlen(output) == 0)
@@ -10403,10 +10472,15 @@ INT wifi_getRadioSupportedDataTransmitRates(INT wlanIndex,CHAR *output)
 {
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     char config_file[MAX_BUF_SIZE] = {0};
+    int res;
 
     if (NULL == output)
         return RETURN_ERR;
-    sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,wlanIndex);
+    res = snprintf(config_file, sizeof(config_file), "%s%d.conf",CONFIG_PREFIX,wlanIndex);
+    if (os_snprintf_error(sizeof(config_file), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
     wifi_hostapdRead(config_file,"hw_mode",output,64);
 
     if(strcmp(output,"b")==0)
@@ -10427,11 +10501,16 @@ INT wifi_getRadioOperationalDataTransmitRates(INT wlanIndex,CHAR *output)
     char temp_output[128];
     char temp_TransmitRates[128];
     char config_file[MAX_BUF_SIZE] = {0};
+    int res;
 
     if (NULL == output)
         return RETURN_ERR;
 
-    sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,wlanIndex);
+    res = snprintf(config_file, sizeof(config_file), "%s%d.conf",CONFIG_PREFIX,wlanIndex);
+    if (os_snprintf_error(sizeof(config_file), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
     wifi_hostapdRead(config_file,"supported_rates",output,64);
 
     if (strlen(output) == 0) {
