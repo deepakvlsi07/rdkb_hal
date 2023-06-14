@@ -63,6 +63,14 @@ Licensed under the ISC license
 #include <wpa_ctrl.h>
 #include <errno.h>
 #include <time.h>
+
+#include <sys/socket.h>
+#include <sys/ioctl.h>
+#include <arpa/inet.h>
+#include <linux/if.h>
+#include <linux/if_bridge.h>
+#include <linux/sockios.h>
+
 #define MAC_ALEN 6
 
 #define MAX_BUF_SIZE 256
@@ -267,6 +275,11 @@ static int util_get_sec_chan_offset(int channel, const char* ht_mode);
 int hostapd_raw_add_bss(int apIndex);
 int hostapd_raw_remove_bss(int apIndex);
 
+static inline int os_snprintf_error(size_t size, int res)
+{
+	return res < 0 || (unsigned int) res >= size;
+}
+
 /*type define the nl80211 call back func*/
 typedef int (*mtk_nl80211_cb) (struct nl_msg *, void *);
 
@@ -410,11 +423,6 @@ int mtk_nl80211_send(struct unl *nl, struct nl_msg *msg,
 int mtk_nl80211_deint(struct unl *nl) {
 	unl_free(nl);
 	return 0;
-}
-
-static inline int os_snprintf_error(size_t size, int res)
-{
-	return res < 0 || (unsigned int) res >= size;
 }
 
 wifi_secur_list * wifi_get_item_by_key(wifi_secur_list *list, int list_sz, int key)
@@ -7777,12 +7785,42 @@ INT wifi_setApVlanID(INT apIndex, INT vlanId)
     return RETURN_ERR;
 }
 
+char br_name[IFNAMSIZ] = "brlan0";
+
 // gets bridgeName, IP address and Subnet. bridgeName is a maximum of 32 characters,
 INT wifi_getApBridgeInfo(INT index, CHAR *bridgeName, CHAR *IP, CHAR *subnet)
 {
-    snprintf(bridgeName, 32, "brlan0");
-    snprintf(IP, 32, "10.0.0.1");
-    snprintf(subnet, 32, "255.255.255.0");
+	int sock = socket(AF_INET, SOCK_DGRAM, 0);
+	struct ifreq ifr;
+	struct sockaddr_in *sin;
+
+	memcpy(bridgeName, br_name, strlen(br_name));
+
+	if (sock == -1) {
+		wifi_debug(DEBUG_ERROR, "socket failed");
+		return RETURN_ERR;
+	}
+
+	strncpy(ifr.ifr_name, br_name, IFNAMSIZ);
+	ifr.ifr_addr.sa_family = AF_INET;
+	if (ioctl(sock, SIOCGIFADDR, &ifr) < 0) {
+		wifi_debug(DEBUG_ERROR, "ioctl(SIOCGIFADDR) failed, %s, bridge_name=%s\n",
+			strerror(errno), br_name);
+		return RETURN_ERR;
+	}
+
+	sin = (struct sockaddr_in *)&ifr.ifr_addr;
+	wifi_debug(DEBUG_ERROR, "Bridge device %s has IP address: %s\n", br_name, inet_ntoa(sin->sin_addr));
+	memcpy(IP, inet_ntoa(sin->sin_addr), strlen(inet_ntoa(sin->sin_addr)));
+
+	if (ioctl(sock, SIOCGIFNETMASK, &ifr) < 0) {
+		wifi_debug(DEBUG_ERROR, "ioctl(SIOCGIFNETMASK) failed, %s", strerror(errno));
+		return RETURN_ERR;
+	}
+
+	wifi_debug(DEBUG_ERROR, "Bridge device %s has subnet mask: %s\n", br_name, inet_ntoa(sin->sin_addr));
+	memcpy(subnet, inet_ntoa(sin->sin_addr), strlen(inet_ntoa(sin->sin_addr)));
+	close(sock);
 
     return RETURN_OK;
 }
@@ -7791,6 +7829,86 @@ INT wifi_getApBridgeInfo(INT index, CHAR *bridgeName, CHAR *IP, CHAR *subnet)
 INT wifi_setApBridgeInfo(INT apIndex, CHAR *bridgeName, CHAR *IP, CHAR *subnet)
 {
     //save settings, wait for wifi reset or wifi_pushBridgeInfo to apply.
+	struct ifreq ifr;
+	struct sockaddr_in sin;
+	int sock = socket(AF_INET, SOCK_DGRAM, 0);
+
+	if (strlen(bridgeName) >= IFNAMSIZ) {
+		wifi_debug(DEBUG_ERROR, "invalide bridgeName length=%ld\n", strlen(bridgeName));
+		return RETURN_ERR;
+	}
+
+	if (strlen(br_name) >= IFNAMSIZ) {
+		wifi_debug(DEBUG_ERROR, "invalide br_name length=%ld in strorage\n", strlen(br_name));
+		return RETURN_ERR;
+	}
+
+	if (sock == -1) {
+	    wifi_debug(DEBUG_ERROR, "socket failed");
+		return RETURN_ERR;
+	}
+
+	memset(&ifr, 0, sizeof(ifr));
+	strncpy(ifr.ifr_name, br_name, strlen(br_name));
+	if (ioctl(sock, SIOCGIFFLAGS, &ifr) < 0) {
+		wifi_debug(DEBUG_ERROR, "ioctl(SIOCGIFFLAGS) failed, %s", strerror(errno));
+		return RETURN_ERR;
+	}
+
+	ifr.ifr_flags = (short)(ifr.ifr_flags & ~IFF_UP);
+	if (ioctl(sock, SIOCSIFFLAGS, &ifr) < 0) {
+		wifi_debug(DEBUG_ERROR, "ioctl(SIOCSIFFLAGS) failed, %s", strerror(errno));
+		return RETURN_ERR;
+	}
+
+	memset(&ifr, 0, sizeof(ifr));
+	strncpy(ifr.ifr_name, br_name, IFNAMSIZ);
+	strncpy(ifr.ifr_newname, bridgeName, IFNAMSIZ);
+	if (ioctl(sock, SIOCSIFNAME, &ifr) < 0) {
+		wifi_debug(DEBUG_ERROR, "ioctl(SIOCSIFNAME) failed, %s", strerror(errno));
+	    return RETURN_ERR;
+	}
+
+	memset(br_name, 0, sizeof(br_name));
+	memcpy(br_name, bridgeName, strlen(bridgeName));
+
+	memset(&ifr, 0, sizeof(ifr));
+	strncpy(ifr.ifr_name, bridgeName, IFNAMSIZ);
+	if (ioctl(sock, SIOCGIFFLAGS, &ifr) < 0) {
+		wifi_debug(DEBUG_ERROR, "ioctl(SIOCGIFFLAGS) failed, %s", strerror(errno));
+	    return RETURN_ERR;
+	}
+	ifr.ifr_flags = (short)(ifr.ifr_flags | IFF_UP);
+	if (ioctl(sock, SIOCSIFFLAGS, &ifr) < 0) {
+		wifi_debug(DEBUG_ERROR, "ioctl(SIOCSIFFLAGS) failed, %s", strerror(errno));
+	    return RETURN_ERR;
+	}
+
+	memset(&ifr, 0, sizeof(ifr));
+	memcpy(ifr.ifr_name, bridgeName, strlen(bridgeName));
+
+	memset(&sin, 0, sizeof(struct sockaddr_in));
+	sin.sin_family = AF_INET;
+	if (inet_aton(IP, &(sin.sin_addr)) == 0) {
+		wifi_debug(DEBUG_ERROR, "inet_aton failed");
+		return RETURN_ERR;
+	}
+	memcpy(&ifr.ifr_addr, &sin, sizeof(struct sockaddr_in));
+	if (ioctl(sock, SIOCSIFADDR, &ifr) < 0) {
+		wifi_debug(DEBUG_ERROR, "ioctl(SIOCSIFADDR) failed, %s", strerror(errno));
+		return RETURN_ERR;
+	}
+
+	if (inet_aton(subnet, &((struct sockaddr_in *)&ifr.ifr_netmask)->sin_addr) == 0) {
+		wifi_debug(DEBUG_ERROR, "inet_aton failed");
+		return RETURN_ERR;
+	}
+	if (ioctl(sock, SIOCSIFNETMASK, &ifr) < -1) {
+		wifi_debug(DEBUG_ERROR, "ioctl(SIOCSIFNETMASK) failed, %s", strerror(errno));
+		return RETURN_ERR;
+	}
+
+	close(sock);
     return RETURN_ERR;
 }
 
@@ -7963,7 +8081,7 @@ err:
 // creates configuration variables needed for WPA/WPS.  These variables are implementation dependent and in some implementations these variables are used by hostapd when it is started.  Specific variables that are needed are dependent on the hostapd implementation. These variables are set by WPA/WPS security functions in this wifi HAL.  If not needed for a particular implementation this function may simply return no error.
 INT wifi_createHostApdConfig(INT apIndex, BOOL createWpsCfg)
 {
-    return RETURN_ERR;
+    return RETURN_OK;
 }
 
 // starts hostapd, uses the variables in the hostapd config with format compatible with the specific hostapd implementation
@@ -14407,6 +14525,23 @@ int main(int argc,char **argv)
         INT ret = wifi_pushRadioChannel2(index,channel,width,beacon);
         printf("Result = %d", ret);
     }
+	if(strstr(argv[1],"wifi_getApBridgeInfo")!=NULL)
+    {
+		char br_name[64], ip[64], subset[64] = {0};
+		wifi_getApBridgeInfo(0, br_name, ip, subset);
+		printf("wifi_getApBridgeInfo br_name = %s, ip = %s, subset = %s\n", br_name, ip, subset);
+    }
+	if(strstr(argv[1],"wifi_enableGreylistAccessControl")!=NULL)
+    {
+		int enable = atoi(argv[3]);
+		wifi_enableGreylistAccessControl(enable == 0 ? FALSE : TRUE);
+		printf("wifi_enableGreylistAccessControl enable=%d\n", enable);
+    }
+	if(strstr(argv[1],"wifi_setApBridgeInfo")!=NULL)
+    {
+		wifi_setApBridgeInfo(0, argv[3], argv[4], argv[5]);
+		printf("wifi_setApBridgeInfo br_name = %s, ip = %s, subset = %s\n", argv[3], argv[4], argv[5]);
+    }
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return 0;
@@ -16040,4 +16175,56 @@ INT wifi_getTWTsessions(INT ap_index, UINT maxNumberSessions, wifi_twt_sessions_
     pclose(f);
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return RETURN_OK;
+}
+
+INT wifi_enableGreylistAccessControl(BOOL enable)
+{
+	char inf_name[IFNAMSIZ] = {0};
+	int if_idx, ret = 0;
+	struct nl_msg *msg	= NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+	struct unl unl_ins;
+	unsigned short apIndex = 0;
+
+	for (apIndex = 0; apIndex < MAX_APS; apIndex++) {
+		if (wifi_GetInterfaceName(apIndex, inf_name) != RETURN_OK)
+			continue;
+
+		if_idx = if_nametoindex(inf_name);
+		if (!if_idx) {
+			wifi_debug(DEBUG_ERROR, "can't finde ifname(%s) index,ERROR\n", inf_name);
+			continue;
+		}
+
+		/*init mtk nl80211 vendor cmd*/
+		param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_ACL;
+		param.if_type = NL80211_ATTR_IFINDEX;
+		param.if_idx = if_idx;
+		ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+		if (ret) {
+			wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+			return RETURN_ERR;
+		}
+
+		if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_ACL_POLICY, enable == FALSE ? 0 : 1)) {
+			wifi_debug(DEBUG_ERROR, "Nla put attribute error\n");
+			nlmsg_free(msg);
+			mtk_nl80211_deint(&unl_ins);
+			continue;
+		}
+
+		/*send mtk nl80211 vendor msg*/
+		ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
+		if (ret) {
+			wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+			mtk_nl80211_deint(&unl_ins);
+			continue;
+		}
+		/*deinit mtk nl80211 vendor msg*/
+		mtk_nl80211_deint(&unl_ins);
+		wifi_debug(DEBUG_NOTICE, " %s cmd success.\n", inf_name);
+	}
+
+	return RETURN_OK;
 }
