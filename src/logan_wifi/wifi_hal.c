@@ -3678,21 +3678,37 @@ INT wifi_getRadioDCSSupported(INT radioIndex, BOOL *output_bool) 	//RDKB
 {
 	if (NULL == output_bool)
 		return RETURN_ERR;
-	*output_bool=FALSE;
+	*output_bool=TRUE;
 	return RETURN_OK;
 }
 
 INT wifi_getRadioDCSEnable(INT radioIndex, BOOL *output_bool)		//RDKB
 {
+	unsigned long period = 0;
+
 	if (NULL == output_bool)
 		return RETURN_ERR;
-	*output_bool=FALSE;
+
+	if (wifi_getRadioAutoChannelRefreshPeriod(radioIndex, &period) != RETURN_OK)
+		return RETURN_ERR;
+
+	*output_bool = (period > 0) ? TRUE : FALSE;
+
 	return RETURN_OK;
 }
 
-INT wifi_setRadioDCSEnable(INT radioIndex, BOOL enable)			//RDKB
+INT wifi_setRadioDCSEnable(INT radioIndex, BOOL enable)            //RDKB
 {
-	//Set to wifi config only. Wait for wifi reset to apply.
+	ULONG period = 1800;
+
+	if (enable == TRUE) {
+		if (wifi_setRadioAutoChannelRefreshPeriod(radioIndex, period) != RETURN_OK)
+		return RETURN_ERR;
+	}
+	else {
+		if (wifi_setRadioAutoChannelRefreshPeriod(radioIndex, 0) != RETURN_OK)
+		return RETURN_ERR;
+	}
 	return RETURN_OK;
 }
 
@@ -3914,24 +3930,85 @@ INT wifi_getRadioDfsSupport(INT radioIndex, BOOL *output_bool) //Tr181
 //The value of this parameter is a comma seperated list of channel number
 INT wifi_getRadioDCSChannelPool(INT radioIndex, CHAR *output_pool)			//RDKB
 {
-	int res;
+
+	#define CHANNEL_AVAILABLE 0
+	#define CHANNEL_INVALID 1
+	#define CHANNEL_LIST_MAX_LENGTH 256
+	#define MAX_CHANNEL_NUMBER 255
+
+	char config_file[MAX_BUF_SIZE] = {0};
+	char possible_channels[CHANNEL_LIST_MAX_LENGTH] = {0};
+	char skip_list[CHANNEL_LIST_MAX_LENGTH] = {0};
+	int skip_table[MAX_CHANNEL_NUMBER +1] = {0};
+	wifi_band band = band_invalid;
+	char *token_channel = NULL, *token_skip = NULL;
 
 	if (NULL == output_pool)
 		return RETURN_ERR;
-	if (radioIndex==1)
-		return RETURN_OK;//TODO need to handle for 5GHz band, i think
-	res = snprintf(output_pool, 256, "1,2,3,4,5,6,7,8,9,10,11");
-	if (os_snprintf_error(256, res)) {
-		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-		return RETURN_ERR;
+	// get skiplist, possible_channels list
+	wifi_getRadioPossibleChannels(radioIndex, possible_channels);
+	band = wifi_index_to_band(radioIndex);
+	snprintf(config_file, sizeof(config_file), "%s%d.dat", LOGAN_DAT_FILE, band);
+	wifi_datfileRead(config_file, "AutoChannelSkipList", skip_list, sizeof(skip_list));
+
+	if (skip_list[0] != '\0') {
+		int len = strlen(skip_list);
+		for (int i = 0; i < len; i++) {
+			if (skip_list[i] == ';') {
+				skip_list[i] = ',';
+			}
+		}
+		// skip list
+		token_skip = strtok(skip_list, ",");
+		while (token_skip != NULL) {
+			int channel = atoi(token_skip);
+			if (channel <= MAX_CHANNEL_NUMBER && strstr(possible_channels, token_skip) != NULL)
+				skip_table[atoi(token_skip)] = CHANNEL_INVALID;
+			token_skip = strtok(NULL, ",");
+		}
 	}
 
+	int count = 0;
+	token_channel = strtok(possible_channels, ",");
+	while (token_channel != NULL) {
+		int channel = atoi(token_channel);
+		if (channel <= MAX_CHANNEL_NUMBER  && skip_table[channel] == CHANNEL_AVAILABLE) {
+			count += snprintf(&output_pool[count], CHANNEL_LIST_MAX_LENGTH-count, "%d,", channel);
+			if (count >= CHANNEL_LIST_MAX_LENGTH-1)
+				break;
+		}
+		token_channel = strtok(NULL, ",");
+	}
+	//delete the last one ','
+	if (count >0 && output_pool[count-1] == ',')
+		output_pool[count-1] = '\0';
 	return RETURN_OK;
 }
 
 INT wifi_setRadioDCSChannelPool(INT radioIndex, CHAR *pool)			//RDKB
 {
-	//Set to wifi config. And apply instantly.
+	char config_file_dat[128] = {0};
+	struct params dat = {0};
+	wifi_band band = band_invalid;
+	char new_pool[128] = {0};
+
+	if (NULL == pool)
+		return RETURN_ERR;
+
+	strncpy(new_pool, pool, strlen(pool));
+	for (int i = 0; new_pool[i] != '\0'; i++) {
+		if (new_pool[i] == ',')
+			new_pool[i] = ';';
+	}
+
+	dat.name = "AutoChannelSkipList";
+	dat.value = new_pool;
+	band = wifi_index_to_band(radioIndex);
+	snprintf(config_file_dat, sizeof(config_file_dat), "%s%d.dat", LOGAN_DAT_FILE, band);
+	if (wifi_datfileWrite(config_file_dat, &dat, 1) != 0)
+		return RETURN_ERR;
+	wifi_reloadAp(radioIndex);
+
 	return RETURN_OK;
 }
 
@@ -3939,8 +4016,10 @@ INT wifi_getRadioDCSScanTime(INT radioIndex, INT *output_interval_seconds, INT *
 {
 	if (NULL == output_interval_seconds || NULL == output_dwell_milliseconds)
 		return RETURN_ERR;
-	*output_interval_seconds=1800;
-	*output_dwell_milliseconds=40;
+	//Should refresh period time be filled in here? output_interval_seconds is INT type
+	//wifi_getRadioAutoChannelRefreshPeriod is Ulong type
+	*output_interval_seconds = 1800;
+	*output_dwell_milliseconds = 200;
 
 	return RETURN_OK;
 }
@@ -4030,24 +4109,157 @@ INT wifi_getRadioAutoChannelRefreshPeriodSupported(INT radioIndex, BOOL *output_
 {
 	if (NULL == output_bool)
 		return RETURN_ERR;
-	*output_bool=FALSE;		//not support
+	*output_bool = TRUE;
 
 	return RETURN_OK;
+}
+
+
+int get_ACS_RefreshPeriod_callback(struct nl_msg *msg, void *arg)
+{
+	ULONG *data = (ULONG *)arg;
+	struct nlattr *tb[NL80211_ATTR_MAX + 1];
+	struct nlattr *vndr_tb[MTK_NL80211_VENDOR_ATTR_GET_RUNTIME_INFO_MAX + 1];
+	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+	int err = 0;
+
+	err = nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+			  genlmsg_attrlen(gnlh, 0), NULL);
+	if (err < 0)
+		return NL_SKIP;
+
+	if (tb[NL80211_ATTR_VENDOR_DATA]) {
+		err = nla_parse_nested(vndr_tb, MTK_NL80211_VENDOR_ATTR_GET_RUNTIME_INFO_MAX,
+			tb[NL80211_ATTR_VENDOR_DATA], NULL);
+		if (err < 0)
+			return NL_SKIP;
+
+		if (vndr_tb[MTK_NL80211_VENDOR_ATTR_GET_RUNTIME_INFO_GET_ACS_REFRESH_PERIOD]) {
+			*data = nla_get_u32(vndr_tb[MTK_NL80211_VENDOR_ATTR_GET_RUNTIME_INFO_GET_ACS_REFRESH_PERIOD]);
+		}
+	}
+
+	return NL_OK;
 }
 
 //Get the ACS refresh period in seconds
 INT wifi_getRadioAutoChannelRefreshPeriod(INT radioIndex, ULONG *output_ulong) //Tr181
 {
+	char interface_name[IF_NAME_SIZE] = {0};
+	int ret = -1;
+	unsigned int if_idx = 0;
+	struct unl unl_ins;
+	struct nl_msg *msg  = NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+	unsigned long checktime = 0;
+
+	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	if (NULL == output_ulong)
 		return RETURN_ERR;
-	*output_ulong=300;
 
+	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+		return RETURN_ERR;
+
+	if_idx = if_nametoindex(interface_name);
+	if (!if_idx) {
+		wifi_debug(DEBUG_ERROR, "can't finde ifname(%s) index,ERROR\n", interface_name);
+		return RETURN_ERR;
+	}
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_GET_RUNTIME_INFO;
+	param.if_type = NL80211_ATTR_IFINDEX;
+	param.if_idx = if_idx;
+
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+
+	/*add mtk vendor cmd data*/
+	if (nla_put_u32(msg, MTK_NL80211_VENDOR_ATTR_GET_RUNTIME_INFO_GET_ACS_REFRESH_PERIOD, 0)) {
+		wifi_debug(DEBUG_ERROR, "Nla put GET_RUNTIME_INFO_GET_ACS_REFRESH_PERIOD attribute error\n");
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	/*send mtk nl80211 vendor msg*/
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, get_ACS_RefreshPeriod_callback, &checktime);
+
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		goto err;
+	}
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+	*output_ulong = checktime;
+	wifi_debug(DEBUG_NOTICE,"send cmd success\n");
+
+	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 	return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR,"send cmd fails\n");
+	return RETURN_ERR;
+
 }
 
 //Set the ACS refresh period in seconds
 INT wifi_setRadioDfsRefreshPeriod(INT radioIndex, ULONG seconds) //Tr181
 {
+	char interface_name[IF_NAME_SIZE] = {0};
+	int ret = -1;
+	unsigned int if_idx = 0;
+	struct unl unl_ins;
+	struct nl_msg *msg  = NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+
+	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+		return RETURN_ERR;
+
+	if_idx = if_nametoindex(interface_name);
+	if (!if_idx) {
+		wifi_debug(DEBUG_ERROR, "can't finde ifname(%s) index,ERROR\n", interface_name);
+		return RETURN_ERR;
+	}
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_AUTO_CH_SEL;
+	param.if_type = NL80211_ATTR_IFINDEX;
+	param.if_idx = if_idx;
+
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+
+	/*add mtk vendor cmd data*/
+	if (nla_put_u32(msg, MTK_NL80211_VENDOR_ATTR_AUTO_CH_CHECK_TIME, seconds)) {
+		wifi_debug(DEBUG_ERROR, "Nla put MTK_NL80211_VENDOR_ATTR_AUTO_CH_CHECK_TIME attribute error\n");
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	/*send mtk nl80211 vendor msg*/
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
+
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		goto err;
+	}
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_NOTICE,"send cmd success\n");
+
+	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+	return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR,"send cmd fails\n");
 	return RETURN_ERR;
 }
 
@@ -14774,7 +14986,48 @@ int main(int argc,char **argv)
 		wifi_debug(DEBUG_NOTICE, "Ap set IGMP Snooping Enable: %d\n", enable);
 		return 0;
 	}
+	if (strncmp(argv[1], "wifi_setRadioDCSEnable(", strlen(argv[1])) == 0) {
+		int enable = 0;
+		if(argc <= 3 )
+		{
+			wifi_debug(DEBUG_ERROR, "Insufficient arguments \n");
+			exit(-1);
+		}
+		enable = (BOOL)atoi(argv[3]);
+		wifi_setRadioDCSEnable(index, enable);
+		wifi_debug(DEBUG_NOTICE, "Ap set DCS Enable: %d\n", enable);
+		return 0;
+	}
+	if (strncmp(argv[1], "wifi_getRadioAutoChannelRefreshPeriod(", strlen(argv[1])) == 0) {
+		ULONG period = 0;
 
+		wifi_getRadioAutoChannelRefreshPeriod(index, &period);
+		wifi_debug(DEBUG_NOTICE, "Get RefreshPeriod: %ld\n", period);
+		return 0;
+	}
+	if (strncmp(argv[1], "wifi_setRadioDfsRefreshPeriod(", strlen(argv[1])) == 0) {
+		ULONG period = 0;
+
+		period = (ULONG)atoi(argv[3]);
+		wifi_setRadioDfsRefreshPeriod(index, period);
+		wifi_debug(DEBUG_NOTICE, "Set RefreshPeriod: %ld\n", period);
+		return 0;
+	}
+	if (strncmp(argv[1], "wifi_setRadioDCSChannelPool(", strlen(argv[1])) == 0) {
+		char pool[256] = {'\0'};
+
+		strcpy(pool, argv[3]);
+		wifi_setRadioDCSChannelPool(index, pool);
+		wifi_debug(DEBUG_NOTICE, "Set DCSChannelPool: %s\n", pool);
+		return 0;
+	}
+	if (strncmp(argv[1], "wifi_getRadioDCSChannelPool(", strlen(argv[1])) == 0) {
+		char pool[256] = {'\0'};
+
+		wifi_getRadioDCSChannelPool(index, pool);
+		wifi_debug(DEBUG_NOTICE, "Get DCSChannelPool: %s\n", pool);
+		return 0;
+	}
 	if (strncmp(argv[1], "wifi_getRadioIGMPSnoopingEnable", strlen(argv[1])) == 0) {
 		BOOL out_status = 0;
 		wifi_getRadioIGMPSnoopingEnable(index, &out_status);
