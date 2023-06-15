@@ -13570,7 +13570,7 @@ INT wifi_getApSecurity(INT ap_index, wifi_vap_security_t *security)
     memset(buf, 0, sizeof(buf));
     wifi_hostapdRead(config_file, "wpa_strict_rekey", buf, sizeof(buf));
     if (strlen(buf) == 0)
-        security->strict_rekey = 1;
+        security->strict_rekey = 0;
     else
         security->strict_rekey = strtol(buf, NULL, 10);
 
