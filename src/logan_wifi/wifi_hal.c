@@ -262,6 +262,23 @@ typedef struct {
 	intptr_t data;
 } wifi_secur_list;
 
+typedef struct GNU_PACKED _wdev_extended_ap_metrics {
+	unsigned int uc_tx;
+	unsigned int uc_rx;
+	unsigned int mc_tx;
+	unsigned int mc_rx;
+	unsigned int bc_tx;
+	unsigned int bc_rx;
+} wdev_extended_ap_metric;
+
+typedef struct GNU_PACKED _wdev_ap_metric {
+	unsigned char	bssid[6];
+	unsigned char	cu;
+	unsigned char 	ESPI_AC[4][3];
+	wdev_extended_ap_metric ext_ap_metric;
+} wdev_ap_metric;
+
+
 static int util_unii_5g_centerfreq(const char *ht_mode, int channel);
 static int util_unii_6g_centerfreq(const char *ht_mode, int channel);
 wifi_secur_list *	   wifi_get_item_by_key(wifi_secur_list *list, int list_sz, int key);
@@ -7507,14 +7524,33 @@ INT wifi_setApWpaEncryptionMode(INT apIndex, CHAR *encMode)
 // deletes internal security varable settings for this ap
 INT wifi_removeApSecVaribles(INT apIndex)
 {
-	return RETURN_ERR;
+	char config_file[MAX_BUF_SIZE] = {0};
+	struct params list;
+
+	list.name = "wpa";
+	list.value = "0";
+
+	sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,apIndex);
+	wifi_hostapdWrite(config_file, &list, 1);
+
+	return RETURN_OK;
 }
 
 // changes the hardware settings to disable encryption on this ap
 INT wifi_disableApEncryption(INT apIndex)
 {
-	//Apply instantly
-	return RETURN_ERR;
+	char config_file[MAX_BUF_SIZE] = {0};
+	struct params list;
+
+	list.name = "wpa";
+	list.value = "0";
+
+	sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,apIndex);
+	wifi_hostapdWrite(config_file, &list, 1);
+	wifi_hostapdProcessUpdate(apIndex, &list, 1);
+	wifi_reloadAp(apIndex);
+
+	return RETURN_OK;
 }
 
 // set the authorization mode on this ap
@@ -7679,6 +7715,47 @@ INT wifi_setApRadioIndex(INT apIndex, INT radioIndex)
 {
 	//set to config only and wait for wifi reset to apply settings
 	return RETURN_ERR;
+}
+
+int mtk_get_ap_metrics(struct nl_msg *msg, void *cb)
+{
+	struct nlattr *tb[NL80211_ATTR_MAX + 1];
+	struct nlattr *vndr_tb[MTK_NL80211_VENDOR_ATTR_GET_STATISTIC_MAX + 1];
+	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+	wdev_ap_metric ap_metric;
+	wdev_ap_metric *p_ap_metric = &ap_metric;
+	int err = 0;
+	struct mtk_nl80211_cb_data *cb_data = cb;
+
+	if (!msg || !cb_data) {
+		wifi_debug(DEBUG_ERROR, "msg(%p) or cb_data(%p) is null,error.\n", msg, cb_data);
+		return NL_SKIP;
+	}
+
+	err = nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+			  genlmsg_attrlen(gnlh, 0), NULL);
+	if (err < 0) {
+		wifi_debug(DEBUG_ERROR, "nla_parse ap_metrics nl80211 msg fails,error.\n");
+		return err;
+	}
+
+	if (tb[NL80211_ATTR_VENDOR_DATA]) {
+		err = nla_parse_nested(vndr_tb, MTK_NL80211_VENDOR_ATTR_GET_STATISTIC_MAX,
+			tb[NL80211_ATTR_VENDOR_DATA], NULL);
+		if (err < 0) {
+			wifi_debug(DEBUG_ERROR, "GET_STATISTIC_MAX fails,error.\n");
+			return err;
+		}
+
+		if (vndr_tb[MTK_NL80211_VENDOR_ATTR_GET_AP_METRICS]) {
+			p_ap_metric = nla_data(vndr_tb[MTK_NL80211_VENDOR_ATTR_GET_AP_METRICS]);
+			if (p_ap_metric) {
+				memcpy(cb_data->out_buf , &p_ap_metric->cu, sizeof(unsigned char));
+			}
+		}
+	}
+
+	return NL_OK;
 }
 
 
@@ -13701,8 +13778,65 @@ INT wifi_chan_eventRegister(wifi_chan_eventCB_t eventCb)
 
 INT wifi_getRadioBandUtilization (INT radioIndex, INT *output_percentage)
 {
+	int ret = -1;
+	char inf_name[IF_NAME_SIZE] = {0};
+	int if_idx = 0;
+	struct unl unl_ins;
+	struct nl_msg *msg	= NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+	struct mtk_nl80211_cb_data cb_data;
+	wdev_ap_metric ap_metric;
+
+	/*init mtk nl80211 vendor cmd*/
+
+	if (wifi_GetInterfaceName(radioIndex, inf_name) != RETURN_OK)
+		return RETURN_ERR;
+	if_idx = if_nametoindex(inf_name);
+	if (!if_idx) {
+		wifi_debug(DEBUG_ERROR,"can't finde ifname(%s) index,ERROR\n", inf_name);
+		return RETURN_ERR;
+	}
+
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_GET_STATISTIC;
+	param.if_type = NL80211_ATTR_IFINDEX;
+	param.if_idx = if_idx;
+
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+
+	/*add mtk vendor cmd data*/
+
+	if (nla_put(msg, MTK_NL80211_VENDOR_ATTR_GET_AP_METRICS, sizeof(wdev_ap_metric), (char *)&ap_metric)) {
+		wifi_debug(DEBUG_ERROR, "Nla put GET_AP_METRICS attribute error\n");
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	/*send mtk nl80211 vendor msg*/
+	cb_data.out_buf = (char *)output_percentage;
+	cb_data.out_len = sizeof(wdev_ap_metric);
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, mtk_get_ap_metrics, &cb_data);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		goto err;
+	}
+
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_NOTICE, "set cmd success.\n");
+	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
 	return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR, "set cmd fails.\n");
+	return RETURN_ERR;
 }
+
 
 INT wifi_getApAssociatedClientDiagnosticResult(INT apIndex, char *mac_addr, wifi_associated_dev3_t *dev_conn)
 {
