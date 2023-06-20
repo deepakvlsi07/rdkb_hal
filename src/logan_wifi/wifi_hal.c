@@ -5471,13 +5471,104 @@ INT wifi_getRadioTrafficStats2(INT radioIndex, wifi_radioTrafficStats2_t *output
 //Set radio traffic static Measureing rules
 INT wifi_setRadioTrafficStatsMeasure(INT radioIndex, wifi_radioTrafficStatsMeasure_t *input_struct) //Tr181
 {
+	char inf_name[IF_NAME_SIZE] = {0};
+	unsigned int if_idx = 0;
+	int ret = -1;
+	struct unl unl_ins;
+	struct nl_msg *msg	= NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+
+	if (wifi_GetInterfaceName(radioIndex, inf_name) != RETURN_OK)
+		return RETURN_ERR;
+	if_idx = if_nametoindex(inf_name);
+	if (!if_idx) {
+		wifi_debug(DEBUG_ERROR,"can't finde ifname(%s) index,ERROR\n", inf_name);
+		return RETURN_ERR;
+	}
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_RADIO_STATS;
+	param.if_type = NL80211_ATTR_IFINDEX;
+	param.if_idx = if_idx;
+
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+	/*add mtk vendor cmd data*/
+	if (nla_put(msg, MTK_NL80211_VENDOR_ATTR_RADIO_SET_STATS_MEASURING_METHOD,
+        sizeof(wifi_radioTrafficStatsMeasure_t), input_struct)) {
+		wifi_debug(DEBUG_ERROR, "Nla put vendor_data_attr(%d) attribute error\n",
+            MTK_NL80211_VENDOR_ATTR_RADIO_SET_STATS_MEASURING_METHOD);
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	/*send mtk nl80211 vendor msg*/
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		goto err;
+	}
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
 	return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR,"send cmd fails\n");
+	return RETURN_ERR;
 }
 
 //To start or stop RadioTrafficStats
 INT wifi_setRadioTrafficStatsRadioStatisticsEnable(INT radioIndex, BOOL enable)
 {
+	char inf_name[IF_NAME_SIZE] = {0};
+	unsigned int if_idx = 0;
+	int ret = -1;
+	struct unl unl_ins;
+	struct nl_msg *msg	= NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+
+	if (wifi_GetInterfaceName(radioIndex, inf_name) != RETURN_OK)
+		return RETURN_ERR;
+	if_idx = if_nametoindex(inf_name);
+	if (!if_idx) {
+		wifi_debug(DEBUG_ERROR,"can't finde ifname(%s) index,ERROR\n", inf_name);
+		return RETURN_ERR;
+	}
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_RADIO_STATS;
+	param.if_type = NL80211_ATTR_IFINDEX;
+	param.if_idx = if_idx;
+
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+	/*add mtk vendor cmd data*/
+	if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_RADIO_SET_MEASURE_ENABEL, enable)) {
+		wifi_debug(DEBUG_ERROR, "Nla put vendor_data_attr(%d) attribute error\n",
+            MTK_NL80211_VENDOR_ATTR_RADIO_SET_MEASURE_ENABEL);
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	/*send mtk nl80211 vendor msg*/
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		goto err;
+	}
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
 	return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR,"send cmd fails\n");
+	return RETURN_ERR;
 }
 
 //Clients associated with the AP over a specific interval.  The histogram MUST have a range from -110to 0 dBm and MUST be divided in bins of 3 dBM, with bins aligning on the -110 dBm end of the range.  Received signal levels equal to or greater than the smaller boundary of a bin and less than the larger boundary are included in the respective bin.  The bin associated with the client?s current received signal level MUST be incremented when a client associates with the AP.   Additionally, the respective bins associated with each connected client?s current received signal level MUST be incremented at the interval defined by "Radio Statistics Measuring Rate".  The histogram?s bins MUST NOT be incremented at any other time.  The histogram data collected during the interval MUST be published to the parameter only at the end of the interval defined by "Radio Statistics Measuring Interval".  The underlying histogram data MUST be cleared at the start of each interval defined by "Radio Statistics Measuring Interval?. If any of the parameter's representing this histogram is queried before the histogram has been updated with an initial set of data, it MUST return -1. Units dBm
@@ -14868,6 +14959,20 @@ int main(int argc,char **argv)
 		else
 			wifi_setRadioAutoBlockAckEnable(index, FALSE);
 		printf("%s handle wifi_setRadioAutoBlockAckEnable\n", __FUNCTION__);
+	}
+	if(strstr(argv[1], "wifi_setRadioTrafficStatsRadioStatisticsEnable")!=NULL)
+	{
+		wifi_setRadioTrafficStatsRadioStatisticsEnable(index, TRUE);
+		printf("Ap SET wifi_setRadioTrafficStatsRadioStatisticsEnable\n");
+		return 0;
+	}
+	if(strstr(argv[1], "wifi_setRadioTrafficStatsMeasure")!=NULL)
+	{
+		wifi_radioTrafficStatsMeasure_t input = {30, 200};
+
+		wifi_setRadioTrafficStatsMeasure(index, &input);
+		printf("Ap SET wifi_setRadioTrafficStatsMeasure\n");
+		return 0;
 	}
 	if(strstr(argv[1], "wifi_setRadioTransmitPower")!=NULL)
 	{
