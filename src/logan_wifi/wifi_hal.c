@@ -2377,6 +2377,273 @@ INT wifi_getRadioIfName(INT radioIndex, CHAR *output_string) //Tr181
 	return wifi_GetInterfaceName(radioIndex, output_string);
 }
 
+int mtk_get_vow_info_callback(struct nl_msg *msg, void *data)
+{
+	struct nlattr *tb[NL80211_ATTR_MAX + 1];
+	struct nlattr *vndr_tb[MTK_NL80211_VENDOR_AP_VOW_ATTR_MAX + 1];
+	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+	int err = 0;
+	struct vow_info *vow_info = NULL;
+	struct mtk_nl80211_cb_data *cb_data = data;
+
+	err = nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+			  genlmsg_attrlen(gnlh, 0), NULL);
+	if (err < 0) {
+		wifi_debug(DEBUG_ERROR, "get NL80211_ATTR_MAX fails\n");
+		return err;
+	}
+
+	if (tb[NL80211_ATTR_VENDOR_DATA]) {
+		err = nla_parse_nested(vndr_tb, MTK_NL80211_VENDOR_AP_VOW_ATTR_MAX,
+			tb[NL80211_ATTR_VENDOR_DATA], NULL);
+		if (err < 0){
+			wifi_debug(DEBUG_ERROR, "get MTK_NL80211_VENDOR_AP_VOW_ATTR_MAX fails\n");
+			return err;
+		}
+
+		if (vndr_tb[MTK_NL80211_VENDOR_ATTR_AP_VOW_GET_INFO]) {
+			vow_info = (struct vow_info *)nla_data(vndr_tb[MTK_NL80211_VENDOR_ATTR_AP_VOW_GET_INFO]);
+			memmove(cb_data->out_buf, vow_info, sizeof(struct vow_info));
+		}
+	}
+
+	return 0;
+}
+
+INT mtk_wifi_set_air_time_management(
+	INT apIndex, INT vendor_data_attr, mtk_nl80211_cb call_back,
+	char* data, INT len, void *output)
+{
+	char inf_name[IF_NAME_SIZE] = {0};
+	unsigned int if_idx = 0;
+	int ret = -1;
+	struct unl unl_ins;
+	struct nl_msg *msg	= NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+
+	if (wifi_GetInterfaceName(apIndex, inf_name) != RETURN_OK)
+		return RETURN_ERR;
+	if_idx = if_nametoindex(inf_name);
+	if (!if_idx) {
+		wifi_debug(DEBUG_ERROR,"can't finde ifname(%s) index,ERROR\n", inf_name);
+		return RETURN_ERR;
+	}
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_AP_VOW;
+	param.if_type = NL80211_ATTR_IFINDEX;
+	param.if_idx = if_idx;
+
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+	/*add mtk vendor cmd data*/
+	if (nla_put(msg, vendor_data_attr, len, data)) {
+		wifi_debug(DEBUG_ERROR, "Nla put vendor_data_attr(%d) attribute error\n", vendor_data_attr);
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	/*send mtk nl80211 vendor msg*/
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, call_back, output);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		goto err;
+	}
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_INFO, "send cmd success.\n");
+
+	return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR,"send cmd fails\n");
+	return RETURN_ERR;
+}
+
+//Get the ATM(Air Time Management) Capable.
+INT wifi_getATMCapable(BOOL *output_bool)
+{
+	if (NULL == output_bool)
+		return RETURN_ERR;
+    *output_bool = TRUE;
+
+    return RETURN_OK;
+}
+
+INT wifi_setATMEnable(BOOL enable)
+{
+	int max_radio_num = 0;
+	int radio_idx = 0;
+	char dat_file[MAX_BUF_SIZE] = {0};
+	int res;
+	struct params params[2];
+
+	wifi_getMaxRadioNumber(&max_radio_num);
+	for (radio_idx = 0; radio_idx < max_radio_num; radio_idx++) {
+		if (mtk_wifi_set_air_time_management
+			(radio_idx, MTK_NL80211_VENDOR_ATTR_AP_VOW_ATF_EN_INFO,
+			NULL, (char *)&enable, 1, NULL)!= RETURN_OK) {
+			wifi_debug(DEBUG_ERROR, "send MTK_NL80211_VENDOR_ATTR_AP_VOW_ATF_EN_INFO cmd fails\n");
+			return RETURN_ERR;
+		}
+
+		if (mtk_wifi_set_air_time_management
+			(radio_idx, MTK_NL80211_VENDOR_ATTR_AP_VOW_BW_EN_INFO,
+			NULL, (char *)&enable, 1, NULL)!= RETURN_OK) {
+			wifi_debug(DEBUG_ERROR, "send MTK_NL80211_VENDOR_ATTR_AP_VOW_ATF_EN_INFO cmd fails\n");
+			return RETURN_ERR;
+		}
+
+		params[0].name = "VOW_Airtime_Fairness_En";
+		params[0].value = enable ? "1" : "0";
+		params[1].name = "VOW_BW_Ctrl";
+		params[1].value = enable ? "1" : "0";
+
+		res = snprintf(dat_file, sizeof(dat_file), "%s%d.dat", LOGAN_DAT_FILE, radio_idx);
+		if (os_snprintf_error(sizeof(dat_file), res)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			return RETURN_ERR;
+		}
+		wifi_datfileWrite(dat_file, params, 2);
+	}
+
+    return RETURN_OK;
+}
+
+INT wifi_getATMEnable(BOOL *output_enable)
+{
+	int max_radio_num = 0;
+	int radio_idx = 0;
+	struct vow_info vow_info;
+	struct vow_info get_vow_info;
+	struct mtk_nl80211_cb_data cb_data;
+
+	if (output_enable == NULL)
+		return RETURN_ERR;
+
+	wifi_getMaxRadioNumber(&max_radio_num);
+
+	*output_enable = FALSE;
+
+	memset(&vow_info, 0, sizeof(struct vow_info));
+
+	cb_data.out_buf = (char *)&vow_info;
+	cb_data.out_len = sizeof(struct vow_info);
+
+	for (radio_idx = 0; radio_idx < max_radio_num; radio_idx++) {
+		if (mtk_wifi_set_air_time_management
+			(radio_idx, MTK_NL80211_VENDOR_ATTR_AP_VOW_GET_INFO,
+			mtk_get_vow_info_callback, (char *)&get_vow_info, sizeof(struct vow_info), &cb_data)!= RETURN_OK) {
+			wifi_debug(DEBUG_ERROR, "send MTK_NL80211_VENDOR_ATTR_AP_VOW_GET_INFO cmd fails\n");
+			return RETURN_ERR;
+		}
+
+		if (vow_info.atf_en == TRUE || vow_info.bw_en == TRUE) {
+			*output_enable = TRUE;
+			break;
+		}
+	}
+
+    return RETURN_OK;
+}
+
+UINT apidx_to_group(INT apIndex)
+{
+	int max_radio_num = 0;
+	unsigned int group = 0;
+
+	wifi_getMaxRadioNumber(&max_radio_num);
+    group = apIndex / max_radio_num + 5 * (apIndex % max_radio_num);
+
+	return group;
+}
+
+INT wifi_setApATMAirTimePercent(INT apIndex, UINT ap_AirTimePercent)
+{
+	struct vow_group_en_param atc_en_param;
+	struct vow_ratio_param radio_param;
+	unsigned int group = 0;
+	//BOOL ATM_enable = FALSE;
+
+	if (ap_AirTimePercent < 5 || ap_AirTimePercent > 100) {
+		wifi_debug(DEBUG_ERROR, "invalid ait time percent!\n");
+		return RETURN_ERR;
+	}
+
+	/* mt7990 support 15 group now*/
+	group = apidx_to_group(apIndex);
+
+	if (group > 15) {
+		wifi_debug(DEBUG_ERROR, "invalid group!\n");
+		return RETURN_ERR;
+	}
+
+	atc_en_param.group = group;
+	atc_en_param.en = 1;
+	if (mtk_wifi_set_air_time_management
+		(apIndex, MTK_NL80211_VENDOR_ATTR_AP_VOW_ATC_EN_INFO,
+		NULL, (char *)&atc_en_param, sizeof(struct vow_group_en_param), NULL)!= RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "send MTK_NL80211_VENDOR_ATTR_AP_VOW_ATC_EN_INFO cmd fails\n");
+		return RETURN_ERR;
+	}
+
+	radio_param.group = group;
+	radio_param.ratio = ap_AirTimePercent;
+	if (mtk_wifi_set_air_time_management
+		(apIndex, MTK_NL80211_VENDOR_ATTR_AP_VOW_MIN_RATIO_INFO,
+		NULL, (char *)&radio_param, sizeof(struct vow_ratio_param), NULL)!= RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "send MTK_NL80211_VENDOR_ATTR_AP_VOW_MIN_RATIO_INFO cmd fails\n");
+		return RETURN_ERR;
+	}
+
+	if (mtk_wifi_set_air_time_management
+		(apIndex, MTK_NL80211_VENDOR_ATTR_AP_VOW_MAX_RATIO_INFO,
+		NULL, (char *)&radio_param, sizeof(struct vow_ratio_param), NULL)!= RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "send MTK_NL80211_VENDOR_ATTR_AP_VOW_MAX_RATIO_INFO cmd fails\n");
+		return RETURN_ERR;
+	}
+
+	return RETURN_OK;
+}
+
+INT wifi_getApATMAirTimePercent(INT apIndex, UINT *output_ap_AirTimePercent)
+{
+	unsigned int group = 0;
+	struct vow_info get_vow_info, vow_info;
+	struct mtk_nl80211_cb_data cb_data;
+
+	if (output_ap_AirTimePercent == NULL)
+		return RETURN_ERR;
+
+	group = apidx_to_group(apIndex);
+	if (group > 15) {
+		wifi_debug(DEBUG_ERROR, "invalid group!\n");
+		return RETURN_ERR;
+	}
+
+	memset(&vow_info, 0, sizeof(struct vow_info));
+	memset(&get_vow_info, 0, sizeof(struct vow_info));
+
+	cb_data.out_buf = (char *)&vow_info;
+	cb_data.out_len = sizeof(struct vow_info);
+
+	get_vow_info.group = group;
+
+	if (mtk_wifi_set_air_time_management
+		(apIndex, MTK_NL80211_VENDOR_ATTR_AP_VOW_GET_INFO,
+		mtk_get_vow_info_callback, (char *)&get_vow_info, sizeof(struct vow_info), &cb_data)!= RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "send MTK_NL80211_VENDOR_ATTR_AP_VOW_GET_INFO cmd fails\n");
+		return RETURN_ERR;
+	}
+
+	*output_ap_AirTimePercent = vow_info.ratio;
+
+	return RETURN_ERR;
+}
+
 //Get the maximum PHY bit rate supported by this interface. eg: "216.7 Mb/s", "1.3 Gb/s"
 //The output_string is a max length 64 octet string that is allocated by the RDKB code.  Implementations must ensure that strings are not longer than this.
 INT wifi_getRadioMaxBitRate(INT radioIndex, CHAR *output_string) //RDKB
@@ -2933,7 +3200,7 @@ INT wifi_getRadioMode(INT radioIndex, CHAR *output_string, UINT *pureMode)
 	mtk_nl80211_deint(&unl_ins);
 
 	phymode_to_puremode(radioIndex, output_string, pureMode, phymode);
-	wifi_debug(DEBUG_NOTICE,"send cmd success\n");
+	wifi_debug(DEBUG_INFO,"send cmd success\n");
 
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 	return RETURN_OK;
@@ -12501,7 +12768,7 @@ INT wifi_getSSIDTrafficStats2(INT ssidIndex,wifi_ssidTrafficStats2_t *output_str
 	if (strlen(str) == 0)   // interface not exist
 		return RETURN_OK;
 
-	sscanf(str, "%*[^:]: %lu %lu %lu %lu %lu %lu %lu %lu", &out->ssid_BytesReceived, &out->ssid_PacketsReceived, &out->ssid_ErrorsReceived, \
+	sscanf(str, "%*[^:]: %lu %lu %lu %lu %*d %*d %*d %*d %lu %lu %lu %lu", &out->ssid_BytesReceived, &out->ssid_PacketsReceived, &out->ssid_ErrorsReceived, \
 	&out->ssid_DiscardedPacketsReceived, &out->ssid_BytesSent, &out->ssid_PacketsSent, &out->ssid_ErrorsSent, &out->ssid_DiscardedPacketsSent);
 
 	memset(str, 0, sizeof(str));
@@ -12513,7 +12780,7 @@ INT wifi_getSSIDTrafficStats2(INT ssidIndex,wifi_ssidTrafficStats2_t *output_str
 	}
 	fgets(str, sizeof(str), fp);
 
-	sscanf(str, "%*[^:]: %lu %lu %lu %lu", &out->ssid_MulticastPacketsReceived, &out->ssid_MulticastPacketsSent, &out->ssid_BroadcastPacketsRecevied, \
+	sscanf(str, "%*[^:]: %*d %*d %lu %lu %lu %lu", &out->ssid_MulticastPacketsReceived, &out->ssid_MulticastPacketsSent, &out->ssid_BroadcastPacketsRecevied, \
 	&out->ssid_BroadcastPacketsSent);
 	pclose(fp);
 
@@ -15518,6 +15785,51 @@ int main(int argc,char **argv)
 		printf("wifi_setApBridgeInfo br_name = %s, ip = %s, subset = %s\n", argv[3], argv[4], argv[5]);
 	}
 
+	if(strstr(argv[1], "wifi_getATMCapable")!=NULL)
+    {
+        BOOL b = FALSE;
+        BOOL *output_bool = &b;
+        wifi_getATMCapable(output_bool);
+        printf("ATM capable = %d \n",b);
+        return 0;
+    }
+	if (strncmp(argv[1], "wifi_setATMEnable", strlen(argv[1])) == 0) {
+		int enable = 0;
+		if(argc <= 3)
+		{
+			wifi_debug(DEBUG_ERROR, "Insufficient arguments \n");
+			exit(-1);
+		}
+		enable = atoi(argv[3]);
+		wifi_setATMEnable(enable);
+		return 0;
+	}
+	if (strncmp(argv[1], "wifi_getATMEnable", strlen(argv[1])) == 0) {
+		BOOL b = FALSE;
+        BOOL *output_bool = &b;
+		wifi_getATMEnable(output_bool);
+		printf("ATM enable = %d \n", b);
+		return 0;
+	}
+	if (strncmp(argv[1], "wifi_setApATMAirTimePercent", strlen(argv[1])) == 0) {
+		unsigned int percent = 0;
+		if(argc <= 3)
+		{
+			wifi_debug(DEBUG_ERROR, "Insufficient arguments \n");
+			exit(-1);
+		}
+		percent = atoi(argv[3]);
+		wifi_setApATMAirTimePercent(index, percent);
+		return 0;
+	}
+	if (strncmp(argv[1], "wifi_getApATMAirTimePercent", strlen(argv[1])) == 0) {
+		unsigned int percent = 0;
+		unsigned int *output = &percent;
+
+		wifi_getApATMAirTimePercent(index, output);
+		printf("ATM percent = %d \n", percent);
+		return 0;
+	}
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 	return 0;
 }
