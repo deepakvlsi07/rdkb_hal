@@ -7830,11 +7830,52 @@ INT wifi_getRadio11nGreenfieldEnable(INT radioIndex, BOOL *output_bool)
 }
 
 //Set radio 11n pure mode enable setting
-INT wifi_setRadio11nGreenfieldEnable(INT radioIndex, BOOL enable)
 {
+//save the vlanID to config and wait for wifi reset to apply (wifi up module would read this parameters and tag the AP with vlan id)
+	char interface_name[16] = {0};
+	int if_idx, ret = 0;
+	struct nl_msg *msg	= NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+	struct unl unl_ins;
+
+	if (radioIndex > MAX_APS) {
+		wifi_debug(DEBUG_ERROR, "Invalid apIndex %d\n", radioIndex);
+		return RETURN_ERR;
+	}
+	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+		return RETURN_ERR;
+	/*step 1. mwctl dev %s set vlan_tag 0*/
+	if_idx = if_nametoindex(interface_name);
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_AP_BSS;
+	param.if_type = NL80211_ATTR_IFINDEX;
+	param.if_idx = if_idx;
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+	if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_AP_HT_OP_MODE, enable)) {
+		printf("Nla put attribute error\n");
+		nlmsg_free(msg);
+		goto err;
+	}
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vendor msg fails\n");
+		goto err;
+	}
+	mtk_nl80211_deint(&unl_ins);
+	//wifi_debug(DEBUG_NOTICE, "set Gf cmd success.\n");
+	printf("set gf=%d cmd success.\n", enable);
+	return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR, "set cmd fails.\n");
 	return RETURN_ERR;
 }
-
 
 int mtk_get_igmp_status_callback(struct nl_msg *msg, void *data)
 {
@@ -9181,6 +9222,52 @@ INT wifi_getApVlanID(INT apIndex, INT *output_int)
 INT wifi_setApVlanID(INT apIndex, INT vlanId)
 {
 	//save the vlanID to config and wait for wifi reset to apply (wifi up module would read this parameters and tag the AP with vlan id)
+	char interface_name[16] = {0};
+	int if_idx, ret = 0;
+	struct nl_msg *msg	= NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+	struct unl unl_ins;
+
+	if (apIndex > MAX_APS) {
+		wifi_debug(DEBUG_ERROR, "Invalid apIndex %d\n", apIndex);
+		return RETURN_ERR;
+	}
+	if (vlanId > 4095 || vlanId < 1) {
+		wifi_debug(DEBUG_ERROR, "Invalid vlanId %d\n", vlanId);
+		return RETURN_ERR;
+	}
+	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+	if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+		return RETURN_ERR;
+	/*step 1. mwctl dev %s set vlan_tag 0*/
+	if_idx = if_nametoindex(interface_name);
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_VLAN;
+	param.if_type = NL80211_ATTR_IFINDEX;
+	param.if_idx = if_idx;
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+	if (nla_put_u16(msg, MTK_NL80211_VENDOR_ATTR_VLAN_ID_INFO, vlanId)) {
+		printf("Nla put attribute error\n");
+		nlmsg_free(msg);
+		goto err;
+	}
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vendor msg fails\n");
+		goto err;
+	}
+	mtk_nl80211_deint(&unl_ins);
+	//wifi_debug(DEBUG_NOTICE, "set vlanId cmd success.\n", vlanId);
+	printf("set vlanId=%d cmd success.\n", vlanId);
+	return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR, "set cmd fails.\n");
 	return RETURN_ERR;
 }
 
@@ -16586,7 +16673,22 @@ int main(int argc,char **argv)
 		printf("ATM percent = %d \n", percent);
 		return 0;
 	}
-	
+	if (strstr(argv[1],"setGF")!=NULL)
+	{
+		BOOL enable = atoi(argv[3]);
+		if((ret=wifi_setRadio11nGreenfieldEnable(index, enable))==RETURN_OK)
+			printf("wifi_setRadio11nGreenfieldEnable success\n");
+		else
+			printf("wifi_setRadio11nGreenfieldEnable Error\n");
+	}
+	if (strstr(argv[1],"setVID")!=NULL)
+	{
+		INT vid = atoi(argv[3]);
+		if((ret=wifi_setApVlanID(index, vid))==RETURN_OK)
+			printf("wifi_setApVlanID success.\n");
+		else
+			printf("wifi_setApVlanID Error\n");
+	}	
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 	return 0;
 }
