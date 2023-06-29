@@ -13823,16 +13823,16 @@ INT wifi_getApAssociatedDeviceStats(
 		if (val == NULL)
 			continue;
 
-	if(!strncmp(key,"rx bytes",8))
-		if (sscanf(val, "%llu", &dev_stats->cli_rx_bytes) != 1) {
-			wifi_debug(DEBUG_ERROR, "sscanf format error.\n");
+		if(!strncmp(key,"rx bytes",8))
+			if (sscanf(val, "%llu", &dev_stats->cli_rx_bytes) != 1) {
+				wifi_debug(DEBUG_ERROR, "sscanf format error.\n");
 				continue;
-		}
-	if(!strncmp(key,"tx bytes",8))
-		if (sscanf(val, "%llu", &dev_stats->cli_tx_bytes) != 1) {
-			wifi_debug(DEBUG_ERROR, "sscanf format error.\n");
+			}
+		if(!strncmp(key,"tx bytes",8))
+			if (sscanf(val, "%llu", &dev_stats->cli_tx_bytes) != 1) {
+				wifi_debug(DEBUG_ERROR, "sscanf format error.\n");
 				continue;
-		}
+			}
 		if(!strncmp(key,"rx packets",10)) {
 			if (sscanf(val, "%llu", &dev_stats->cli_tx_frames) == EOF) {
 				wifi_debug(DEBUG_ERROR, "Unexpected sscanf fail\n");
