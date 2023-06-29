@@ -18811,9 +18811,13 @@ INT wifi_getApSecurity(INT ap_index, wifi_vap_security_t *security)
 	memset(buf, 0, sizeof(buf));
 	security->wpa3_transition_disable = FALSE;
 	wifi_hostapdRead(config_file, "transition_disable", buf, sizeof(buf));
-	if (hal_strtol(buf, 16, &disable) < 0) {
-		wifi_debug(DEBUG_ERROR, "strtol fail\n");
-		return RETURN_ERR;
+	if (strlen(buf) == 0)
+		disable = 0;
+	else {
+		if (hal_strtol(buf, 16, &disable) < 0) {
+			wifi_debug(DEBUG_ERROR, "strtol fail\n");
+			return RETURN_ERR;
+		}
 	}
 	if (disable != 0)
 		security->wpa3_transition_disable = TRUE;
