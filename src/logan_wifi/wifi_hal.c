@@ -2494,7 +2494,10 @@ INT wifi_setRadioEnable(INT radioIndex, BOOL enable)
 
 			}
 		}
-		time(&radio_up_time[radioIndex]);
+		if (time(&radio_up_time[radioIndex]) < 0) {
+			wifi_debug(DEBUG_ERROR, "GET time fail\n");
+			return RETURN_ERR;
+		}
 	}
 
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
@@ -5214,7 +5217,7 @@ INT wifi_setRadioExtChannel(INT radioIndex, CHAR *string) //Tr181	//AP only
 	params.name = "HT_EXTCHA";
 	params.value = ext_channel;
 
-	snprintf (config_dat_file, sizeof(config_dat_file), "%s%d.dat", LOGAN_DAT_FILE, band);
+	res = snprintf (config_dat_file, sizeof(config_dat_file), "%s%d.dat", LOGAN_DAT_FILE, band);
 	if (os_snprintf_error(sizeof(config_dat_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
@@ -5418,11 +5421,16 @@ INT wifi_setRadioMCS(INT radioIndex, INT MCS) //Tr181
 
 	f = fopen(mcs_file, "w");
 	if (f == NULL) {
-		fprintf(stderr, "%s: fopen failed\n", __func__);
+		if (fprintf(stderr, "%s: fopen failed\n", __func__) < 0)
+			wifi_debug(DEBUG_ERROR, "Unexpected fprintf fail\n");
 		return RETURN_ERR;
 	}
-	fprintf(f, "%d", MCS);
-	fclose(f);
+	if (fprintf(f, "%d", MCS) < 0)
+		wifi_debug(DEBUG_ERROR, "Unexpected fprintf fail\n");
+	if (fclose(f) == EOF) {
+		wifi_debug(DEBUG_ERROR, "Unexpected fclose fail\n");
+		return RETURN_ERR;
+	}
 
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 	return RETURN_OK;
@@ -11619,6 +11627,10 @@ INT wifi_getApAssociatedDeviceDiagnosticResult(INT apIndex, wifi_associated_dev_
 		return RETURN_OK;
 
 	dev=(wifi_associated_dev_t *) calloc (*output_array_size, sizeof(wifi_associated_dev_t));
+	if (!dev) {
+		wifi_debug(DEBUG_ERROR, "Unexpected calloc fail\n");
+		return RETURN_ERR;
+	}
 	*associated_dev_array = dev;
 	res = snprintf(cmd, sizeof(cmd), "hostapd_cli -i%s all_sta > /tmp/connected_devices.txt" , interface_name);
 	if (os_snprintf_error(sizeof(cmd), res)) {
@@ -11635,7 +11647,11 @@ INT wifi_getApAssociatedDeviceDiagnosticResult(INT apIndex, wifi_associated_dev_
 	while ((getline(&line, &len, f)) != -1)
 	{
 		param = strtok(line,"=");
+		if (!param)
+			continue;
 		value = strtok(NULL,"=");
+		if (!value)
+			continue;
 
 		if( strcmp("flags",param) == 0 )
 		{
@@ -11653,13 +11669,14 @@ INT wifi_getApAssociatedDeviceDiagnosticResult(INT apIndex, wifi_associated_dev_
 			if( strcmp("dot11RSNAStatsSTAAddress",param) == 0 )
 			{
 				value[strlen(value)-1]='\0';
-				sscanf(value, "%x:%x:%x:%x:%x:%x",
+				if (sscanf(value, "%x:%x:%x:%x:%x:%x",
 						(unsigned int *)&dev[mac_temp].cli_MACAddress[0],
 						(unsigned int *)&dev[mac_temp].cli_MACAddress[1],
 						(unsigned int *)&dev[mac_temp].cli_MACAddress[2],
 						(unsigned int *)&dev[mac_temp].cli_MACAddress[3],
 						(unsigned int *)&dev[mac_temp].cli_MACAddress[4],
-						(unsigned int *)&dev[mac_temp].cli_MACAddress[5] );
+						(unsigned int *)&dev[mac_temp].cli_MACAddress[5] ) == EOF)
+						continue;
 				mac_temp++;
 				read_flag=0;
 			}
@@ -11669,7 +11686,10 @@ INT wifi_getApAssociatedDeviceDiagnosticResult(INT apIndex, wifi_associated_dev_
 	auth_temp=0;
 	mac_temp=0;
 	free(line);
-	fclose(f);
+	if (fclose(f) == EOF) {
+		wifi_debug(DEBUG_ERROR, "Unexpected fclose fail\n");
+		return RETURN_ERR;
+	}
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 	return RETURN_OK;
 }
@@ -11761,7 +11781,10 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
 			free(temp);
 			return RETURN_ERR;
 		}
-		fclose(fp);
+		if (fclose(fp) == EOF) {
+			wifi_debug(DEBUG_ERROR, "Unexpected fclose fail\n");
+			return RETURN_ERR;
+		}
 
 		res = snprintf(pipeCmd, sizeof(pipeCmd), "cat /tmp/AssociatedDevice_Stats.txt | grep Station | cut -d ' ' -f 2");
 		if (os_snprintf_error(sizeof(pipeCmd), res)) {
@@ -12191,7 +12214,11 @@ INT wifi_getApAssociatedDeviceDiagnosticResult3(INT apIndex, wifi_associated_dev
 	while ((getline(&line, &len, f)) != -1)
 	{
 		param = strtok(line, "=");
+		if (!param)
+			continue;
 		value = strtok(NULL, "=");
+		if (!value)
+			continue;
 
 		if( strcmp("flags",param) == 0 )
 		{
@@ -12207,16 +12234,18 @@ INT wifi_getApAssociatedDeviceDiagnosticResult3(INT apIndex, wifi_associated_dev
 		} else if( strcmp("dot11RSNAStatsSTAAddress", param) == 0 )
 		{
 			value[strlen(value)-1]='\0';
-			sscanf(value, "%x:%x:%x:%x:%x:%x",
-					(unsigned int *)&dev[auth_temp].cli_MACAddress[0],
-					(unsigned int *)&dev[auth_temp].cli_MACAddress[1],
-					(unsigned int *)&dev[auth_temp].cli_MACAddress[2],
-					(unsigned int *)&dev[auth_temp].cli_MACAddress[3],
-					(unsigned int *)&dev[auth_temp].cli_MACAddress[4],
-					(unsigned int *)&dev[auth_temp].cli_MACAddress[5]);
+			if (sscanf(value, "%x:%x:%x:%x:%x:%x",
+				(unsigned int *)&dev[auth_temp].cli_MACAddress[0],
+				(unsigned int *)&dev[auth_temp].cli_MACAddress[1],
+				(unsigned int *)&dev[auth_temp].cli_MACAddress[2],
+				(unsigned int *)&dev[auth_temp].cli_MACAddress[3],
+				(unsigned int *)&dev[auth_temp].cli_MACAddress[4],
+				(unsigned int *)&dev[auth_temp].cli_MACAddress[5]) == EOF)
+				continue;
 		} else if (strcmp("signal", param) == 0) {
 			value[strlen(value)-1]='\0';
-			sscanf(value, "%d", &dev[auth_temp].cli_RSSI);
+			if (sscanf(value, "%d", &dev[auth_temp].cli_RSSI) == EOF)
+				continue;
 			dev[auth_temp].cli_SNR = 95 + dev[auth_temp].cli_RSSI;
 		}
 	}
@@ -14034,7 +14063,10 @@ INT wifi_getApAssociatedDeviceDiagnosticResult2(INT apIndex,wifi_associated_dev2
 			printf("/tmp/AssociatedDevice_Stats.txt not exists \n");
 			return RETURN_ERR;
 		}
-		fclose(fp);
+		if (fclose(fp) == EOF) {
+			wifi_debug(DEBUG_ERROR, "Unexpected fclose fail\n");
+			return RETURN_ERR;
+		}
 
 		res = snprintf(pipeCmd, sizeof(pipeCmd), "cat /tmp/AssociatedDevice_Stats.txt | grep Station | cut -d ' ' -f 2");
 		if (os_snprintf_error(sizeof(pipeCmd), res)) {
@@ -15480,9 +15512,12 @@ static void ctrl_process(struct ctrl *ctrl)
 		wifi_associated_dev_t sta;
 		memset(&sta, 0, sizeof(sta));
 
-		sscanf(str, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
-				&sta.cli_MACAddress[0], &sta.cli_MACAddress[1], &sta.cli_MACAddress[2],
-				&sta.cli_MACAddress[3], &sta.cli_MACAddress[4], &sta.cli_MACAddress[5]);
+		if (sscanf(str, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+			&sta.cli_MACAddress[0], &sta.cli_MACAddress[1], &sta.cli_MACAddress[2],
+			&sta.cli_MACAddress[3], &sta.cli_MACAddress[4], &sta.cli_MACAddress[5]) == EOF) {
+			wifi_debug(DEBUG_ERROR, "Unexpected sscanf fail\n");
+			return;
+		}
 
 		sta.cli_Active=true;
 
@@ -18952,9 +18987,14 @@ INT wifi_getApSecurity(INT ap_index, wifi_vap_security_t *security)
 	long int disable = 0;
 	long int tmp;
 	bool set_sae = FALSE;
+	int res;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-	snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, ap_index);
+	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, ap_index);
+	if (os_snprintf_error(sizeof(config_file), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
 	wifi_getApSecurityModeEnabled(ap_index, buf);   // Get wpa config
 	security->mode = wifi_security_mode_none;
 	if (strlen(buf) != 0) {
