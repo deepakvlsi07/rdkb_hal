@@ -1280,7 +1280,7 @@ INT File_Reading(CHAR *file, char *Value)
 		copy_buf[count]='\0';
 	}
 	strncpy(Value, copy_buf, strlen(copy_buf));
-	Value[strlen(Value)] = '\0';
+	Value[strlen(copy_buf)] = '\0';
 	pclose(fp);
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
@@ -7190,10 +7190,11 @@ static int AssoDevInfo_callback(struct nl_msg *msg, void *arg) {
 		mac_addr_ntoa(mac_addr, nla_data(tb[NL80211_ATTR_MAC]));
 		//Getting the mac addrress
 		mac_addr_aton(out->wifi_devMacAddress,mac_addr);
-
-		if(nla_parse_nested(rinfo, NL80211_RATE_INFO_MAX, sinfo[NL80211_STA_INFO_TX_BITRATE], rate_policy)) {
-			wifi_debug(DEBUG_ERROR, "failed to parse nested rate attributes!");
-			return NL_SKIP;
+		if (sinfo[NL80211_STA_INFO_TX_BITRATE]) {
+			if(nla_parse_nested(rinfo, NL80211_RATE_INFO_MAX, sinfo[NL80211_STA_INFO_TX_BITRATE], rate_policy)) {
+				wifi_debug(DEBUG_ERROR, "failed to parse nested rate attributes!");
+				return NL_SKIP;
+			}
 		}
 
 		if(sinfo[NL80211_STA_INFO_TX_BITRATE]) {
@@ -7203,11 +7204,12 @@ static int AssoDevInfo_callback(struct nl_msg *msg, void *arg) {
 			}
 		}
 
-		if(nla_parse_nested(rinfo, NL80211_RATE_INFO_MAX, sinfo[NL80211_STA_INFO_RX_BITRATE], rate_policy)) {
-			wifi_debug(DEBUG_ERROR, "failed to parse nested rate attributes!");
-			return NL_SKIP;
+		if (sinfo[NL80211_STA_INFO_RX_BITRATE]) {
+			if(nla_parse_nested(rinfo, NL80211_RATE_INFO_MAX, sinfo[NL80211_STA_INFO_RX_BITRATE], rate_policy)) {
+				wifi_debug(DEBUG_ERROR, "failed to parse nested rate attributes!");
+				return NL_SKIP;
+			}
 		}
-
 		if(sinfo[NL80211_STA_INFO_RX_BITRATE]) {
 			if(rinfo[NL80211_RATE_INFO_BITRATE]) {
 				rate=nla_get_u16(rinfo[NL80211_RATE_INFO_BITRATE]);
@@ -12189,7 +12191,7 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
 err:
 	if (temp)
 		free(temp);
-	fclose(fp);
+	pclose(fp);
 	return RETURN_ERR;
 }
 
@@ -12509,7 +12511,7 @@ INT wifi_getApInactiveAssociatedDeviceDiagnosticResult(char *filename,wifi_assoc
 
 					}
 					memcpy(temp[count].cli_MACAddress,mac,(sizeof(unsigned char))*6);
-					fprintf(stderr,"%sMAC %d = %X:%X:%X:%X:%X:%X \n", __FUNCTION__,count, temp[count].cli_MACAddress[0],temp[count].cli_MACAddress[1], temp[count].cli_MACAddress[2], temp[count].cli_MACAddress[3], temp[count].cli_MACAddress[4], temp[count].cli_MACAddress[5]);
+					wifi_debug(DEBUG_ERROR, "%sMAC %d = %X:%X:%X:%X:%X:%X \n", __FUNCTION__,count, temp[count].cli_MACAddress[0],temp[count].cli_MACAddress[1], temp[count].cli_MACAddress[2], temp[count].cli_MACAddress[3], temp[count].cli_MACAddress[4], temp[count].cli_MACAddress[5]);
 				}
 				temp[count].cli_Active = 1;
 			}
@@ -12627,7 +12629,10 @@ INT wifi_setBandSteeringIdleInactiveTime(INT radioIndex, INT prThreshold)
 INT wifi_getBandSteeringLog(INT record_index, ULONG *pSteeringTime, CHAR *pClientMAC, INT *pSourceSSIDIndex, INT *pDestSSIDIndex, INT *pSteeringReason)
 {
 	//if no steering or redord_index is out of boundary, return -1. pSteeringTime returns the UTC time in seconds. pClientMAC is pre allocated as 64bytes. pSteeringReason returns the predefined steering trigger reason
-	*pSteeringTime=time(NULL);
+	long int tim_tmp = time(NULL);
+	if (tim_tmp < 0)
+		return RETURN_ERR;
+	*pSteeringTime = tim_tmp;
 	*pSteeringReason = 0; //TODO: need to assign correct steering reason (INT numeric, i suppose)
 	return RETURN_OK;
 }
@@ -15320,7 +15325,6 @@ static int ieee80211_channel_to_frequency(int channel, int *freqMHz)
 
 	if((fp = popen(command, "r")))
 	{
-		fgets(output, sizeof(output), fp);
 		if (fgets(output, sizeof(output), fp) == NULL) 	{
 			wifi_debug(DEBUG_ERROR, "fgets fail\n");
 			pclose(fp);
