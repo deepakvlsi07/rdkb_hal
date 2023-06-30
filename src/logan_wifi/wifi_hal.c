@@ -304,9 +304,10 @@ static inline int hal_strtol(char *src, int base, long int *out)
 	res  = strtol(src, &end_ptr, base);
 
 	if ((errno == ERANGE && (res == LONG_MIN || res == LONG_MAX))
-		|| (errno != 0 && res == 0) || *end_ptr != '\0' || src == end_ptr ) 
+		|| (errno != 0 && res == 0) || /*ignore end_ptr!=0 error*/ /**end_ptr != '\0' ||*/src == end_ptr ) {
+		*out = res;
 		return -1;
- 	else
+ 	} else
 		*out = res;
 
 	return 0;
@@ -321,9 +322,10 @@ static inline int hal_strtoul(char *src, int base, unsigned long *out)
 	res  = strtoul(src, &end_ptr, base);
 
 	if ((errno == ERANGE && res == ULONG_MAX)
-		|| (errno != 0 && res == 0) || *end_ptr != '\0' || src == end_ptr ) 
+		|| (errno != 0 && res == 0) || /*ignore end_ptr!=0 error*/ /**end_ptr != '\0' ||*/src == end_ptr ) {
+		*out = res;
 		return -1;
- 	else
+	} else
 		*out = res;
 
 	return 0;
@@ -838,7 +840,7 @@ INT wifi_getMaxRadioNumber(INT *max_radio_num)
 	unsigned long tmp;
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-	res = snprintf(cmd, sizeof(cmd), "iw list | grep Wiphy | wc -l");
+	res = snprintf(cmd, sizeof(cmd), "iw list | grep Wiphy | wc -l | tr -d '\\n'");
 	if (os_snprintf_error(sizeof(cmd), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
