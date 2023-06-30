@@ -2345,26 +2345,15 @@ INT wifi_getRadioChannelStats2(INT radioIndex, wifi_channelStats2_t *outputChann
 		read = getline(&line, &len, f);
 		if (hal_strtoul(line, 10, &preActiveTime) < 0) {
 			wifi_debug(DEBUG_ERROR, "strtol fail\n");
-			if (fclose(f) != 0) {
-				wifi_debug(DEBUG_ERROR, "fclose fail\n");
-			}
-			return RETURN_ERR;
 		}
 		read = getline(&line, &len, f);
 		if (hal_strtoul(line, 10, &preBusyTime) < 0) {
 			wifi_debug(DEBUG_ERROR, "strtol fail\n");
-			if (fclose(f) != 0) {
-				wifi_debug(DEBUG_ERROR, "fclose fail\n");
-			}
-			return RETURN_ERR;
+
 		}
 		read = getline(&line, &len, f);
 		if (hal_strtoul(line, 10, &preTransmitTime) < 0) {
 			wifi_debug(DEBUG_ERROR, "strtol fail\n");
-			if (fclose(f) != 0) {
-				wifi_debug(DEBUG_ERROR, "fclose fail\n");
-			}
-			return RETURN_ERR;
 		}
 		
 		if (fclose(f) == EOF)
@@ -6035,7 +6024,6 @@ INT wifi_halGetIfStats(char *ifname, wifi_radioTrafficStats2_t *pStats)
 	
 	if (hal_strtoul(Value, 10, &ret) < 0) {
 		wifi_debug(DEBUG_ERROR, "Unexpected strtoul fail\n");
-		return RETURN_ERR;
 	}
 
 	pStats->radio_PacketsReceived = ret;
@@ -16399,7 +16387,6 @@ INT wifi_getUplinkMuType(INT radio_index, wifi_ul_mu_type_t *mu_type)
 
 	if (hal_strtoul(token, 10, &tmp) < 0) {
 		wifi_debug(DEBUG_ERROR, "Unexpected strtoul fail\n");
-		return RETURN_ERR;
 	}
 	ofdma = tmp;
 	token = strtok(mimobuf, ";");
@@ -16410,7 +16397,6 @@ INT wifi_getUplinkMuType(INT radio_index, wifi_ul_mu_type_t *mu_type)
 	
 	if (hal_strtoul(token, 10, &tmp) < 0) {
 		wifi_debug(DEBUG_ERROR, "Unexpected strtoul fail\n");
-		return RETURN_ERR;
 	}
 	mimo = tmp;
 
@@ -16637,7 +16623,6 @@ INT wifi_getBSSColor(INT radio_index, UCHAR *color)
 
 	if (hal_strtoul(temp_output, 10, &tmp) < 0) {
 		wifi_debug(DEBUG_ERROR, "Unexpected strtoul fail\n");
-		return RETURN_ERR;
 	}
 	*color = tmp;
 	wifi_dbg_printf("\noutput_string=%s\n", color);
@@ -17439,14 +17424,12 @@ int main(int argc,char **argv)
 				{
 					if (hal_strtoul(val, 16, &tmp) < 0) {
 						wifi_debug(DEBUG_ERROR, "Unexpected strtoul fail\n");
-						return RETURN_ERR;
 					}
 					neighborReports[i - 3].info = tmp;
 				} else if (j == 2)
 				{
 					if (hal_strtoul(val, 16, &tmp) < 0) {
 						wifi_debug(DEBUG_ERROR, "Unexpected strtoul fail\n");
-						return RETURN_ERR;
 					}
 					neighborReports[i - 3].opClass = tmp;
 					
@@ -17454,14 +17437,12 @@ int main(int argc,char **argv)
 				{
 					if (hal_strtoul(val, 16, &tmp) < 0) {
 						wifi_debug(DEBUG_ERROR, "Unexpected strtoul fail\n");
-						return RETURN_ERR;
 					}
 					neighborReports[i - 3].channel = tmp;
 				} else if (j == 4)
 				{
 					if (hal_strtoul(val, 16, &tmp) < 0) {
 						wifi_debug(DEBUG_ERROR, "Unexpected strtoul fail\n");
-						return RETURN_ERR;
 					}
 					neighborReports[i - 3].phyTable = tmp;
 				} else {
@@ -17941,7 +17922,6 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 	} else {
 		if (hal_strtoul(buf, 10, &tmp) < 0) {
 			wifi_debug(DEBUG_ERROR, "Unexpected strtoul fail\n");
-			return RETURN_ERR;
 		}
 		operationParam->channel = tmp;
 		
@@ -19430,7 +19410,6 @@ INT wifi_getTWTsessions(INT ap_index, UINT maxNumberSessions, wifi_twt_sessions_
 	_syscmd(cmd, buf, sizeof(buf));
 	if (hal_strtoul(buf, 10, &tmp_u) < 0) {
 		wifi_debug(DEBUG_ERROR, "Unexpected strtoul fail\n");
-		return RETURN_ERR;
 	}
 	*numSessionReturned = tmp_u - 1;
 	
@@ -19494,7 +19473,6 @@ INT wifi_getTWTsessions(INT ap_index, UINT maxNumberSessions, wifi_twt_sessions_
 			continue;
 		if (hal_strtoul(tmp, 10, &tmp_l) < 0) {
 			wifi_debug(DEBUG_ERROR, "Unexpected strtoul fail\n");
-			return RETURN_ERR;
 		}
 		mantissa = tmp_l;
 		
@@ -19502,7 +19480,6 @@ INT wifi_getTWTsessions(INT ap_index, UINT maxNumberSessions, wifi_twt_sessions_
 
 		if (hal_strtoul(tmp, 10, &tmp_l) < 0) {
 			wifi_debug(DEBUG_ERROR, "Unexpected strtoul fail\n");
-			return RETURN_ERR;
 		}
 		duration = tmp_l;
 
