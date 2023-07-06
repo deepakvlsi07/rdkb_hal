@@ -11467,7 +11467,7 @@ INT wifi_setBSSColor(INT radio_index, UCHAR color)
     int maxNumberColors = 64;
     BOOL color_is_aval = FALSE;
 
-    if (color > 63)
+    if (color > 63 || color == 0)
         return RETURN_ERR;
 
     color_list = calloc(maxNumberColors, sizeof(UCHAR));
