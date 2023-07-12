@@ -72,6 +72,7 @@ Licensed under the ISC license
 #include <linux/sockios.h>
 #include <errno.h>
 #include <limits.h>
+#include "secure_wrapper.h"
 
 #define MAC_ALEN 6
 
@@ -788,6 +789,38 @@ struct params
 	char * value;
 };
 
+#define _syscmd_secure(retBuf, retBufSize, fmt, args...) \
+	({ \
+		FILE *f;	\
+		char *ptr = retBuf; \
+		int bufSize = retBufSize, bufbytes = 0, readbytes = 0, cmd_ret = -1;	\
+		WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);	\
+		f = v_secure_popen("r", fmt, ##args);	\
+		if(f) {	\
+			while(!feof(f))	\
+			{	\
+				*ptr = 0;	\
+				if(bufSize>=128) {	\
+					bufbytes=128;	\
+				} else {	\
+					bufbytes=bufSize-1;	\
+				}	\
+				if (fgets(ptr,bufbytes,f) == NULL)	\
+					break;	\
+				readbytes=strlen(ptr);	\
+				if(!readbytes)	\
+					break;	\
+				bufSize-=readbytes;	\
+				ptr += readbytes;	\
+			}	\
+			cmd_ret = v_secure_pclose(f);	\
+			retBuf[retBufSize-1]=0;	\
+		}	\
+		WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);	\
+		cmd_ret;	\
+	})
+
+
 static int _syscmd(char *cmd, char *retBuf, int retBufSize)
 {
 	FILE *f;
@@ -834,19 +867,15 @@ INT radio_index_to_phy(int radioIndex)
 
 INT wifi_getMaxRadioNumber(INT *max_radio_num)
 {
-	char cmd[64] = {0};
 	char buf[4] = {0};
 	int res;
 	unsigned long tmp;
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-	res = snprintf(cmd, sizeof(cmd), "iw list | grep Wiphy | wc -l | tr -d '\\n'");
-	if (os_snprintf_error(sizeof(cmd), res)) {
-		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-		return RETURN_ERR;
+	res = _syscmd_secure(buf, sizeof(buf), "iw list | grep Wiphy | wc -l | tr -d '\\n'");
+	if (res) {
+		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 	}
-	_syscmd(cmd, buf, sizeof(buf));
-	
 	if (hal_strtoul(buf, 10, &tmp) < 0) {
 		wifi_debug(DEBUG_ERROR, "strtol fail\n");
 	}
@@ -866,7 +895,6 @@ wifi_band radio_index_to_band(int radioIndex)
 
 wifi_band wifi_index_to_band(int apIndex)
 {
-	char cmd[128] = {0};
 	char buf[64] = {0};
 	long int nl80211_band = 0;
 	int i = 0;
@@ -884,12 +912,14 @@ wifi_band wifi_index_to_band(int apIndex)
 	}
 	radioIndex = apIndex % max_radio_num;
 	phyIndex = radio_index_to_phy(radioIndex);
-	while(i < 10){
-		res = snprintf(cmd, sizeof(cmd), "iw phy%d info | grep 'Band .:' | tail -n 1 | tr -d ':\\n' | awk '{print $2}'", phyIndex);
-		if (os_snprintf_error(sizeof(cmd), res)) {
-			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+	while (i < 10) {
+		res = _syscmd_secure(buf, sizeof(buf),
+			"iw phy%d info | grep 'Band .:' | tail -n 1 | tr -d ':\\n' | awk '{print $2}'", phyIndex);
+
+		if (res) {
+			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 		}
-		_syscmd(cmd, buf, sizeof(buf));
+		
 		if (hal_strtol(buf, 16, &nl80211_band) < 0) {
 			wifi_debug(DEBUG_ERROR, "strtol fail\n");
 		}
@@ -2060,8 +2090,8 @@ INT wifi_init()							//RDKB
 		wifi_ParseProfile();
 		wifi_PrepareDefaultHostapdConfigs(FALSE);
 		wifi_psk_file_reset();
-		//system("/usr/sbin/iw reg set US");
-		system("systemctl start hostapd.service");
+		//v_secure_system("/usr/sbin/iw reg set US");
+		v_secure_system("systemctl start hostapd.service");
 		sleep(2);
 
 		wifi_vap_status_reset();
@@ -2099,10 +2129,10 @@ INT wifi_reset()
 	sleep(2);
 
 	//TODO: resets the wifi subsystem, deletes all APs
-	system("systemctl stop hostapd.service");
+	v_secure_system("systemctl stop hostapd.service");
 	sleep(2);
 
-	system("systemctl start hostapd.service");
+	v_secure_system("systemctl start hostapd.service");
 	sleep(5);
 
 	wifi_PrepareDefaultHostapdConfigs(TRUE);
@@ -4067,7 +4097,6 @@ INT wifi_getApChannel(INT apIndex,ULONG *output_ulong) //RDKB
 //Storing the previous channel value
 INT wifi_storeprevchanval(INT radioIndex)
 {
-	char buf[256] = {0};
 	char output[4]={'\0'};
 	char config_file[MAX_BUF_SIZE] = {0};
 	wifi_band band = band_invalid;
@@ -4087,17 +4116,15 @@ INT wifi_storeprevchanval(INT radioIndex)
 	wifi_datfileRead(config_file, "Channel", output, sizeof(output));
 
 	if(band == band_2_4)
-		res = snprintf(buf, sizeof(buf), "%s%s%s","echo ",output," > /var/prevchanval2G_AutoChannelEnable");
+		res = v_secure_system("echo %s > /var/prevchanval2G_AutoChannelEnable", output);
 	else if(band == band_5)
-		res = snprintf(buf, sizeof(buf), "%s%s%s","echo ",output," > /var/prevchanval5G_AutoChannelEnable");
+		res = v_secure_system("echo %s > /var/prevchanval5G_AutoChannelEnable", output);
 	else
-		res = snprintf(buf, sizeof(buf), "%s%s%s","echo ",output," > /var/prevchanval6G_AutoChannelEnable");
+		res = v_secure_system("echo %s > /var/prevchanval6G_AutoChannelEnable", output);
 
-	if (os_snprintf_error(sizeof(buf), res)) {
-		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-		return RETURN_ERR;
+	if (res) {
+		wifi_debug(DEBUG_ERROR, "v_secure_system fail\n");
 	}
-	system(buf);
 	Radio_flag = FALSE;
 	return RETURN_OK;
 }
@@ -5998,13 +6025,11 @@ INT wifi_halGetIfStats(char *ifname, wifi_radioTrafficStats2_t *pStats)
 	if (ifname == NULL || strlen(ifname) <= 1)
 		return RETURN_OK;
 
-	res = snprintf(buf, sizeof(buf), "ifconfig -a %s > /tmp/Radio_Stats.txt", ifname);
-	if (os_snprintf_error(sizeof(buf), res)) {
-		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+	res = v_secure_system("ifconfig -a %s > /tmp/Radio_Stats.txt", ifname);
+	if (res) {
+		wifi_debug(DEBUG_ERROR, "v_secure_system fail\n");
 		return RETURN_ERR;
 	}
-
-	system(buf);
 
 	fp = fopen("/tmp/Radio_Stats.txt", "r");
 	if(fp == NULL)
@@ -6977,7 +7002,6 @@ INT wifi_getWifiTrafficStats(INT apIndex, wifi_trafficStats_t *output_struct)
 	char interface_status[MAX_BUF_SIZE] = {0};
 	char Value[MAX_BUF_SIZE] = {0};
 	char buf[MAX_CMD_SIZE] = {0};
-	char cmd[MAX_CMD_SIZE] = {0};
 	FILE *fp = NULL;
 	int res;
 	unsigned long tmp;
@@ -6995,13 +7019,11 @@ INT wifi_getWifiTrafficStats(INT apIndex, wifi_trafficStats_t *output_struct)
 	if(0 != strcmp(interface_status, "1"))
 		return RETURN_ERR;
 
-	res = snprintf(cmd, sizeof(cmd), "ifconfig %s > /tmp/SSID_Stats.txt", interface_name);
-	if (os_snprintf_error(sizeof(cmd), res)) {
-		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+	res = v_secure_system("ifconfig %s > /tmp/SSID_Stats.txt", interface_name);
+	if (res) {
+		wifi_debug(DEBUG_ERROR, "v_secure_system fail\n");
 		return RETURN_ERR;
 	}
-
-	system(cmd);
 
 	fp = fopen("/tmp/SSID_Stats.txt", "r");
 	if(fp == NULL)
@@ -9471,32 +9493,27 @@ INT wifi_getApAclDeviceNum(INT apIndex, UINT *output_uint)
 
 INT apply_rules(INT apIndex, CHAR *client_mac,CHAR *action,CHAR *interface)
 {
-	char buf[128]={'\0'};
 	int res;
 
 	if(strcmp(action,"DENY")==0)
 	{
-		res = snprintf(buf, sizeof(buf),
-			"iptables -A WifiServices%d -m physdev --physdev-in %s -m mac --mac-source %s -j DROP",
+		res = v_secure_system("iptables -A WifiServices%d -m physdev --physdev-in %s -m mac --mac-source %s -j DROP",
 			apIndex, interface, client_mac);
-		if (os_snprintf_error(sizeof(buf), res)) {
-			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		if (res) {
+			wifi_debug(DEBUG_ERROR, "v_secure_system fail\n");
 			return RETURN_ERR;
 		}
-		system(buf);
 		return RETURN_OK;
 	}
 
 	if(strcmp(action,"ALLOW")==0)
 	{
-		res = snprintf(buf, sizeof(buf), 
-			"iptables -I WifiServices%d -m physdev --physdev-in %s -m mac --mac-source %s -j RETURN",
+		res = v_secure_system("iptables -I WifiServices%d -m physdev --physdev-in %s -m mac --mac-source %s -j RETURN",
 			apIndex, interface, client_mac);
-		if (os_snprintf_error(sizeof(buf), res)) {
-			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		if (res) {
+			wifi_debug(DEBUG_ERROR, "v_secure_system fail\n");
 			return RETURN_ERR;
 		}
-		system(buf);
 		return RETURN_OK;
 	}
 
@@ -9990,7 +10007,7 @@ INT wifi_createHostApdConfig(INT apIndex, BOOL createWpsCfg)
 INT wifi_startHostApd()
 {
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-	system("systemctl start hostapd.service");
+	v_secure_system("systemctl start hostapd.service");
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 	return RETURN_OK;
 	//sprintf(cmd, "hostapd  -B `cat /tmp/conf_filename` -e /nvram/etc/wpa2/entropy -P /tmp/hostapd.pid 1>&2");
@@ -10017,7 +10034,7 @@ INT wifi_stopHostApd()
 INT wifi_restartHostApd()
 {
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-	system("systemctl restart hostapd-global");
+	v_secure_system("systemctl restart hostapd-global");
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
 	return RETURN_OK;
@@ -11751,7 +11768,6 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
 	int arr[MACADDRESS_SIZE] = {0};
 	unsigned char mac[MACADDRESS_SIZE] = {0};
 	UINT wifi_count = 0;
-	char pipeCmd[MAX_CMD_SIZE] = {0};
 	int res;
 	wifi_associated_dev3_t* temp = NULL;
 
@@ -11759,14 +11775,8 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
 	*output_array_size = 0;
 	*associated_dev_array = NULL;
 
-	res = snprintf(pipeCmd, sizeof(pipeCmd),
-		"iw dev %s station dump | grep %s | wc -l", interface_name,
-		interface_name);
-	if (os_snprintf_error(sizeof(pipeCmd), res)) {
-		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-		return RETURN_ERR;
-	}
-	fp = popen(pipeCmd, "r");
+	fp = v_secure_popen("r", "iw dev %s station dump | grep %s | wc -l",
+		interface_name, interface_name);
 	if (fp == NULL)
 	{
 		printf("Failed to run command inside function %s\n",__FUNCTION__ );
@@ -11776,13 +11786,13 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
 	/* Read the output a line at a time - output it. */
 	if (fgets(str, sizeof(str)-1, fp) == NULL) {
 		wifi_debug(DEBUG_ERROR, "fgets fail\n");
-		pclose(fp);
+		v_secure_pclose(fp);
 		return RETURN_ERR;
 	}
 	wifi_count = (unsigned int) atoi ( str );
 	*output_array_size = wifi_count;
 	printf(" In rdkb hal ,Wifi Client Counts and index %d and  %d \n",*output_array_size,apIndex);
-	pclose(fp);
+	v_secure_pclose(fp);
 
 	if(wifi_count == 0)
 	{
@@ -11800,24 +11810,22 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
 			return RETURN_ERR;
 		}
 
-		res = snprintf(pipeCmd, sizeof(pipeCmd), "iw dev %s station dump > /tmp/AssociatedDevice_Stats.txt", interface_name);
-		if (os_snprintf_error(sizeof(pipeCmd), res)) {
-			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		res = v_secure_system("iw dev %s station dump > /tmp/AssociatedDevice_Stats.txt", interface_name);
+		if (res) {
+			wifi_debug(DEBUG_ERROR, "v_secure_system fail\n");
 			free(temp);
 			return RETURN_ERR;
 		}
-		system(pipeCmd);
-		memset(pipeCmd,0,sizeof(pipeCmd));
+
 		if(apIndex == 0)
-			res = snprintf(pipeCmd, sizeof(pipeCmd), "iw dev %s station dump | grep Station >> /tmp/AllAssociated_Devices_2G.txt", interface_name);
+			res = v_secure_system("iw dev %s station dump | grep Station >> /tmp/AllAssociated_Devices_2G.txt", interface_name);
 		else if(apIndex == 1)
-			res = snprintf(pipeCmd, sizeof(pipeCmd), "iw dev %s station dump | grep Station >> /tmp/AllAssociated_Devices_5G.txt", interface_name);
-		if (os_snprintf_error(sizeof(pipeCmd), res)) {
-			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			res = v_secure_system("iw dev %s station dump | grep Station >> /tmp/AllAssociated_Devices_5G.txt", interface_name);
+		if (res) {
+			wifi_debug(DEBUG_ERROR, "v_secure_system fail\n");
 			free(temp);
 			return RETURN_ERR;
 		}
-		system(pipeCmd);
 
 		fp = fopen("/tmp/AssociatedDevice_Stats.txt", "r");
 		if(fp == NULL)
@@ -11832,14 +11840,7 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
 			return RETURN_ERR;
 		}
 
-		res = snprintf(pipeCmd, sizeof(pipeCmd), "cat /tmp/AssociatedDevice_Stats.txt | grep Station | cut -d ' ' -f 2");
-		if (os_snprintf_error(sizeof(pipeCmd), res)) {
-			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-			free(temp);
-			return RETURN_ERR;
-		}
-
-		fp = popen(pipeCmd, "r");
+		fp = v_secure_popen("r", "cat /tmp/AssociatedDevice_Stats.txt | grep Station | cut -d ' ' -f 2");
 		if(fp)
 		{
 			for(count =0 ; count < wifi_count; count++)
@@ -11861,21 +11862,15 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
 				temp[count].cli_AuthenticationState = 1; //TODO
 				temp[count].cli_Active = 1; //TODO
 			}
-			pclose(fp);
+			v_secure_pclose(fp);
 		}
 
-		res = snprintf(pipeCmd, sizeof(pipeCmd), "cat /tmp/AssociatedDevice_Stats.txt | grep signal | tr -s ' ' | cut -d ' ' -f 2 > /tmp/wifi_signalstrength.txt");
-		if (os_snprintf_error(sizeof(pipeCmd), res)) {
-			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-			goto err;
-		}
-
-		fp = popen(pipeCmd, "r");
+		fp = v_secure_popen("r", "cat /tmp/AssociatedDevice_Stats.txt | grep signal | tr -s ' ' | cut -d ' ' -f 2 > /tmp/wifi_signalstrength.txt");
 		if(fp)
 		{
-			pclose(fp);
+			v_secure_pclose(fp);
 		}
-		fp = popen("cat /tmp/wifi_signalstrength.txt | tr -s ' ' | cut -f 2","r");
+		fp = v_secure_popen("r", "cat /tmp/wifi_signalstrength.txt | tr -s ' ' | cut -f 2");
 		if(fp)
 		{
 			for(count =0 ; count < wifi_count ;count++)
@@ -11889,7 +11884,7 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
 				temp[count].cli_RSSI = signalstrength;
 				temp[count].cli_SNR = signalstrength + 95;
 			}
-			pclose(fp);
+			v_secure_pclose(fp);
 		}
 
 
@@ -11904,26 +11899,19 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
 			}
 
 			//BytesSent
-			res = snprintf(pipeCmd, sizeof(pipeCmd), "cat /tmp/AssociatedDevice_Stats.txt | grep 'tx bytes' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Bytes_Send.txt");
-			if (os_snprintf_error(sizeof(pipeCmd), res)) {
-				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-				free(temp);
-				return RETURN_ERR;
-			}
-
-			fp = popen(pipeCmd, "r");
+			fp = v_secure_popen("r", "cat /tmp/AssociatedDevice_Stats.txt | grep 'tx bytes' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Bytes_Send.txt");
 			if(fp)
 			{
-				pclose(fp);
+				v_secure_pclose(fp);
 			}
-			fp = popen("cat /tmp/Ass_Bytes_Send.txt | tr -s ' ' | cut -f 2","r");
+			fp = v_secure_popen("r", "cat /tmp/Ass_Bytes_Send.txt | tr -s ' ' | cut -f 2");
 			if(fp)
 			{
 				for (count = 0; count < wifi_count; count++)
 				{
 					if (fgets(str, MAX_BUF_SIZE, fp) == NULL) {
 						wifi_debug(DEBUG_ERROR, "fgets fail\n");
-						pclose(fp);
+						v_secure_pclose(fp);
 						free(temp);
 						return RETURN_ERR;
 					}					
@@ -11931,23 +11919,17 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
 						wifi_debug(DEBUG_ERROR, "strtol fail\n");
 					}
 				}
-				pclose(fp);
+				v_secure_pclose(fp);
 			}
 
 			//BytesReceived
-			res = snprintf(pipeCmd, sizeof(pipeCmd), "cat /tmp/AssociatedDevice_Stats.txt | grep 'rx bytes' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Bytes_Received.txt");
-			if (os_snprintf_error(sizeof(pipeCmd), res)) {
-				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-				free(temp);
-				return RETURN_ERR;
-			}
 
-			fp = popen(pipeCmd, "r");
+			fp = v_secure_popen("r", "cat /tmp/AssociatedDevice_Stats.txt | grep 'rx bytes' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Bytes_Received.txt");
 			if (fp)
 			{
-				pclose(fp);
+				v_secure_pclose(fp);
 			}
-			fp = popen("cat /tmp/Ass_Bytes_Received.txt | tr -s ' ' | cut -f 2", "r");
+			fp = v_secure_popen("r", "cat /tmp/Ass_Bytes_Received.txt | tr -s ' ' | cut -f 2");
 			if (fp)
 			{
 				for (count = 0; count < wifi_count; count++)
@@ -11960,24 +11942,17 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
 						wifi_debug(DEBUG_ERROR, "strtol fail\n");
 					}
 				}
-				pclose(fp);
+				v_secure_pclose(fp);
 			}
 
 			//PacketsSent
-			res = snprintf(pipeCmd, sizeof(pipeCmd), "cat /tmp/AssociatedDevice_Stats.txt | grep 'tx packets' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Packets_Send.txt");
-			if (os_snprintf_error(sizeof(pipeCmd), res)) {
-				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-				free(temp);
-				return RETURN_ERR;
-			}
-
-			fp = popen(pipeCmd, "r");
+			fp = v_secure_popen("r", "cat /tmp/AssociatedDevice_Stats.txt | grep 'tx packets' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Packets_Send.txt");
 			if (fp)
 			{
-				pclose(fp);
+				v_secure_pclose(fp);
 			}
 
-			fp = popen("cat /tmp/Ass_Packets_Send.txt | tr -s ' ' | cut -f 2", "r");
+			fp = v_secure_popen("r", "cat /tmp/Ass_Packets_Send.txt | tr -s ' ' | cut -f 2");
 			if (fp)
 			{
 				for (count = 0; count < wifi_count; count++)
@@ -11990,23 +11965,16 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
 						wifi_debug(DEBUG_ERROR, "strtol fail\n");
 					}
 				}
-				pclose(fp);
+				v_secure_pclose(fp);
 			}
 
 			//PacketsReceived
-			res = snprintf(pipeCmd, sizeof(pipeCmd), "cat /tmp/AssociatedDevice_Stats.txt | grep 'rx packets' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Packets_Received.txt");
-			if (os_snprintf_error(sizeof(pipeCmd), res)) {
-				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-				free(temp);
-				return RETURN_ERR;
-			}
-
-			fp = popen(pipeCmd, "r");
+			fp = v_secure_popen("r", "cat /tmp/AssociatedDevice_Stats.txt | grep 'rx packets' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Packets_Received.txt");
 			if (fp)
 			{
-				pclose(fp);
+				v_secure_pclose(fp);
 			}
-			fp = popen("cat /tmp/Ass_Packets_Received.txt | tr -s ' ' | cut -f 2", "r");
+			fp = v_secure_popen("r", "cat /tmp/Ass_Packets_Received.txt | tr -s ' ' | cut -f 2");
 			if (fp)
 			{
 				for (count = 0; count < wifi_count; count++)
@@ -12019,23 +11987,16 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
 						wifi_debug(DEBUG_ERROR, "strtol fail\n");
 					}
 				}
-				pclose(fp);
+				v_secure_pclose(fp);
 			}
 
 			//ErrorsSent
-			res = snprintf(pipeCmd, sizeof(pipeCmd), "cat /tmp/AssociatedDevice_Stats.txt | grep 'tx failed' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Tx_Failed.txt");
-			if (os_snprintf_error(sizeof(pipeCmd), res)) {
-				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-				free(temp);
-				return RETURN_ERR;
-			}
-
-			fp = popen(pipeCmd, "r");
+			fp = v_secure_popen("r", "cat /tmp/AssociatedDevice_Stats.txt | grep 'tx failed' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Tx_Failed.txt");
 			if (fp)
 			{
-				pclose(fp);
+				v_secure_pclose(fp);
 			}
-			fp = popen("cat /tmp/Ass_Tx_Failed.txt | tr -s ' ' | cut -f 2", "r");
+			fp = v_secure_popen("r", "cat /tmp/Ass_Tx_Failed.txt | tr -s ' ' | cut -f 2");
 			if (fp)
 			{
 				for (count = 0; count < wifi_count; count++)
@@ -12048,23 +12009,17 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
 						wifi_debug(DEBUG_ERROR, "strtol fail\n");
 					}
 				}
-				pclose(fp);
+				v_secure_pclose(fp);
 			}
 
 			//ErrorsSent
-			res = snprintf(pipeCmd, sizeof(pipeCmd), "cat /tmp/AssociatedDevice_Stats.txt | grep 'tx failed' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Tx_Failed.txt");
-			if (os_snprintf_error(sizeof(pipeCmd), res)) {
-				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-				free(temp);
-				return RETURN_ERR;
-			}
 
-			fp = popen(pipeCmd, "r");
+			fp = v_secure_popen("r", "cat /tmp/AssociatedDevice_Stats.txt | grep 'tx failed' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Tx_Failed.txt");
 			if (fp)
 			{
-				pclose(fp);
+				v_secure_pclose(fp);
 			}
-			fp = popen("cat /tmp/Ass_Tx_Failed.txt | tr -s ' ' | cut -f 2", "r");
+			fp = v_secure_popen("r", "cat /tmp/Ass_Tx_Failed.txt | tr -s ' ' | cut -f 2");
 			if (fp)
 			{
 				for (count = 0; count < wifi_count; count++)
@@ -12077,23 +12032,16 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
 						wifi_debug(DEBUG_ERROR, "strtol fail\n");
 					}
 				}
-				pclose(fp);
+				v_secure_pclose(fp);
 			}
 
 			//LastDataDownlinkRate
-			res = snprintf(pipeCmd, sizeof(pipeCmd), "cat /tmp/AssociatedDevice_Stats.txt | grep 'tx bitrate' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Bitrate_Send.txt");
-			if (os_snprintf_error(sizeof(pipeCmd), res)) {
-				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-				free(temp);
-				return RETURN_ERR;
-			}
-
-			fp = popen(pipeCmd, "r");
+			fp = v_secure_popen("r", "cat /tmp/AssociatedDevice_Stats.txt | grep 'tx bitrate' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Bitrate_Send.txt");
 			if (fp)
 			{
-				pclose(fp);
+				v_secure_pclose(fp);
 			}
-			fp = popen("cat /tmp/Ass_Bitrate_Send.txt | tr -s ' ' | cut -f 2", "r");
+			fp = v_secure_popen("r", "cat /tmp/Ass_Bitrate_Send.txt | tr -s ' ' | cut -f 2");
 			if (fp)
 			{	
 				unsigned long tmp_u;
@@ -12110,23 +12058,16 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
 					temp[count].cli_LastDataDownlinkRate = tmp_u;
 					temp[count].cli_LastDataDownlinkRate = (temp[count].cli_LastDataDownlinkRate * 1024); //Mbps -> Kbps
 				}
-				pclose(fp);
+				v_secure_pclose(fp);
 			}
 
 			//LastDataUplinkRate
-			res = snprintf(pipeCmd, sizeof(pipeCmd), "cat /tmp/AssociatedDevice_Stats.txt | grep 'rx bitrate' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Bitrate_Received.txt");
-			if (os_snprintf_error(sizeof(pipeCmd), res)) {
-				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-				free(temp);
-				return RETURN_ERR;
-			}
-
-			fp = popen(pipeCmd, "r");
+			fp = v_secure_popen("r", "cat /tmp/AssociatedDevice_Stats.txt | grep 'rx bitrate' | tr -s ' ' | cut -d ' ' -f 2 > /tmp/Ass_Bitrate_Received.txt");
 			if (fp)
 			{
-				pclose(fp);
+				v_secure_pclose(fp);
 			}
-			fp = popen("cat /tmp/Ass_Bitrate_Received.txt | tr -s ' ' | cut -f 2", "r");
+			fp = v_secure_popen("r", "cat /tmp/Ass_Bitrate_Received.txt | tr -s ' ' | cut -f 2");
 			if (fp)
 			{
 				unsigned long tmp_u;
@@ -12143,7 +12084,7 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
 
 					temp[count].cli_LastDataUplinkRate = (temp[count].cli_LastDataUplinkRate * 1024); //Mbps -> Kbps
 				}
-				pclose(fp);
+				v_secure_pclose(fp);
 			}
 
 		}
@@ -12466,15 +12407,9 @@ INT wifi_getApInactiveAssociatedDeviceDiagnosticResult(char *filename,wifi_assoc
 			str[i]=path[i];
 		str[i]='\0';
 		getIPAddress(str,ipaddr);
-		memset(buf,0,sizeof(buf));
 		if(strlen(ipaddr) > 0)
 		{
-			res = snprintf(buf, sizeof(buf), "ping -q -c 1 -W 1  \"%s\"  > /dev/null 2>&1", ipaddr);
-			if (os_snprintf_error(sizeof(buf), res)) {
-				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-				break;
-			}
-			if (WEXITSTATUS(system(buf)) != 0)  //InActive wireless clients info
+			if (v_secure_system("ping -q -c 1 -W 1  \"%s\"  > /dev/null 2>&1", ipaddr))  //InActive wireless clients info
 			{
 				if( MACADDRESS_SIZE == sscanf(str, "%02x:%02x:%02x:%02x:%02x:%02x",&arr[0],&arr[1],&arr[2],&arr[3],&arr[4],&arr[5]) )
 				{
@@ -12638,13 +12573,12 @@ INT wifi_ifConfigDown(INT apIndex)
 	char cmd[64];
 	int res;
 
-	res = snprintf(cmd, sizeof(cmd), "ifconfig ath%d down", apIndex);
-	if (os_snprintf_error(sizeof(cmd), res)) {
-		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+	res = v_secure_system("ifconfig ath%d down", apIndex);
+	if (res) {
+		wifi_debug(DEBUG_ERROR, "v_secure_system fail\n");
 		return RETURN_ERR;
 	}
 	printf("%s: %s\n", __func__, cmd);
-	system(cmd);
 
 	return status;
 }
@@ -14142,13 +14076,11 @@ INT wifi_getApAssociatedDeviceDiagnosticResult2(INT apIndex,wifi_associated_dev2
 			return RETURN_ERR;
 		}
 
-		res = snprintf(pipeCmd, sizeof(pipeCmd), "iw dev %s station dump > /tmp/AssociatedDevice_Stats.txt", interface_name);
-		if (os_snprintf_error(sizeof(pipeCmd), res)) {
-			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		res = v_secure_system("iw dev %s station dump > /tmp/AssociatedDevice_Stats.txt", interface_name);
+		if (res) {
+			wifi_debug(DEBUG_ERROR, "v_secure_system fail\n");
 			return RETURN_ERR;
 		}
-
-		system(pipeCmd);
 
 		fp = fopen("/tmp/AssociatedDevice_Stats.txt", "r");
 		if(fp == NULL)
@@ -15313,7 +15245,7 @@ static int ieee80211_channel_to_frequency(int channel, int *freqMHz)
 	if(access("/tmp/freq-channel-map.txt", F_OK)==-1)
 	{
 		printf("Creating Frequency-Channel Map\n");
-		system("iw phy | grep 'MHz \\[' | cut -d' ' -f2,4 > /tmp/freq-channel-map.txt");
+		v_secure_system("iw phy | grep 'MHz \\[' | cut -d' ' -f2,4 > /tmp/freq-channel-map.txt");
 	}
 	res = snprintf(command, sizeof(command), "cat /tmp/freq-channel-map.txt | grep '\\[%d\\]$' | cut -d' ' -f1", channel);
 	if (os_snprintf_error(sizeof(command), res)) {
@@ -16793,7 +16725,6 @@ INT wifi_setNeighborReports(UINT apIndex,
 							 UINT numNeighborReports,
 							 wifi_NeighborReport_t *neighborReports)
 {
-	char cmd[256] = { 0 };
 	char hex_bssid[13] = { 0 };
 	char bssid[18] = { 0 };
 	char nr[100] = { 0 };
@@ -16808,15 +16739,14 @@ INT wifi_setNeighborReports(UINT apIndex,
 	wifi_dbg_printf("\n[%s]: removing all neighbors from %s\n", __func__, interface_name);
 	if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
 		return RETURN_ERR;
-	res = snprintf(cmd, sizeof(cmd),
-		"hostapd_cli show_neighbor -i %s | awk '{print $1 \" \" $2}' | xargs -n2 -r hostapd_cli remove_neighbor -i %s",
+
+	res = v_secure_system("hostapd_cli show_neighbor -i %s | awk '{print $1 \" \" $2}' | xargs -n2 -r hostapd_cli remove_neighbor -i %s",
 		interface_name, interface_name);
 
-	if (os_snprintf_error(sizeof(cmd), res)) {
-		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+	if (res) {
+		wifi_debug(DEBUG_ERROR, "v_secure_system fail\n");
 		return RETURN_ERR;
 	}
-	system(cmd);
 
 	for(unsigned int i = 0; i < numNeighborReports; i++)
 	{
@@ -16869,21 +16799,11 @@ INT wifi_setNeighborReports(UINT apIndex,
 			return RETURN_ERR;
 		}
 
-		res = snprintf(cmd, sizeof(cmd),
-				"hostapd_cli set_neighbor "
-				"%s "						// bssid
-				"ssid=%s "				   // ssid
-				"nr=%s "					// nr
-				"-i %s",
-				bssid,hex_ssid,nr, interface_name);
-		if (os_snprintf_error(sizeof(cmd), res)) {
-			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		res = v_secure_system("hostapd_cli set_neighbor %s ssid=%s nr=%s -i %s",
+				bssid, hex_ssid, nr, interface_name);
+		if (res) {
+			wifi_debug(DEBUG_ERROR, "v_secure_system fail\n");
 			return RETURN_ERR;
-		}
-
-		if (WEXITSTATUS(system(cmd)) != 0)
-		{
-			wifi_dbg_printf("\n[%s]: %s failed",__func__,cmd);
 		}
 	}
 
@@ -16926,6 +16846,92 @@ int main(int argc,char **argv)
 	}
 
 	index = atoi(argv[2]);
+	if (strstr(argv[1], "test_system")!=NULL) {
+		ret = v_secure_system("iw phy | grep 'MHz \\[' | cut -d' ' -f2,4 > /tmp/freq-channel-map.txt");
+		printf("ret = %d\n", ret);
+
+		ret = v_secure_system("hostapd_cli show_neighbor -i %s | awk '{print $1 \" \" $2}' | xargs -n2 -r hostapd_cli remove_neighbor -i %s",
+			"ra0", "ra0");
+		printf("ret = %d\n", ret);
+
+		ret = v_secure_system("echo %s > /var/prevchanval2G_AutoChannelEnable", "1,2,3");
+		printf("ret = %d\n", ret);
+
+		ret = v_secure_system("ifconfig -a %s > /tmp/Radio_Stats.txt", "rai0");
+		printf("ret = %d\n", ret);
+
+		ret = v_secure_system("ifconfig %s > /tmp/SSID_Stats.txt", "rax0");
+		printf("ret = %d\n", ret);
+
+		ret = v_secure_system("iw dev %s station dump > /tmp/AssociatedDevice_Stats.txt", "ra0");
+		printf("ret = %d\n", ret);
+		ret = v_secure_system("iw dev %s station dump | grep Station >> /tmp/AllAssociated_Devices_5G.txt", "ra0");
+		printf("ret = %d\n", ret);
+		ret = v_secure_system("ping -q -c 1 -W 1  \"%s\"  > /dev/console 2>&1", "20.1.1.101");
+		printf("ret = %d\n", ret);
+
+		return 0;
+	}
+
+	if (strstr(argv[1], "test_popen")!=NULL) {
+		FILE *fp = v_secure_popen("w", "cat");
+		fprintf(fp, "popen write success\n");
+		fclose(fp);
+
+		char buf[1024];
+		memset(buf, 0, sizeof(buf));
+		fp = v_secure_popen("r", "echo popen read success");
+		if (fp == NULL) {
+			printf("v_secure_popen failed\n");
+		} else {
+			if (fgets(buf, sizeof(buf), fp) == NULL) {
+				printf("v_secure_popen read error\n");
+			} else {
+				printf("%s\n", buf);
+			}
+			v_secure_pclose(fp);
+		}
+
+#if 0
+		fp = v_secure_popen("r", "hostapd_cli -i %s reload", "ra0");
+		if (fp == NULL) {
+			printf("v_secure_popen failed\n");
+		} else {
+			if (fgets(buf, sizeof(buf), fp) == NULL) {
+				printf("v_secure_popen read error\n");
+			} else {
+				printf("%s", buf);
+			}
+			v_secure_pclose(fp);
+		}
+#endif
+
+		long int band;
+		memset(buf, 0, sizeof(buf));
+		ret = _syscmd_secure(buf, sizeof(buf),
+			"iw phy%d info | grep 'Band .:' | tail -n 1 | tr -d ':\\n' | awk '{print $2}'", 0);
+		if (hal_strtol(buf, 16, &band) < 0) {
+			wifi_debug(DEBUG_ERROR, "strtol fail\n");
+		}
+		printf("ret = %d, band0=%ld\n", ret, band);
+
+		memset(buf, 0, sizeof(buf));
+		ret = _syscmd_secure(buf, sizeof(buf),
+			"iw phy%d info | grep 'Band .:' | tail -n 1 | tr -d ':\\n' | awk '{print $2}'", 1);
+		if (hal_strtol(buf, 16, &band) < 0) {
+			wifi_debug(DEBUG_ERROR, "strtol fail\n");
+		}
+		printf("ret = %d, band1=%ld\n", ret, band);
+
+		memset(buf, 0, sizeof(buf));
+		ret = _syscmd_secure(buf, sizeof(buf),
+			"iw phy%d info | grep 'Band .:' | tail -n 1 | tr -d ':\\n' | awk '{print $2}'", 2);
+		if (hal_strtol(buf, 16, &band) < 0) {
+			wifi_debug(DEBUG_ERROR, "strtol fail\n");
+		}
+		printf("ret = %d, band2=%ld\n", ret, band);
+	}
+
 	if(strstr(argv[1], "wifi_getApName")!=NULL)
 	{
 		wifi_getApName(index,buf);
