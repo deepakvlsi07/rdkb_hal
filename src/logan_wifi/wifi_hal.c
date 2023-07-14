@@ -97,8 +97,13 @@ Licensed under the ISC license
 #define POWER_PERCENTAGE "/tmp/POWER"
 #define MGMT_POWER_CTRL "/tmp/mgmt_power_ctrl"
 /*LOGAN_DAT_FILE: may be different on customer's platform.*/
+#ifdef WIFI_7992
+#define LOGAN_DAT_FILE "/etc/wireless/mediatek/mt7992.b"
+#define ROM_LOGAN_DAT_FILE "/rom/etc/wireless/mediatek/mt7992.b"
+#else
 #define LOGAN_DAT_FILE "/etc/wireless/mediatek/mt7990.b"
 #define ROM_LOGAN_DAT_FILE "/rom/etc/wireless/mediatek/mt7990.b"
+#endif
 
 #define NOACK_MAP_FILE "/tmp/NoAckMap"
 #define RADIO_RESET_FILE "/nvram/radio_reset"
