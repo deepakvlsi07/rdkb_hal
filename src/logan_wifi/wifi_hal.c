@@ -2352,7 +2352,7 @@ INT wifi_getRadioChannelStats2(INT radioIndex, wifi_channelStats2_t *outputChann
 			}
 			ActiveTime = tmp_ul;
 		}
-		if(strstr(param, "channel busy time") != NULL) {	
+		if(strstr(param, "channel busy time") != NULL) {
 			if (hal_strtoul(value, 10, &tmp_ul) < 0) {
 				wifi_debug(DEBUG_ERROR, "strtol fail\n");
 			}
@@ -2390,14 +2390,14 @@ INT wifi_getRadioChannelStats2(INT radioIndex, wifi_channelStats2_t *outputChann
 		if (hal_strtoul(line, 10, &preTransmitTime) < 0) {
 			wifi_debug(DEBUG_ERROR, "strtol fail\n");
 		}
-		
+
 		if (fclose(f) == EOF)
 			wifi_debug(DEBUG_ERROR, "Unexpected fclose fail\n");
-		
+
 	}
 
 	/*if (ActiveTime == preActiveTime) {
-		wifi_debug(DEBUG_ERROR, "error:ActiveTime[%d] == preActiveTime[%ld]\n", 
+		wifi_debug(DEBUG_ERROR, "error:ActiveTime[%d] == preActiveTime[%ld]\n",
 			ActiveTime, preActiveTime);
 		return RETURN_ERR;
 	}*/
@@ -3926,7 +3926,7 @@ INT wifi_halgetRadioExtChannel(CHAR *file,CHAR *Value)
 		memcpy(Value, "AboveControlChannel", len);
 		Value[len] = '\0';
 	}
-	
+
 	return RETURN_OK;
 }
 
@@ -4013,7 +4013,7 @@ INT wifi_getRadioChannelsInUse(INT radioIndex, CHAR *output_string)	//RDKB
 		for (int i = center_channel-channel_delta; i <= center_channel+channel_delta; i+=4) {
 			// If i is not the last channel, we add a comma.
 			res = snprintf(buf, sizeof(buf), "%d%s", i, i==center_channel+channel_delta?"":",");
-			
+
 			if (os_snprintf_error(sizeof(buf), res)) {
 				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 				return RETURN_ERR;
@@ -4199,7 +4199,11 @@ INT wifi_setRadioChannel(INT radioIndex, ULONG channel)	//RDKB	//AP only
 		acs.value = "0";
 	}
 	wifi_datfileWrite(config_file_dat, &acs, 1);
-	wifi_reloadAp(radioIndex);
+	if (multiple_set == FALSE) {
+		wifi_setRadioEnable(radioIndex, FALSE);
+		wifi_setRadioEnable(radioIndex, TRUE);
+	}
+
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n", __func__, __LINE__);
 	return RETURN_OK;
 }
@@ -4471,7 +4475,7 @@ INT wifi_getApDTIMInterval(INT apIndex, INT *dtimInterval)
 	char buf[128] = {'\0'};
 	int res;
 	long int tmp;
-	
+
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	if (dtimInterval == NULL)
 		return RETURN_ERR;
@@ -5331,7 +5335,7 @@ INT wifi_getRadioGuardInterval(INT radioIndex, CHAR *output_string)	//Tr181
 	if (GI == wifi_guard_interval_400) {
 		len = strlen("400nsec");
 		memcpy(output_string, "400nsec", len);
-	} else if (GI == wifi_guard_interval_800) {	
+	} else if (GI == wifi_guard_interval_800) {
 		len = strlen("800nsec");
 		memcpy(output_string, "800nsec", strlen("800nsec"));
 	} else if (GI == wifi_guard_interval_1600) {
@@ -5555,7 +5559,7 @@ INT wifi_getRadioTransmitPower(INT radioIndex, ULONG *output_ulong)	//RDKB
 	}
 
 	_syscmd(cmd, buf, sizeof(buf));
-	if (strlen(buf) > 0) {		
+	if (strlen(buf) > 0) {
 		if (hal_strtoul(buf, 10, output_ulong) < 0) {
 			wifi_debug(DEBUG_ERROR, "strtol fail\n");
 		}
@@ -5929,7 +5933,7 @@ INT wifi_setRadioBasicDataTransmitRates(INT radioIndex, CHAR *TransmitRates)
 		if(flag==1)
 			return RETURN_ERR; //If value not found return Error
 	}
-	
+
 	if (strlen(TransmitRates) >= sizeof(temp_TransmitRates))
 		return RETURN_ERR;
 
@@ -5984,7 +5988,7 @@ INT wifi_setRadioBasicDataTransmitRates(INT radioIndex, CHAR *TransmitRates)
 	}
 	memcpy(TransmitRates, temp_output, strlen(temp_output));
 	TransmitRates[strlen(temp_output)] = '\0';
-	
+
 	params.name= "basic_rates";
 	params.value =TransmitRates;
 
@@ -5996,7 +6000,7 @@ INT wifi_setRadioBasicDataTransmitRates(INT radioIndex, CHAR *TransmitRates)
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
 	}
-	
+
 	wifi_hostapdWrite(config_file,&params,1);
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 	return RETURN_OK;
@@ -6053,7 +6057,7 @@ INT wifi_halGetIfStats(char *ifname, wifi_radioTrafficStats2_t *pStats)
 		return RETURN_ERR;
 	}
 	File_Reading(buf, Value);
-	
+
 	if (hal_strtoul(Value, 10, &ret) < 0) {
 		wifi_debug(DEBUG_ERROR, "Unexpected strtoul fail\n");
 	}
@@ -6066,11 +6070,11 @@ INT wifi_halGetIfStats(char *ifname, wifi_radioTrafficStats2_t *pStats)
 		return RETURN_ERR;
 	}
 	File_Reading(buf, Value);
-	
+
 	if (hal_strtoul(Value, 10, &ret) < 0) {
 		wifi_debug(DEBUG_ERROR, "strtol fail\n");
 	}
-	
+
 	pStats->radio_PacketsSent = ret;
 
 	res = snprintf(buf, sizeof(buf), "cat /tmp/Radio_Stats.txt | grep 'RX bytes' | tr -s ' ' | cut -d ':' -f2 | cut -d ' ' -f1");
@@ -6667,13 +6671,13 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
 	} else{
 		wifi_debug(DEBUG_ERROR, "channel num = %ld!!\n", channels_num);
 	}
-	
+
 	if(channels_noise_arr != NULL){
 		get_noise_ret = get_noise(radioIndex, channels_noise_arr, channels_num);
 	} else{
 		wifi_debug(DEBUG_ERROR, "channels_noise_arr is NULL!!\n");
 	}
-	
+
 
 	ret = fgets(line, sizeof(line), f);
 	while (ret != NULL) {
@@ -7048,7 +7052,7 @@ INT wifi_getWifiTrafficStats(INT apIndex, wifi_trafficStats_t *output_struct)
 		return RETURN_ERR;
 	}
 	File_Reading(buf, Value);
-	
+
 	if (hal_strtoul(Value, 10, &tmp) < 0) {
 		wifi_debug(DEBUG_ERROR, "strtol fail\n");
 	}
@@ -9745,7 +9749,7 @@ INT wifi_setApBridgeInfo(INT apIndex, CHAR *bridgeName, CHAR *IP, CHAR *subnet)
 		wifi_debug(DEBUG_ERROR, "sock init fail\n");
 		return RETURN_ERR;
 	}
-	
+
 	if (strlen(bridgeName) >= IFNAMSIZ) {
 		wifi_debug(DEBUG_ERROR, "invalide bridgeName length=%ld\n", strlen(bridgeName));
 		close(sock);
@@ -11919,7 +11923,7 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
 						v_secure_pclose(fp);
 						free(temp);
 						return RETURN_ERR;
-					}					
+					}
 					if (hal_strtoul(str, 10, &(temp[count].cli_BytesSent)) < 0) {
 						wifi_debug(DEBUG_ERROR, "strtol fail\n");
 					}
@@ -11965,7 +11969,7 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
 					if (fgets(str, MAX_BUF_SIZE, fp) == NULL) {
 						wifi_debug(DEBUG_ERROR, "fgets fail\n");
 						goto err;
-					}					
+					}
 					if (hal_strtoul(str, 10, &(temp[count].cli_PacketsSent)) < 0) {
 						wifi_debug(DEBUG_ERROR, "strtol fail\n");
 					}
@@ -11987,7 +11991,7 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
 					if (fgets(str, MAX_BUF_SIZE, fp) == NULL) {
 						wifi_debug(DEBUG_ERROR, "fgets fail\n");
 						goto err;
-					}					
+					}
 					if (hal_strtoul(str, 10, &(temp[count].cli_PacketsReceived)) < 0) {
 						wifi_debug(DEBUG_ERROR, "strtol fail\n");
 					}
@@ -12009,7 +12013,7 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
 					if (fgets(str, MAX_BUF_SIZE, fp) == NULL){
 						wifi_debug(DEBUG_ERROR, "fgets fail\n");
 						goto err;
-					}					
+					}
 					if (hal_strtoul(str, 10, &(temp[count].cli_ErrorsSent)) < 0) {
 						wifi_debug(DEBUG_ERROR, "strtol fail\n");
 					}
@@ -12032,7 +12036,7 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
 					if (fgets(str, MAX_BUF_SIZE, fp) == NULL) {
 						wifi_debug(DEBUG_ERROR, "fgets fail\n");
 						goto err;
-					}					
+					}
 					if (hal_strtoul(str, 10, &(temp[count].cli_ErrorsSent)) < 0) {
 						wifi_debug(DEBUG_ERROR, "strtol fail\n");
 					}
@@ -12048,7 +12052,7 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
 			}
 			fp = v_secure_popen("r", "cat /tmp/Ass_Bitrate_Send.txt | tr -s ' ' | cut -f 2");
 			if (fp)
-			{	
+			{
 				unsigned long tmp_u;
 				for (count = 0; count < wifi_count; count++)
 				{
@@ -12056,7 +12060,7 @@ INT wifihal_AssociatedDevicesstats3(INT apIndex,CHAR *interface_name,wifi_associ
 						wifi_debug(DEBUG_ERROR, "fgets fail\n");
 						goto err;
 					}
-					
+
 					if (hal_strtoul(str, 10, &tmp_u) < 0) {
 						wifi_debug(DEBUG_ERROR, "strtol fail\n");
 					}
@@ -12865,7 +12869,7 @@ INT wifi_getRadioSupportedDataTransmitRates(INT wlanIndex,CHAR *output)
 		if (os_snprintf_error(sizeof(tmp_output), res)) {
 			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 			return RETURN_ERR;
-		}		
+		}
 	} else if ((strcmp(output,"n")==0) | (strcmp(output,"g")==0)) {
 		res = snprintf(tmp_output, sizeof(tmp_output), "%s", "1,2,5.5,6,9,11,12,18,24,36,48,54");
 		if (os_snprintf_error(sizeof(tmp_output), res)) {
@@ -13011,7 +13015,7 @@ INT wifi_setRadioOperationalDataTransmitRates(INT wlanIndex,CHAR *output)
 			}
 			strncat(temp1, "0", sizeof(temp1) - strlen(temp1) - 1);
 		}
-		
+
 		if ((sizeof(temp_output) - strlen(temp_output)) <= strlen(temp1)) {
 			wifi_debug(DEBUG_ERROR, "not enough room in temp_output\n");
 			return RETURN_ERR;
@@ -13040,7 +13044,7 @@ INT wifi_setRadioOperationalDataTransmitRates(INT wlanIndex,CHAR *output)
 	if (os_snprintf_error(sizeof(config_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
-	}		
+	}
 	wifi_hostapdWrite(config_file,&params,1);
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
@@ -13496,7 +13500,7 @@ INT wifi_getNeighboringWiFiStatus(INT radio_index, wifi_neighbor_ap2_t **neighbo
 	if (os_snprintf_error(sizeof(file_name), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
-	}	
+	}
 	f = fopen(file_name, "r");
 	if (f != NULL) {
 		if (fgets(filter_SSID, sizeof(file_name), f) == NULL) {
@@ -13530,12 +13534,12 @@ INT wifi_getNeighboringWiFiStatus(INT radio_index, wifi_neighbor_ap2_t **neighbo
 		return RETURN_ERR;
 	}
 
-	res = snprintf(cmd, sizeof(cmd), "iw dev %s scan dump | grep '%s\\|SSID\\|freq\\|beacon interval\\|capabilities\\|signal\\|Supported rates\\|DTIM\\| \
+	res = snprintf(cmd, sizeof(cmd), "iw dev %s scan | grep '%s\\|SSID\\|freq\\|beacon interval\\|capabilities\\|signal\\|Supported rates\\|DTIM\\| \
 	// WPA\\|RSN\\|Group cipher\\|HT operation\\|secondary channel offset\\|channel width\\|HE.*GHz' | grep -v -e '*.*BSS'", interface_name, interface_name);
 	if (os_snprintf_error(sizeof(cmd), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
-	}	
+	}
 
 	wifi_debug(DEBUG_ERROR,  "cmd: %s\n", cmd);
 	if ((f = popen(cmd, "r")) == NULL) {
@@ -13562,6 +13566,7 @@ INT wifi_getNeighboringWiFiStatus(INT radio_index, wifi_neighbor_ap2_t **neighbo
 
 			if (!filter_BSS) {
 				index++;
+				wifi_debug(DEBUG_OFF, "index=%d\n", index);
 				wifi_neighbor_ap2_t *tmp;
 				tmp = realloc(scan_array, sizeof(wifi_neighbor_ap2_t)*(index+1));
 				if (tmp == NULL) {			  // no more memory to use
@@ -13627,13 +13632,28 @@ INT wifi_getNeighboringWiFiStatus(INT radio_index, wifi_neighbor_ap2_t **neighbo
 				wifi_debug(DEBUG_ERROR, "sscanf fail\n");
 				goto err;
 			}
-		} else if (strstr(line,"SSID") != NULL) {
-			if (sscanf(line,"	SSID: %63s", scan_array[index].ap_SSID) != 1) {
-				wifi_debug(DEBUG_ERROR, "sscanf fail\n");
-				//goto err;
+		} else if (strstr(line,"SSID:") != NULL) {
+			int i;
+			char *new_line = NULL;
+
+			for (i = 0; line[i] == '\t'; i++) {
+				;
 			}
-			if (filter_enable && strcmp(scan_array[index].ap_SSID, filter_SSID) != 0) {
-				filter_BSS = true;
+			new_line = &line[i];
+
+			if (strncmp(new_line, "SSID: \n", strlen("SSID: \n")) == 0) {
+				ret = fgets(line, sizeof(line), f);
+				continue;
+			}
+			if (strstr(new_line, "HESSID") == NULL) {
+				if (sscanf(new_line, "SSID: %63s", scan_array[index].ap_SSID) != 1) {
+					wifi_debug(DEBUG_ERROR, "sscanf fail, index = %d\n", index);
+					goto err;
+				} else
+					wifi_debug(DEBUG_ERROR, "index = %d, ssid=%s\n", index, scan_array[index].ap_SSID);
+				if (filter_enable && strcmp(scan_array[index].ap_SSID, filter_SSID) == 0) {
+					filter_BSS = true;
+				}
 			}
 		} else if (strstr(line, "Supported rates") != NULL) {
 			char SRate[80] = {0}, *tmp = NULL;
@@ -13648,9 +13668,9 @@ INT wifi_getNeighboringWiFiStatus(INT radio_index, wifi_neighbor_ap2_t **neighbo
 			if (tmp == NULL)
 				goto err;
 			tmp = strtok(NULL, ":");
-			if (tmp == NULL) 
+			if (tmp == NULL)
 				goto err;
-			
+
 			len = strlen(tmp);
 			if (len >= sizeof(buf)) {
 				wifi_debug(DEBUG_ERROR, "not enough room in buf\n");
@@ -13686,9 +13706,9 @@ INT wifi_getNeighboringWiFiStatus(INT radio_index, wifi_neighbor_ap2_t **neighbo
 			strncpy(scan_array[index].ap_SupportedDataTransferRates, SRate, len);
 			scan_array[index].ap_SupportedDataTransferRates[len] = '\0';
 		} else if (strstr(line, "DTIM") != NULL) {
-			if (sscanf(line,"DTIM Period %u", &(scan_array[index].ap_DTIMPeriod)) != 1) {
+			if (sscanf(line,"	TIM: DTIM Count %*d DTIM Period %d %*s", &(scan_array[index].ap_DTIMPeriod)) != 1) {
 				wifi_debug(DEBUG_ERROR, "sscanf fail\n");
-				//goto err;
+				goto err;
 			}
 		} else if (strstr(line, "VHT capabilities") != NULL) {
 			if ((sizeof(scan_array[index].ap_SupportedStandards) - strlen(scan_array[index].ap_SupportedStandards)) <= 3) {
@@ -13725,7 +13745,7 @@ INT wifi_getNeighboringWiFiStatus(INT radio_index, wifi_neighbor_ap2_t **neighbo
 			if (os_snprintf_error(sizeof(scan_array[index].ap_OperatingChannelBandwidth), res)) {
 				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 				goto err;
-			}	
+			}
 
 			if (strstr(line, "BSS") != NULL)   // prevent to get the next neighbor information
 				continue;
@@ -13752,10 +13772,12 @@ INT wifi_getNeighboringWiFiStatus(INT radio_index, wifi_neighbor_ap2_t **neighbo
 			if (os_snprintf_error(sizeof(scan_array[index].ap_OperatingChannelBandwidth), res)) {
 				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 				goto err;
-			}	
+			}
 
-			if (strstr(line, "BSS") != NULL)   // prevent to get the next neighbor information
+			if (strstr(line, "BSS") != NULL) {   // prevent to get the next neighbor information
+				wifi_debug(DEBUG_OFF, "continue\n");
 				continue;
+			}
 		} else if (strstr(line, "HE capabilities") != NULL) {
 			if ((sizeof(scan_array[index].ap_SupportedStandards) - strlen(scan_array[index].ap_SupportedStandards)) <= 3) {
 				wifi_debug(DEBUG_ERROR, "not enough room in scan_array[index].ap_SupportedStandards\n");
@@ -13784,14 +13806,17 @@ INT wifi_getNeighboringWiFiStatus(INT radio_index, wifi_neighbor_ap2_t **neighbo
 					memcpy(scan_array[index].ap_OperatingChannelBandwidth, "11AXHE80", len);
 					scan_array[index].ap_OperatingChannelBandwidth[len] = '\0';
 					ret = fgets(line, sizeof(line), f);
-				} else
+				} else {
+					wifi_debug(DEBUG_OFF, "continue\n");
 					continue;
+				}
 				if (strstr(line, "HE160/5GHz") != NULL) {
 					len = strlen("11AXHE160");
 					memcpy(scan_array[index].ap_OperatingChannelBandwidth, "11AXHE160", len);
 					scan_array[index].ap_OperatingChannelBandwidth[len] = '\0';
 				}
 			}
+			wifi_debug(DEBUG_OFF, "continue\n");
 			continue;
 		} else if (strstr(line, "WPA") != NULL) {
 			memcpy(scan_array[index].ap_SecurityModeEnabled, "WPA", 3);
@@ -14258,7 +14283,7 @@ INT wifi_getSSIDTrafficStats2(INT ssidIndex,wifi_ssidTrafficStats2_t *output_str
 		pclose(fp);
 		return RETURN_ERR;
 	}
-	
+
 	pclose(fp);
 
 	if (strlen(str) == 0)   // interface not exist
@@ -14383,7 +14408,7 @@ INT wifi_getApManagementFramePowerControl(INT apIndex, INT *output_dBm)
 		return RETURN_ERR;
 	}
 	_syscmd(cmd, buf, sizeof(buf));
-	if (strlen(buf) > 0) {		
+	if (strlen(buf) > 0) {
 		if (hal_strtol(buf, 10, &tmp) < 0) {
 			wifi_debug(DEBUG_ERROR, "strtol fail\n");
 		}
@@ -16333,7 +16358,7 @@ INT wifi_getUplinkMuType(INT radio_index, wifi_ul_mu_type_t *mu_type)
 		wifi_debug(DEBUG_ERROR, "strtok fail\n");
 		return RETURN_ERR;
 	}
-	
+
 	if (hal_strtoul(token, 10, &tmp) < 0) {
 		wifi_debug(DEBUG_ERROR, "Unexpected strtoul fail\n");
 	}
@@ -16707,7 +16732,7 @@ INT wifi_getMultiPskKeys(INT apIndex, wifi_key_multi_psk_t *keys, INT keysNumber
 				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 				if (fclose(fd) == EOF)
 					wifi_debug(DEBUG_ERROR, "Unexpected fclose fail\n");
-				
+
 				return RETURN_ERR;
 			}
 
@@ -17451,7 +17476,7 @@ int main(int argc,char **argv)
 						wifi_debug(DEBUG_ERROR, "Unexpected strtoul fail\n");
 					}
 					neighborReports[i - 3].opClass = tmp;
-					
+
 				} else if (j == 3)
 				{
 					if (hal_strtoul(val, 16, &tmp) < 0) {
@@ -17943,7 +17968,7 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 			wifi_debug(DEBUG_ERROR, "Unexpected strtoul fail\n");
 		}
 		operationParam->channel = tmp;
-		
+
 		operationParam->autoChannelEnabled = FALSE;
 	}
 
@@ -19352,7 +19377,7 @@ INT wifi_getApAssociatedDevice(INT ap_index, CHAR *output_buf, INT output_buf_si
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
 	}
-	
+
 	_syscmd(cmd, output_buf, output_buf_size);
 
 	return RETURN_OK;
@@ -19431,7 +19456,7 @@ INT wifi_getTWTsessions(INT ap_index, UINT maxNumberSessions, wifi_twt_sessions_
 		wifi_debug(DEBUG_ERROR, "Unexpected strtoul fail\n");
 	}
 	*numSessionReturned = tmp_u - 1;
-	
+
 	if (*numSessionReturned > maxNumberSessions)
 		*numSessionReturned = maxNumberSessions;
 	else if (*numSessionReturned < 1) {
@@ -19458,7 +19483,7 @@ INT wifi_getTWTsessions(INT ap_index, UINT maxNumberSessions, wifi_twt_sessions_
 		tmp = strtok(buf, " ");
 		if (tmp == NULL)
 			break;
-		
+
 		if (hal_strtoul(tmp, 10, &tmp_u) < 0) {
 			wifi_debug(DEBUG_ERROR, "Unexpected strtoul fail\n");
 		}
@@ -19466,7 +19491,7 @@ INT wifi_getTWTsessions(INT ap_index, UINT maxNumberSessions, wifi_twt_sessions_
 		tmp = strtok(NULL, " ");
 		if (tmp == NULL)
 			break;
-		
+
 		if (hal_strtoul(tmp, 10, &tmp_u) < 0) {
 			wifi_debug(DEBUG_ERROR, "Unexpected strtoul fail\n");
 		}
@@ -19481,12 +19506,12 @@ INT wifi_getTWTsessions(INT ap_index, UINT maxNumberSessions, wifi_twt_sessions_
 		tmp = strtok(NULL, " ");
 		if (tmp == NULL)
 			continue;
-		
+
 		if (hal_strtoul(tmp, 10, &tmp_l) < 0) {
 			wifi_debug(DEBUG_ERROR, "Unexpected strtoul fail\n");
 		}
 		exp = tmp_l;
-		
+
 		tmp = strtok(NULL, " ");
 		if (tmp == NULL)
 			continue;
@@ -19494,7 +19519,7 @@ INT wifi_getTWTsessions(INT ap_index, UINT maxNumberSessions, wifi_twt_sessions_
 			wifi_debug(DEBUG_ERROR, "Unexpected strtoul fail\n");
 		}
 		mantissa = tmp_l;
-		
+
 		tmp = strtok(NULL, " ");
 
 		if (hal_strtoul(tmp, 10, &tmp_l) < 0) {
