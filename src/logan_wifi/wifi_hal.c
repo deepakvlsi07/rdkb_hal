@@ -1925,6 +1925,81 @@ wifi_PrepareDefaultHostapdConfigs(bool reset)
 }
 
 static void
+wifiBringUpInterfacesForRadio(int radio_idx)
+{
+	int bss_idx;
+	int ap_idx;
+	char cmd[MAX_CMD_SIZE] = {0};
+	char config_file[MAX_SUB_CMD_SIZE] = {0};
+	char ret_buf[MAX_BUF_SIZE] = {0};
+	char inf_name[IF_NAME_SIZE] = {0};
+	int res;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+	bss_idx = 0;
+	/*TBD: we need refine setup flow and mbss flow*/
+//    for (bss_idx = 0; bss_idx < 5; bss_idx++) {
+		ap_idx = array_index_to_vap_index(radio_idx, bss_idx);
+
+		res = snprintf(cmd, sizeof(cmd), "touch %s%d.psk", PSK_FILE, ap_idx);
+		if (os_snprintf_error(sizeof(cmd), res)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			return;
+		}
+		_syscmd(cmd, ret_buf, sizeof(ret_buf));
+
+		memset(cmd, 0, MAX_CMD_SIZE);
+		memset(ret_buf, 0, MAX_BUF_SIZE);
+
+		res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, ap_idx);
+		if (os_snprintf_error(sizeof(cmd), res)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			return;
+		}
+		res = snprintf(cmd, sizeof(cmd), "hostapd_cli -i global raw ADD bss_config=phy%d:%s", radio_idx, config_file);
+		if (os_snprintf_error(sizeof(cmd), res)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			return;
+		}
+		_syscmd(cmd, ret_buf, sizeof(ret_buf));
+
+		wifi_GetInterfaceName(ap_idx, inf_name);
+
+		memset(cmd, 0, MAX_CMD_SIZE);
+		memset(ret_buf, 0, MAX_BUF_SIZE);
+
+		/* fix vap-status file */
+		res = snprintf(cmd, sizeof(cmd), "sed -i \"s/^%s=.*/%s=1/\" %s", inf_name, inf_name, VAP_STATUS_FILE);
+		if (os_snprintf_error(sizeof(cmd), res)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			return;
+		}
+		_syscmd(cmd, ret_buf, sizeof(ret_buf));
+//    }
+
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+}
+
+
+static void
+wifi_BringUpInterfaces(void)
+{
+    int radio_idx;
+    int band_idx;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    for (radio_idx = 0; radio_idx < MAX_NUM_RADIOS; radio_idx++) {
+        band_idx = radio_index_to_band(radio_idx);
+        if (band_idx < 0) {
+            break;
+        }
+        wifiBringUpInterfacesForRadio(radio_idx);
+    }
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+}
+
+static void
 wifi_BringDownInterfacesForRadio(int radio_idx)
 {
 	char cmd[MAX_BUF_SIZE] = {0};
@@ -2101,6 +2176,7 @@ INT wifi_init()							//RDKB
 
 		wifi_vap_status_reset();
 		wifi_radio_reset_count_reset();
+		wifi_BringUpInterfaces();
 		CallOnce = 0;
 	}
 
@@ -2142,6 +2218,7 @@ INT wifi_reset()
 
 	wifi_PrepareDefaultHostapdConfigs(TRUE);
 	wifi_psk_file_reset();
+	wifi_BringUpInterfaces();
 	sleep(2);
 
 	wifi_vap_status_reset();
