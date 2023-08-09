@@ -908,7 +908,6 @@ wifi_band wifi_index_to_band(int apIndex)
 	int max_radio_num = 0;
 	wifi_band band = band_invalid;
 	int res;
-
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
 	wifi_getMaxRadioNumber(&max_radio_num);
@@ -2173,7 +2172,7 @@ INT wifi_init()							//RDKB
 		//v_secure_system("/usr/sbin/iw reg set US");
 		v_secure_system("systemctl start hostapd.service");
 		sleep(2);
-
+		setbuf(stdout, NULL);
 		wifi_vap_status_reset();
 		wifi_radio_reset_count_reset();
 		wifi_BringUpInterfaces();
@@ -10199,7 +10198,9 @@ INT wifi_getApEnable(INT apIndex, BOOL *output_bool)
 	char interface_name[IF_NAME_SIZE] = {0};
 	char cmd[MAX_CMD_SIZE] = {0};
 	char buf[MAX_BUF_SIZE] = {0};
-	int res;
+	int res, len;
+	char ctrl_interface[64] = {0};
+	char config_file[128] = {0};
 
 	if ((!output_bool) || (apIndex < 0) || (apIndex >= MAX_APS))
 		return RETURN_ERR;
@@ -10211,6 +10212,26 @@ INT wifi_getApEnable(INT apIndex, BOOL *output_bool)
 			*output_bool = FALSE;
 			return RETURN_OK;
 		}
+		if (strlen(interface_name) == 0)
+			return RETURN_ERR;
+
+		res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, apIndex);
+		if (os_snprintf_error(sizeof(config_file), res)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			return RETURN_ERR;
+		}
+		if (wifi_hostapdRead(config_file, "ctrl_interface", ctrl_interface, sizeof(ctrl_interface))) {
+			wifi_debug(DEBUG_ERROR, "ctrl_interface for %s not exist\n", interface_name);
+		}
+
+		_syscmd_secure(buf, sizeof(buf), "ls %s | grep %s",
+			strlen(ctrl_interface) == 0 ? "/var/run/hostapd/" : ctrl_interface, interface_name);
+		len = strlen(buf) >= strlen(interface_name) ? strlen(interface_name) : strlen(buf);
+
+		if (len == 0 || strncmp(buf, interface_name, len)) {
+			return RETURN_OK;
+		}
+		memset(buf, 0, sizeof(buf));
 
 		res = snprintf(cmd, sizeof(cmd), "hostapd_cli -i %s status | grep state | cut -d '=' -f2", interface_name);
 		if (os_snprintf_error(sizeof(cmd), res)) {
