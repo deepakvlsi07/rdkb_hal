@@ -2437,11 +2437,6 @@ INT wifi_getRadioEnable(INT radioIndex, BOOL *output_bool)	  //RDKB
 		if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
 			continue;
 
-		res = _syscmd_secure(buf, sizeof(buf), "ifconfig %s 2> /dev/null | grep UP", interface_name);
-		if (res) {
-			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-		}
-
 		*output_bool = _syscmd_secure(buf, sizeof(buf), "ifconfig %s 2> /dev/null | grep UP", interface_name) ? FALSE : TRUE;
 		if (*output_bool == TRUE)
 			break;
