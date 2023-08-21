@@ -2419,7 +2419,6 @@ INT wifi_getRadioEnable(INT radioIndex, BOOL *output_bool)	  //RDKB
 	char buf[128] = {0};
 	int apIndex;
 	int max_radio_num = 0;
-	int res;
 
 	if (NULL == output_bool)
 		return RETURN_ERR;
