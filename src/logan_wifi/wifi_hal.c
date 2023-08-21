@@ -1313,7 +1313,7 @@ static int writeBandWidth(int radioIndex,char *bw_value)
 
 
 	if (_syscmd_secure(buf, sizeof(buf), "grep SET_BW%d %s", radioIndex, BW_FNAME)) {
-		res = _syscmd_secure(buf, sizeof(buf), "echo SET_BW%d=%s >> %s", radioIndex, bw_value, BW_FNAME);
+		res = _syscmd_secure(buf, sizeof(buf), "echo SET_BW%d=%s >> /nvram/bw_file.txt", radioIndex, bw_value);
 		if (res) {
 			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 		}
@@ -1849,13 +1849,26 @@ wifiBringUpInterfacesForRadio(int radio_idx)
 	char config_file[MAX_SUB_CMD_SIZE] = {0};
 	char ret_buf[MAX_BUF_SIZE] = {0};
 	char inf_name[IF_NAME_SIZE] = {0};
-	int res;
+	int res, ret, bss_num;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
 	bss_idx = 0;
+
+	ret = wifi_BandProfileRead(0, radio_idx, "BssidNum", ret_buf, sizeof(ret_buf), "1");
+	if (ret != 0) {
+		wifi_debug(DEBUG_ERROR, "wifi_BandProfileRead BssidNum failed\n");
+		return;
+	}
+
+	bss_num = atoi(ret_buf);
+	if (bss_num <= 0)  {
+		wifi_debug(DEBUG_ERROR, "invalid BssidNum %s\n", ret_buf);
+		return ;
+	}
+	wifi_debug(DEBUG_ERROR, "band %d BssidNum %d\n", radio_idx, bss_num);
 	/*TBD: we need refine setup flow and mbss flow*/
-//    for (bss_idx = 0; bss_idx < 5; bss_idx++) {
+    for (bss_idx = 0; bss_idx < bss_num; bss_idx++) {
 		ap_idx = array_index_to_vap_index(radio_idx, bss_idx);
 
 		res = _syscmd_secure(ret_buf, sizeof(ret_buf), "touch %s%d.psk", PSK_FILE, ap_idx);
@@ -1871,13 +1884,14 @@ wifiBringUpInterfacesForRadio(int radio_idx)
 			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 			return;
 		}
-
+		
 		res = _syscmd_secure(ret_buf, sizeof(ret_buf), "hostapd_cli -i global raw ADD bss_config=phy%d:%s", radio_idx, config_file);
 		if (res) {
 			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 		}
 
 		wifi_GetInterfaceName(ap_idx, inf_name);
+		wifi_debug(DEBUG_ERROR, "bring up %s\n", inf_name);
 
 		memset(cmd, 0, MAX_CMD_SIZE);
 		memset(ret_buf, 0, MAX_BUF_SIZE);
@@ -1888,7 +1902,7 @@ wifiBringUpInterfacesForRadio(int radio_idx)
 			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 		}
 
-//    }
+    }
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 }
@@ -2023,7 +2037,7 @@ static void wifi_vap_status_reset()
 
 	for (radio_idx = 0; radio_idx < MAX_NUM_RADIOS; radio_idx++)
 		for (bss_idx = 0; bss_idx < 5; bss_idx++) {
-			res = _syscmd_secure(ret_buf, sizeof(ret_buf), "echo %s%d=0 >> %s", ext_prefix[radio_idx], bss_idx, VAP_STATUS_FILE);
+			res = _syscmd_secure(ret_buf, sizeof(ret_buf), "echo %s%d=0 >> /nvram/vap-status", ext_prefix[radio_idx], bss_idx);
 			if (res) {
 				wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 			}
@@ -2043,7 +2057,7 @@ static void wifi_radio_reset_count_reset()
 			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 		}
 	} else {
-		res =  _syscmd_secure(ret_buf, sizeof(ret_buf), "echo '' > %s", RADIO_RESET_FILE);
+		res =  _syscmd_secure(ret_buf, sizeof(ret_buf), "echo '' > /nvram/radio_reset");
 		if (res) {
 			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 		}
@@ -17538,6 +17552,7 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 	int set_mode = 0;
 	BOOL drv_dat_change = 0, hapd_conf_change = 0;
 	wifi_radio_operationParam_t current_param;
+	int ApIndex;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -17681,9 +17696,27 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 		if (operationParam->enable == TRUE)
 			wifi_setRadioEnable(index, TRUE);
 	} else if (hapd_conf_change == TRUE) {
-		hostapd_raw_remove_bss(index);
-		if (operationParam->enable == TRUE)
-			hostapd_raw_add_bss(index);
+		int ret, bss_num, i;
+		char ret_buf[MAX_BUF_SIZE] = {0};
+
+		ret = wifi_BandProfileRead(0, index, "BssidNum", ret_buf, sizeof(ret_buf), "1");
+		if (ret != 0) {
+			wifi_debug(DEBUG_ERROR, "wifi_BandProfileRead BssidNum failed\n");
+			return RETURN_ERR;
+		}
+		bss_num = atoi(ret_buf);
+		if (bss_num <= 0)  {
+			wifi_debug(DEBUG_ERROR, "invalid BssidNum %s\n", ret_buf);
+			return RETURN_ERR;
+		}
+		wifi_debug(DEBUG_ERROR, "band %d BssidNum %d\n", index, bss_num);
+
+		for (i = 0; i < bss_num; i++) {
+			ApIndex = array_index_to_vap_index(index, i);
+			hostapd_raw_remove_bss(ApIndex);
+			if (operationParam->enable == TRUE)
+				hostapd_raw_add_bss(ApIndex);
+		}
 	}
 
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
@@ -18195,12 +18228,14 @@ int hostapd_manage_bss(INT apIndex, BOOL enable)
 	if (enable == TRUE) {
 		int radioIndex = apIndex % max_radio_num;
 		phyId = radio_index_to_phy(radioIndex);
-		wifi_debug(DEBUG_ERROR, "%s %d\n", __func__, __LINE__);
 		res = snprintf(config_file, MAX_BUF_SIZE, "%s%d.conf", CONFIG_PREFIX, apIndex);
 		if (os_snprintf_error(MAX_CMD_SIZE, res)) {
 			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 			return RETURN_ERR;
 		}
+
+		wifi_debug(DEBUG_ERROR, "raw ADD bss_config config_file=%s\n", config_file);
+
 		res = _syscmd_secure(buf, sizeof(buf), "hostapd_cli -i global raw ADD bss_config=phy%d:%s", phyId, config_file);
 		if (res) {
 			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
@@ -18209,6 +18244,8 @@ int hostapd_manage_bss(INT apIndex, BOOL enable)
 
 	} else {
 		wifi_debug(DEBUG_ERROR, "%s %d\n", __func__, __LINE__);
+		
+		wifi_debug(DEBUG_ERROR, "global raw REMOVE %s\n", interface_name);
 		res = _syscmd_secure(buf, sizeof(buf), "hostapd_cli -i global raw REMOVE %s", interface_name);
 		if (res) {
 			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
@@ -18267,7 +18304,7 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	printf("Entering %s index = %d\n", __func__, (int)index);
-	for (i = 0; i < map->num_vaps; i++)
+	for (i = 1; i < map->num_vaps; i++)
 	{
 		multiple_set = TRUE;
 		vap_info = &map->vap_array[i];
