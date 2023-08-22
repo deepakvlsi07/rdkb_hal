@@ -1553,6 +1553,26 @@ ULONG get_radio_reset_cnt(int radioIndex)
 		return reset_count;
 	}
 }
+
+void reset_guard_interval(int radioIndex)
+{
+	char buf[MAX_BUF_SIZE] = {0};
+	int res;
+	FILE *f = NULL;
+
+	res = snprintf(buf, sizeof(buf), "%s%d.txt", GUARD_INTERVAL_FILE, radioIndex);
+	if (os_snprintf_error(sizeof(buf), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return;
+	}
+	f = fopen(buf, "w");
+	if (f == NULL)
+		return;
+	fprintf(f, "%s", "auto");
+	if (fclose(f) == EOF)
+		wifi_debug(DEBUG_ERROR, "Unexpected fclose fail\n");
+}
+
 void update_radio_reset_cnt(int radioIndex)
 {
 	char buf[MAX_BUF_SIZE] = {0};
@@ -1597,18 +1617,13 @@ void update_radio_reset_cnt(int radioIndex)
 */
 INT wifi_factoryResetRadio(int radioIndex) 	//RDKB
 {
-	char buf[MAX_BUF_SIZE] = {0};
-	int res;
-
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
 
 	wifi_dat_file_reset_by_radio(radioIndex);
 
 	/*reset gi setting*/
-	res = _syscmd_secure(buf, sizeof(buf), "echo 'Auto' > %s%d.txt", GUARD_INTERVAL_FILE, radioIndex);
-	if (res) {
-		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-	}
+	reset_guard_interval(radioIndex);
+
 	/*TBD: check mbss issue*/
 	wifi_factoryResetAP(radioIndex);
 	update_radio_reset_cnt(radioIndex);
@@ -6095,11 +6110,11 @@ INT GetIfacestatus(CHAR *interface_name, CHAR *status)
 
 	if (interface_name != NULL && (strlen(interface_name) > 1) && status != NULL) {
 
-	res = _syscmd_secure(status, sizeof(status), "%s%s%s%s%s", "ifconfig -a ",
-			interface_name, " | grep ", interface_name, " | wc -l");
-	if(res) {
-		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-	}
+		res = _syscmd_secure(status, sizeof(status), "ifconfig -a %s | grep %s | wc -l", 
+				interface_name, interface_name);
+		if(res) {
+			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+		}
 
 	}
 
@@ -6950,7 +6965,7 @@ INT wifi_getWifiTrafficStats(INT apIndex, wifi_trafficStats_t *output_struct)
 		return RETURN_ERR;
 	GetIfacestatus(interface_name, interface_status);
 
-	if(0 != strcmp(interface_status, "1"))
+	if(0 != strncmp(interface_status, "1", 1))
 		return RETURN_ERR;
 
 	res = v_secure_system("ifconfig %s > /tmp/SSID_Stats.txt", interface_name);
