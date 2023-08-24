@@ -18319,7 +18319,7 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	printf("Entering %s index = %d\n", __func__, (int)index);
-	for (i = 1; i < map->num_vaps; i++)
+	for (i = 0; i < map->num_vaps; i++)
 	{
 		multiple_set = TRUE;
 		vap_info = &map->vap_array[i];
@@ -18432,12 +18432,6 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 			}
 		}
 
-		ret = wifi_setApWmmEnable(vap_info->vap_index, vap_info->u.bss_info.wmm_enabled);
-		if (ret != RETURN_OK) {
-			wifi_debug(DEBUG_ERROR, "wifi_setApWmmEnable return error\n");
-			return RETURN_ERR;
-		}
-
 		ret = wifi_setApWmmUapsdEnable(vap_info->vap_index, vap_info->u.bss_info.UAPSDEnabled);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApWmmUapsdEnable return error\n");
@@ -18472,6 +18466,12 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 		ret = wifi_setApMacAddressControlMode(vap_info->vap_index, acl_mode);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApMacAddressControlMode return error\n");
+			return RETURN_ERR;
+		}
+
+		ret = wifi_setApWmmEnable(vap_info->vap_index, vap_info->u.bss_info.wmm_enabled);
+		if (ret != RETURN_OK) {
+			wifi_debug(DEBUG_ERROR, "wifi_setApWmmEnable return error\n");
 			return RETURN_ERR;
 		}
 
