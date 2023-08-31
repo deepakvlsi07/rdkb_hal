@@ -12362,12 +12362,14 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
             return RETURN_ERR;
         }
     }
-    if (current_param.greenFieldEnable != operationParam->greenFieldEnable) {
-        if (wifi_setRadio11nGreenfieldEnable(index, operationParam->greenFieldEnable) != RETURN_OK) {
-            fprintf(stderr, "%s: wifi_setRadio11nGreenfieldEnable return error.\n", __func__);
-            return RETURN_ERR;
-        }
-    }
+
+    // mt76 not support yet
+    // if (current_param.greenFieldEnable != operationParam->greenFieldEnable) {
+    //     if (wifi_setRadio11nGreenfieldEnable(index, operationParam->greenFieldEnable) != RETURN_OK) {
+    //         fprintf(stderr, "%s: wifi_setRadio11nGreenfieldEnable return error.\n", __func__);
+    //         return RETURN_ERR;
+    //     }
+    // }
 
     // if enable is true, then restart the radio
     wifi_setRadioEnable(index, FALSE);
@@ -12536,10 +12538,12 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
     else
         operationParam->stbcEnable = FALSE;
 
-    if (wifi_getRadio11nGreenfieldEnable(index, &operationParam->greenFieldEnable) != RETURN_OK) {
-        fprintf(stderr, "%s: wifi_getRadio11nGreenfieldEnable return error.\n", __func__);
-        return RETURN_ERR;
-    }
+    // mt76 not support yet
+    operationParam->greenFieldEnable = 0;
+    // if (wifi_getRadio11nGreenfieldEnable(index, &operationParam->greenFieldEnable) != RETURN_OK) {
+    //     fprintf(stderr, "%s: wifi_getRadio11nGreenfieldEnable return error.\n", __func__);
+    //     return RETURN_ERR;
+    // }
 
     // Below value is hardcoded
 
@@ -12979,7 +12983,8 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
         }
 
         wifi_setApEnable(vap_info->vap_index, FALSE);
-        wifi_setApEnable(vap_info->vap_index, TRUE);
+        if (vap_info->u.bss_info.enabled == TRUE)
+            wifi_setApEnable(vap_info->vap_index, TRUE);
         multiple_set = FALSE;
 
         // If config use hostapd_cli to set, we calling these type of functions after enable the ap.
