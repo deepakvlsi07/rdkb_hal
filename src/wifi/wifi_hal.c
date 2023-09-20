@@ -12774,15 +12774,6 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
             return RETURN_ERR;
         }
         map->vap_array[i].u.bss_info.mcast2ucast = enabled;
-
-        ret = wifi_getApWpsEnable(vap_index, &enabled);
-        if (ret != RETURN_OK) {
-            fprintf(stderr, "%s: wifi_getApWpsEnable\n", __func__);
-            return RETURN_ERR;
-        }
-
-        map->vap_array[i].u.bss_info.wps.enable = enabled;
-
         map->num_vaps++;
         // TODO: wps, noack
     }
