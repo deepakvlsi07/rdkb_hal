@@ -7097,19 +7097,19 @@ INT wifi_getApWpsEnable(INT apIndex, BOOL *output_bool)
 {
     char interface_name[16] = {0};
     char buf[MAX_BUF_SIZE] = {0}, cmd[MAX_CMD_SIZE] = {0}, *value;
+
+    *output_bool=FALSE;
     if(!output_bool)
         return RETURN_ERR;
     if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
-        return RETURN_ERR;
+        return RETURN_OK;
     sprintf(cmd,"hostapd_cli -i %s get_config | grep wps_state | cut -d '=' -f2", interface_name);
     _syscmd(cmd, buf, sizeof(buf));
     if(strstr(buf, "configured"))
         *output_bool=TRUE;
-    else
-        *output_bool=FALSE;
 
     return RETURN_OK;
-}        
+}
 
 //Device.WiFi.AccessPoint.{i}.WPS.Enable
 // sets the WPS enable enviornment variable for this ap to the value of enableValue, 1==enabled, 0==disabled
@@ -12774,6 +12774,15 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
             return RETURN_ERR;
         }
         map->vap_array[i].u.bss_info.mcast2ucast = enabled;
+
+        ret = wifi_getApWpsEnable(vap_index, &enabled);
+        if (ret != RETURN_OK) {
+            fprintf(stderr, "%s: wifi_getApWpsEnable\n", __func__);
+            return RETURN_ERR;
+        }
+
+        map->vap_array[i].u.bss_info.wps.enable = enabled;
+
         map->num_vaps++;
         // TODO: wps, noack
     }
