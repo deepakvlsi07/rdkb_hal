@@ -8643,7 +8643,7 @@ static int util_get_sec_chan_offset(int channel, const char* ht_mode)
         0 == strcmp(ht_mode, "HT160") ||
         0 == strcmp(ht_mode, "HT320")) {
         switch (channel) {
-            case 1 ... 7:
+            case 0 ... 7:
             case 36:
             case 44:
             case 52:
