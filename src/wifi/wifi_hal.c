@@ -12624,6 +12624,23 @@ INT beaconRate_enum_to_string(wifi_bitrate_t beacon, char *beacon_str)
     return RETURN_OK;
 }
 
+void checkVapStatus(int apIndex, bool *enable)
+{
+    char if_name[16] = {0};
+    char cmd[128] = {0};
+    char buf[128] = {0};
+
+    *enable = FALSE;
+    if (wifi_GetInterfaceName(apIndex, if_name) != RETURN_OK)
+        return;
+
+    snprintf(cmd, sizeof(cmd), "cat %s | grep ^%s=1", VAP_STATUS_FILE, if_name);
+    _syscmd(cmd, buf, sizeof(buf));
+    if (strlen(buf) > 0)
+        *enable = TRUE;
+    return;
+}
+
 INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 {
     INT mode = 0;
@@ -12668,11 +12685,7 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
         }
         snprintf(map->vap_array[i].u.bss_info.ssid, sizeof(map->vap_array[i].u.bss_info.ssid), "%s", buf);
 
-        ret = wifi_getSSIDEnable(vap_index, &enabled);
-        if (ret != RETURN_OK) {
-            printf("%s: wifi_getSSIDEnable return error\n", __func__);
-            return RETURN_ERR;
-        }
+        checkVapStatus(vap_index, &enabled);
         map->vap_array[i].u.bss_info.enabled = enabled;
 
         ret = wifi_getApSsidAdvertisementEnable(vap_index, &enabled);
@@ -12790,22 +12803,6 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
     return RETURN_OK;
 }
 
-void checkVapStatus(int apIndex, bool *enable)
-{
-    char if_name[16] = {0};
-    char cmd[128] = {0};
-    char buf[128] = {0};
-
-    *enable = FALSE;
-    if (wifi_GetInterfaceName(apIndex, if_name) != RETURN_OK)
-        return;
-
-    snprintf(cmd, sizeof(cmd), "cat %s | grep ^%s=1", VAP_STATUS_FILE, if_name);
-    _syscmd(cmd, buf, sizeof(buf));
-    if (strlen(buf) > 0)
-        *enable = TRUE;
-    return;
-}
 
 static int prepareInterface(UINT apIndex, char *new_interface)
 {
@@ -12988,7 +12985,9 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
         }
 
         wifi_setApEnable(vap_info->vap_index, FALSE);
-        wifi_setApEnable(vap_info->vap_index, TRUE);
+        if (vap_info->u.bss_info.enabled == TRUE)
+            wifi_setApEnable(vap_info->vap_index, TRUE);
+
         multiple_set = FALSE;
 
         // If config use hostapd_cli to set, we calling these type of functions after enable the ap.
