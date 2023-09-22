@@ -1193,9 +1193,6 @@ static int wifi_hostapdProcessUpdate(int apIndex, struct params *list, int item_
 	for (i=0; i<item_count; i++, list++) {
 		fp = v_secure_popen("r", "hostapd_cli -i%s SET %s %s", interface_name, list->name, list->value);
 
-
-
-
 		if (fp == NULL) {
 			perror("v_secure_popen failed");
 			return -1;
@@ -1219,12 +1216,12 @@ static int wifi_quick_reload_ap(int apIndex)
 	if (multiple_set == TRUE)
 		return RETURN_OK;
 
+
 	if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 
 	res = _syscmd_secure(buf, sizeof(buf), "hostapd_cli -i %s reload", interface_name);
-
-if (res) {
+	if (res) {
 		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 		return RETURN_ERR;
  	}
@@ -3668,7 +3665,7 @@ INT wifi_setRadioMode(INT radioIndex, CHAR *channelMode, UINT pureMode)
 	struct nlattr * msg_data = NULL;
 	struct mtk_nl80211_param param;
 
-	WIFI_ENTRY_EXIT_DEBUG("Inside %s_%d:%d\n", __func__, channelMode, pureMode, __LINE__);
+	WIFI_ENTRY_EXIT_DEBUG("Inside %s_%s:%d_%d\n", __func__, channelMode, pureMode, __LINE__);
 
 	wireless_mode = puremode_to_wireless_mode(radioIndex, pureMode);
 
@@ -5860,8 +5857,10 @@ INT wifi_setRadioBasicDataTransmitRates(INT radioIndex, CHAR *TransmitRates)
 	char config_file[MAX_BUF_SIZE] = {0};
 	wifi_band band = wifi_index_to_band(radioIndex);
 	int res;
+	bool temp_multiple_set = multiple_set;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
 	if(NULL == TransmitRates)
 		return RETURN_ERR;
 	if (strlen(TransmitRates) >= sizeof(sub_set))
@@ -5967,6 +5966,11 @@ INT wifi_setRadioBasicDataTransmitRates(INT radioIndex, CHAR *TransmitRates)
 	}
 
 	wifi_hostapdWrite(config_file,&params,1);
+	multiple_set = false;
+	wifi_hostapdProcessUpdate(radioIndex, &params, 1);
+	wifi_quick_reload_ap(radioIndex);
+	multiple_set = temp_multiple_set;
+
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 	return RETURN_OK;
 }
@@ -12616,6 +12620,7 @@ INT wifi_setApSecurityMFPConfig(INT apIndex, CHAR *MfpConfig)
 	struct params params;
 	char config_file[MAX_BUF_SIZE] = {0};
 	int res;
+	bool temp_multiple_set = multiple_set;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	if(NULL == MfpConfig || strlen(MfpConfig) >= 32 )
@@ -12640,6 +12645,11 @@ INT wifi_setApSecurityMFPConfig(INT apIndex, CHAR *MfpConfig)
 	}
 
 	wifi_hostapdWrite(config_file, &params, 1);
+	multiple_set = false;
+	wifi_hostapdProcessUpdate(apIndex, &params, 1);
+	wifi_quick_reload_ap(apIndex);
+	multiple_set = temp_multiple_set;
+
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n", __func__, __LINE__);
 	return RETURN_OK;
 }
@@ -12810,6 +12820,7 @@ INT wifi_setRadioOperationalDataTransmitRates(INT wlanIndex,CHAR *output)
 	wifi_band band = wifi_index_to_band(wlanIndex);
 	unsigned long len;
 	int res;
+	bool temp_multiple_set = multiple_set;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	if(NULL == output)
@@ -12892,7 +12903,13 @@ INT wifi_setRadioOperationalDataTransmitRates(INT wlanIndex,CHAR *output)
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
 	}
+
 	wifi_hostapdWrite(config_file,&params,1);
+	multiple_set = false;
+	wifi_hostapdProcessUpdate(wlanIndex, &params, 1);
+	wifi_quick_reload_ap(wlanIndex);
+	multiple_set = temp_multiple_set;
+
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
 	return RETURN_OK;
@@ -14328,11 +14345,13 @@ INT wifi_setRadioDcsScanning(INT radioIndex, BOOL enable)
 {
 	return RETURN_OK;
 }
+
 INT wifi_setBSSTransitionActivation(UINT apIndex, BOOL activate)
 {
 	char config_file[MAX_BUF_SIZE] = {0};
 	struct params list;
 	int res;
+	bool temp_multiple_set = multiple_set;
 
 	list.name = "bss_transition";
 	list.value = activate?"1":"0";
@@ -14342,9 +14361,15 @@ INT wifi_setBSSTransitionActivation(UINT apIndex, BOOL activate)
 		return RETURN_ERR;
 	}
 	wifi_hostapdWrite(config_file, &list, 1);
+	multiple_set = false;
+	wifi_hostapdProcessUpdate(apIndex, &list, 1);
+	wifi_quick_reload_ap(apIndex);
+	multiple_set = temp_multiple_set;
 
 	return RETURN_OK;
 }
+
+
 wifi_apAuthEvent_callback apAuthEvent_cb = NULL;
 
 void wifi_apAuthEvent_callback_register(wifi_apAuthEvent_callback callback_proc)
@@ -14974,6 +14999,7 @@ INT wifi_setNeighborReportActivation(UINT apIndex, BOOL activate)
 	char config_file[MAX_BUF_SIZE] = {0};
 	struct params list;
 	int res;
+	bool temp_multiple_set = multiple_set;
 
 	list.name = "rrm_neighbor_report";
 	list.value = activate?"1":"0";
@@ -14982,10 +15008,17 @@ INT wifi_setNeighborReportActivation(UINT apIndex, BOOL activate)
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
 	}
+
 	wifi_hostapdWrite(config_file, &list, 1);
+
+	multiple_set = false;
+	wifi_hostapdProcessUpdate(apIndex, &list, 1);
+	wifi_quick_reload_ap(apIndex);
+	multiple_set = temp_multiple_set;
 
 	return RETURN_OK;
 }
+
 
 INT wifi_getNeighborReportActivation(UINT apIndex, BOOL *activate)
 {
@@ -16040,7 +16073,7 @@ INT wifi_getDownlinkMuType(INT radio_index, wifi_dl_mu_type_t *mu_type)
 		wifi_debug(DEBUG_ERROR, "strtol fail\n");
 	}
 
-	WIFI_ENTRY_EXIT_DEBUG("%s:ofdma=%d,mimo=%d\n", __func__, ofdma, mimo);
+	WIFI_ENTRY_EXIT_DEBUG("%s:ofdma=%ld,mimo=%ld\n", __func__, ofdma, mimo);
 	if ((ofdma == 1) && (mimo == 1))
 		*mu_type = WIFI_DL_MU_TYPE_OFDMA_MIMO;
 	else if ((ofdma == 0) && (mimo == 1))
