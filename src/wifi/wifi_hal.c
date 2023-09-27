@@ -11100,52 +11100,68 @@ INT wifi_switchBand(char *interface_name,INT radioIndex,char *freqBand)
     return RETURN_ERR;
 }
 
+
 INT wifi_getRadioPercentageTransmitPower(INT apIndex, ULONG *txpwr_pcntg)
 {
-    char interface_name[16] = {0};
     char cmd[128]={'\0'};
     char buf[128]={'\0'};
-    char *support;
-    int maximum_tx = 0, current_tx = 0;
+    int radioIndex = -1;
+    int phyIndex = -1;
+    bool enabled = false;
+    int cur_tx_dbm = 0;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
     if(txpwr_pcntg == NULL)
         return RETURN_ERR;
 
-    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
-        return RETURN_ERR;
+    // The API name as getRadioXXX, I think the input index should be radioIndex,
+    // but current we not change the name, but use it as radioIndex
+    radioIndex = apIndex;
+    phyIndex = radio_index_to_phy(radioIndex);
 
     // Get the maximum tx power of the device
-    snprintf(cmd, sizeof(cmd),  "hostapd_cli -i %s status | grep max_txpower | cut -d '=' -f2 | tr -d '\n'", interface_name);
+    snprintf(cmd, sizeof(cmd),  "cat /sys/kernel/debug/ieee80211/phy%d/mt76/txpower_info | "
+                                "grep 'Percentage Control:' | awk '{print $3}' | tr -d '\\n'", phyIndex);
     _syscmd(cmd, buf, sizeof(buf));
-    maximum_tx = strtol(buf, NULL, 10);
+    if (strcmp(buf, "enable") == 0)
+        enabled = true;
 
-    // Get the current tx power
+    if (!enabled) {
+        *txpwr_pcntg = 100;
+        return RETURN_OK;
+    }
+
     memset(cmd, 0, sizeof(cmd));
     memset(buf, 0, sizeof(buf));
-    snprintf(cmd, sizeof(cmd),  "iw %s info | grep txpower | awk '{print $2}' | cut -d '.' -f1 | tr -d '\\n'", interface_name);
+    snprintf(cmd, sizeof(cmd),  "cat /sys/kernel/debug/ieee80211/phy%d/mt76/txpower_info | "
+                                "grep 'Power Drop:' | awk '{print $3}' | tr -d '\\n'", phyIndex);
     _syscmd(cmd, buf, sizeof(buf));
-    current_tx = strtol(buf, NULL, 10);
+    cur_tx_dbm = strtol(buf, NULL, 10);
 
-    // Get the power supported list and find the current power percentage in supported list
-    memset(buf, 0, sizeof(buf));
-    wifi_getRadioTransmitPowerSupported(apIndex, buf);
-    support = strtok(buf, ",");
-    while(true)
-    {
-        if(support == NULL) {       // current power is not in supported list, this should not happen if the power is set by hal.
-            *txpwr_pcntg = 100;
-            wifi_dbg_printf("current power is not in supported list\n");
-            return RETURN_OK;
-        }
-        int tmp = maximum_tx*strtol(support, NULL, 10)/100;
-        if (tmp == current_tx) {
-            *txpwr_pcntg = strtol(support, NULL, 10);
+    switch (cur_tx_dbm) {
+        case 0:
+            *txpwr_pcntg = 100; // range 91-100
             break;
-        }
-        support = strtok(NULL, ",");
+        case 1:
+            *txpwr_pcntg = 75;  // range 61-90
+            break;
+        case 3:
+            *txpwr_pcntg = 50;  // range 31-60
+            break;
+        case 6:
+            *txpwr_pcntg = 25;  // range 16-30
+            break;
+        case 9:
+            *txpwr_pcntg = 12; // range 10-15
+            break;
+        case 12:
+            *txpwr_pcntg = 6;  // range 1-9
+            break;
+        default:
+            *txpwr_pcntg = 100; // 0
     }
-    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
     return RETURN_OK;
 }
 
