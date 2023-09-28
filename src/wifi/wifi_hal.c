@@ -3137,35 +3137,74 @@ INT wifi_getRadioTransmitPowerSupported(INT radioIndex, CHAR *output_list) //Tr1
 {
         if (NULL == output_list)
                 return RETURN_ERR;
-        snprintf(output_list, 64,"0,25,50,75,100");
+        snprintf(output_list, 64,"0,12,25,50,75,100");
         return RETURN_OK;
 }
 
-//Get current Transmit Power in dBm units.
-//The transmite power level is in units of full power for this radio.
+// Get current Transmit Power in percent
 INT wifi_getRadioTransmitPower(INT radioIndex, ULONG *output_ulong)	//RDKB
 {
-    char interface_name[16] = {0};
-    char cmd[128]={0};
-    char buf[16]={0};
+    char cmd[128]={'\0'};
+    char buf[128]={'\0'};
+    int phyIndex = -1;
+    bool enabled = false;
+    int cur_tx_dbm = 0;
+
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
     if(output_ulong == NULL)
         return RETURN_ERR;
 
-    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
-        return RETURN_ERR;
-    snprintf(cmd, sizeof(cmd),  "iw %s info | grep txpower | awk '{print $2}' | cut -d '.' -f1 | tr -d '\\n'", interface_name);
+    phyIndex = radio_index_to_phy(radioIndex);
+
+    // Get the maximum tx power of the device
+    snprintf(cmd, sizeof(cmd),  "cat /sys/kernel/debug/ieee80211/phy%d/mt76/txpower_info | "
+                                "grep 'Percentage Control:' | awk '{print $3}' | tr -d '\\n'", phyIndex);
     _syscmd(cmd, buf, sizeof(buf));
+    if (strcmp(buf, "enable") == 0)
+        enabled = true;
 
-    *output_ulong = strtol(buf, NULL, 10);
+    if (!enabled) {
+        *output_ulong = 100;
+        return RETURN_OK;
+    }
 
-    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    memset(cmd, 0, sizeof(cmd));
+    memset(buf, 0, sizeof(buf));
+    snprintf(cmd, sizeof(cmd),  "cat /sys/kernel/debug/ieee80211/phy%d/mt76/txpower_info | "
+                                "grep 'Power Drop:' | awk '{print $3}' | tr -d '\\n'", phyIndex);
+    _syscmd(cmd, buf, sizeof(buf));
+    cur_tx_dbm = strtol(buf, NULL, 10);
+
+    switch (cur_tx_dbm) {
+        case 0:
+            *output_ulong = 100; // range 91-100
+            break;
+        case 1:
+            *output_ulong = 75;  // range 61-90
+            break;
+        case 3:
+            *output_ulong = 50;  // range 31-60
+            break;
+        case 6:
+            *output_ulong = 25;  // range 16-30
+            break;
+        case 9:
+            *output_ulong = 12; // range 10-15
+            break;
+        case 12:
+            *output_ulong = 6;  // range 1-9
+            break;
+        default:
+            *output_ulong = 100; // 0
+    }
+
     return RETURN_OK;
 }
 
-//Set Transmit Power
-//The transmite power level is in units of full power for this radio.
+// TransmitPower: the the percentage relative to the maximum power,
+// only support 0,12,25,50,75,100, But 0 means disable Power limit,
+// so the power is 100%
 INT wifi_setRadioTransmitPower(INT radioIndex, ULONG TransmitPower)	//RDKB
 {
     char interface_name[16] = {0};
@@ -3173,17 +3212,12 @@ INT wifi_setRadioTransmitPower(INT radioIndex, ULONG TransmitPower)	//RDKB
     char cmd[128]={0};
     char buf[128]={0};
     char txpower_str[64] = {0};
-    int txpower = 0;
-    int maximum_tx = 0;
     int phyId = 0;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
     if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
-    snprintf(cmd, sizeof(cmd),  "hostapd_cli -i %s status | grep max_txpower | cut -d '=' -f2 | tr -d '\n'", interface_name);
-    _syscmd(cmd, buf, sizeof(buf));
-    maximum_tx = strtol(buf, NULL, 10);
 
     // Get the Tx power supported list and check that is the input in the list
     snprintf(txpower_str, sizeof(txpower_str), "%lu", TransmitPower);
@@ -3200,10 +3234,12 @@ INT wifi_setRadioTransmitPower(INT radioIndex, ULONG TransmitPower)	//RDKB
         }
         support = strtok(NULL, ",");
     }
-    txpower = TransmitPower*maximum_tx/100;
+
     phyId = radio_index_to_phy(radioIndex);
-    snprintf(cmd, sizeof(cmd),  "iw phy phy%d set txpower fixed %d00", phyId, txpower);
+    snprintf(cmd, sizeof(cmd),  "echo %lu > /sys/kernel/debug/ieee80211/phy%d/mt76/txpower_level",
+                                TransmitPower, phyId);
     _syscmd(cmd, buf, sizeof(buf));
+
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
     return RETURN_OK;
