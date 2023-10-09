@@ -7460,80 +7460,132 @@ INT wifi_setRadioSTBCEnable(INT radioIndex, BOOL STBC_Enable)
 	return RETURN_OK;
 }
 
+int mtk_get_ap_amsdu_callback(struct nl_msg *msg, void *data) {
+    struct nlattr *tb[NL80211_ATTR_MAX + 1];
+    struct nlattr *vndr_tb[MTK_NL80211_VENDOR_AP_BSS_ATTR_MAX + 1];
+    struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+    unsigned char status;
+    unsigned char *out_status = data;
+    int err = 0;
+
+    err = nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+              genlmsg_attrlen(gnlh, 0), NULL);
+    if (err < 0){
+        wifi_debug(DEBUG_ERROR, "get NL80211_ATTR_MAX fails\n");
+        return err;
+    }
+
+    if (tb[NL80211_ATTR_VENDOR_DATA]) {
+        err = nla_parse_nested(vndr_tb, MTK_NL80211_VENDOR_AP_BSS_ATTR_MAX,
+            tb[NL80211_ATTR_VENDOR_DATA], NULL);
+        if (err < 0){
+            wifi_debug(DEBUG_ERROR, "get MTK_NL80211_VENDOR_AP_BA_ATTR_MAX fails\n");
+            return err;
+        }
+
+        if (vndr_tb[MTK_NL80211_VENDOR_ATTR_AP_AMSDU_EN]) {
+            status = nla_get_u8(vndr_tb[MTK_NL80211_VENDOR_ATTR_AP_AMSDU_EN]);
+            if (status == 0) {
+                wifi_debug(DEBUG_INFO, "disabled\n");
+            } else {
+                wifi_debug(DEBUG_INFO, "enabled\n");
+            }
+            *out_status = status;
+        }
+    }
+    return 0;
+}
+
 // outputs A-MSDU enable status, 0 == not enabled, 1 == enabled
 INT wifi_getRadioAMSDUEnable(INT radioIndex, BOOL *output_bool)
 {
-	char dat_file[128] = {0};
-	wifi_band band;
-	char amdus_buff[8] = {'\0'};
-	int res;
+	char inf_name[IF_NAME_SIZE] = {0};
+	unsigned int if_idx = 0;
+	int ret = -1;
+	struct unl unl_ins;
+	struct nl_msg *msg	= NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
 
-	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+	if (wifi_GetInterfaceName(radioIndex, inf_name) != RETURN_OK)
+		return RETURN_ERR;
+	if_idx = if_nametoindex(inf_name);
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_AP_BSS;
+	param.if_type = NL80211_ATTR_IFINDEX;
+	param.if_idx = if_idx;
 
-	band = wifi_index_to_band(radioIndex);
-	if (band == band_invalid) {
-		printf("%s:Band Error\n", __func__);
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
 		return RETURN_ERR;
 	}
-	res = snprintf(dat_file, sizeof(dat_file), "%s%d.dat", LOGAN_DAT_FILE, band);
-	if (os_snprintf_error(sizeof(dat_file), res)) {
-		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-		return RETURN_ERR;
+	/*add mtk vendor cmd data*/
+	if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_AP_AMSDU_EN, 0xf)) {
+		wifi_debug(DEBUG_ERROR, "Nla put vendor_data_attr(%d) attribute error\n", MTK_NL80211_VENDOR_ATTR_AP_AMSDU_EN);
+		nlmsg_free(msg);
+		goto err;
 	}
 
-	wifi_datfileRead(dat_file, "HT_AMSDU", amdus_buff, sizeof(amdus_buff));
-	if (strncmp(amdus_buff, "1", 1) == 0)
-		*output_bool = TRUE;
-	else
-		*output_bool = FALSE;
-
-	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
-
+	/*send mtk nl80211 vendor msg*/
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, mtk_get_ap_amsdu_callback, output_bool);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		goto err;
+	}
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_INFO,"send cmd success, get output_bool:%d\n", *output_bool);
 	return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR,"send cmd fails\n");
+	return RETURN_ERR;
 }
 
 // enables A-MSDU in the hardware, 0 == not enabled, 1 == enabled
 INT wifi_setRadioAMSDUEnable(INT radioIndex, BOOL amsduEnable)
 {
-	char dat_file[128] = {0};
-	BOOL enable;
-	wifi_band band;
-	char amdus_buff[8] = {'\0'};
-	struct params params = {0};
-	int res;
+	char inf_name[IF_NAME_SIZE] = {0};
+	unsigned int if_idx = 0;
+	struct unl unl_ins;
+	struct nl_msg *msg	= NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+	int ret = -1;
 
-	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-
-	band = wifi_index_to_band(radioIndex);
-	if (band == band_invalid) {
-		printf("%s:Band Error\n", __func__);
+	if (wifi_GetInterfaceName(radioIndex, inf_name) != RETURN_OK)
+		return RETURN_ERR;
+	if_idx = if_nametoindex(inf_name);
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_AP_BSS;
+	param.if_type = NL80211_ATTR_IFINDEX;
+	param.if_idx = if_idx;
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
 		return RETURN_ERR;
 	}
-	res = snprintf(dat_file, sizeof(dat_file), "%s%d.dat", LOGAN_DAT_FILE, band);
-	if (os_snprintf_error(sizeof(dat_file), res)) {
-		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-		return RETURN_ERR;
+	/*add mtk vendor cmd data*/
+	if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_AP_AMSDU_EN, amsduEnable)) {
+		wifi_debug(DEBUG_ERROR, "Nla put vendor_data_attr(%d) attribute error\n", MTK_NL80211_VENDOR_ATTR_AP_AMSDU_EN);
+		nlmsg_free(msg);
+		goto err;
 	}
 
-	wifi_datfileRead(dat_file, "HT_AMSDU", amdus_buff, sizeof(amdus_buff));
-	if (strncmp(amdus_buff, "1", 1) == 0)
-		enable = TRUE;
-	else
-		enable = FALSE;
-	if (amsduEnable == enable)
-		return RETURN_OK;
-
-	params.name = "HT_AMSDU";
-	if (amsduEnable)
-		params.value = "1";
-	else
-		params.value = "0";
-	wifi_datfileWrite(dat_file, &params, 1);
-	wifi_reloadAp(radioIndex);
-
-	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
-
+	/*send mtk nl80211 vendor msg*/
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		goto err;
+	}
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
 	return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR,"send cmd fails\n");
+	return RETURN_ERR;
 }
 
 //P2  // outputs the number of Tx streams
@@ -14172,56 +14224,134 @@ INT wifi_getSSIDTrafficStats2(INT ssidIndex,wifi_ssidTrafficStats2_t *output_str
 	return RETURN_OK;
 }
 
+int mtk_get_ap_isolation_callback(struct nl_msg *msg, void *data) {
+    struct nlattr *tb[NL80211_ATTR_MAX + 1];
+    struct nlattr *vndr_tb[MTK_NL80211_VENDOR_AP_BSS_ATTR_MAX + 1];
+    struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+    unsigned char status;
+    unsigned char *out_status = data;
+    int err = 0;
+
+    err = nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+              genlmsg_attrlen(gnlh, 0), NULL);
+    if (err < 0){
+        wifi_debug(DEBUG_ERROR, "get NL80211_ATTR_MAX fails\n");
+        return err;
+    }
+
+    if (tb[NL80211_ATTR_VENDOR_DATA]) {
+        err = nla_parse_nested(vndr_tb, MTK_NL80211_VENDOR_AP_BSS_ATTR_MAX,
+            tb[NL80211_ATTR_VENDOR_DATA], NULL);
+        if (err < 0){
+            wifi_debug(DEBUG_ERROR, "get MTK_NL80211_VENDOR_AP_BA_ATTR_MAX fails\n");
+            return err;
+        }
+
+        if (vndr_tb[MTK_NL80211_VENDOR_ATTR_AP_ISOLATION]) {
+            status = nla_get_u8(vndr_tb[MTK_NL80211_VENDOR_ATTR_AP_ISOLATION]);
+            if (status == 0) {
+                wifi_debug(DEBUG_INFO, "disabled\n");
+            } else {
+                wifi_debug(DEBUG_INFO, "enabled\n");
+            }
+            *out_status = status;
+        }
+    }
+    return 0;
+
+}
+
 //Enables or disables device isolation. A value of true means that the devices connected to the Access Point are isolated from all other devices within the home network (as is typically the case for a Wireless Hotspot).
 INT wifi_getApIsolationEnable(INT apIndex, BOOL *output)
 {
-	char output_val[16]={'\0'};
-	char config_file[MAX_BUF_SIZE] = {0};
-	int res;
+    char inf_name[IF_NAME_SIZE] = {0};
+    unsigned int if_idx = 0;
+    int ret = -1;
+    struct unl unl_ins;
+    struct nl_msg *msg  = NULL;
+    struct nlattr * msg_data = NULL;
+    struct mtk_nl80211_param param;
 
-	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-	if (!output)
-		return RETURN_ERR;
+    if (wifi_GetInterfaceName(apIndex, inf_name) != RETURN_OK)
+        return RETURN_ERR;
+    if_idx = if_nametoindex(inf_name);
 
-	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, apIndex);
-	if (os_snprintf_error(sizeof(config_file), res)) {
-		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-		return RETURN_ERR;
-	}
-	wifi_hostapdRead(config_file, "ap_isolate", output_val, sizeof(output_val));
+    /*init mtk nl80211 vendor cmd*/
+    param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_AP_BSS;
+    param.if_type = NL80211_ATTR_IFINDEX;
+    param.if_idx = if_idx;
 
-	if( strcmp(output_val,"1") == 0 )
-		*output = TRUE;
-	else
-		*output = FALSE;
-	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+    if (ret) {
+        wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+        return RETURN_ERR;
+    }
+    /*add mtk vendor cmd data*/
+    if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_AP_ISOLATION, 0xf)) {
+        wifi_debug(DEBUG_ERROR, "Nla put vendor_data_attr(%d) attribute error\n", MTK_NL80211_VENDOR_ATTR_AP_AMSDU_EN);
+        nlmsg_free(msg);
+        goto err;
+    }
 
-	return RETURN_OK;
+    /*send mtk nl80211 vendor msg*/
+    ret = mtk_nl80211_send(&unl_ins, msg, msg_data, mtk_get_ap_isolation_callback, output);
+    if (ret) {
+        wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+        goto err;
+    }
+    /*deinit mtk nl80211 vendor msg*/
+    mtk_nl80211_deint(&unl_ins);
+    wifi_debug(DEBUG_INFO,"send cmd success, get output_bool:%d\n", *output);
+    return RETURN_OK;
+err:
+    mtk_nl80211_deint(&unl_ins);
+    wifi_debug(DEBUG_ERROR,"send cmd fails\n");
+    return RETURN_ERR;
 }
 
 INT wifi_setApIsolationEnable(INT apIndex, BOOL enable)
 {
-	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-	char string[MAX_BUF_SIZE]={'\0'};
-	char config_file[MAX_BUF_SIZE] = {0};
-	struct params params;
-	int res;
+    char inf_name[IF_NAME_SIZE] = {0};
+    unsigned int if_idx = 0;
+    int ret = -1;
+    struct unl unl_ins;
+    struct nl_msg *msg  = NULL;
+    struct nlattr * msg_data = NULL;
+    struct mtk_nl80211_param nl_param;
 
-	string[0] = enable == TRUE ? '1' : '0';
+    if (wifi_GetInterfaceName(apIndex, inf_name) != RETURN_OK)
+        return RETURN_ERR;
+    if_idx = if_nametoindex(inf_name);
 
-	params.name = "ap_isolate";
-	params.value = string;
+    nl_param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_AP_BSS;
+    nl_param.if_type = NL80211_ATTR_IFINDEX;
+    nl_param.if_idx = if_idx;
+    /*init mtk nl80211 vendor cmd*/
+    ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &nl_param);
+    if (ret) {
+        wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+        return RETURN_ERR;
+    }
+    /*add mtk vendor cmd data*/
+    if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_AP_ISOLATION, enable)) {
+        wifi_debug(DEBUG_ERROR, "Nla put vendor_data_attr(%d) attribute error\n", MTK_NL80211_VENDOR_ATTR_AP_ISOLATION);
+        nlmsg_free(msg);
+        goto err;
+    }
 
-	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, apIndex);
-	if (os_snprintf_error(sizeof(config_file), res)) {
-		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-		return RETURN_ERR;
-	}
-
-	wifi_hostapdWrite(config_file,&params,1);
-	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
-
-	return RETURN_OK;
+    /*send mtk nl80211 vendor msg*/
+    ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
+    if (ret) {
+        wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+        goto err;
+    }
+    /*deinit mtk nl80211 vendor msg*/
+    mtk_nl80211_deint(&unl_ins);
+    return RETURN_OK;
+err:
+    mtk_nl80211_deint(&unl_ins);
+    wifi_debug(DEBUG_ERROR,"send cmd fails\n");
+    return RETURN_ERR;
 }
 
 INT wifi_getApManagementFramePowerControl(INT apIndex, INT *output_dBm)
@@ -16818,6 +16948,26 @@ int main(int argc,char **argv)
 		wifi_getRadioExtChannel(index,buf);
 		printf("extchannel is %s \n",buf);
 		return 0;
+	}
+	if (strstr(argv[1], "wifi_setRadioAMSDUEnable")!=NULL) {
+		unsigned char enable = atoi(argv[3]);
+		BOOL out_put;
+		if (enable)
+			wifi_setRadioAMSDUEnable(index, TRUE);
+		else
+			wifi_setRadioAMSDUEnable(index, FALSE);
+		wifi_getRadioAMSDUEnable(index, &out_put);
+		printf("amsdu = %d\n", out_put);
+	}
+	if (strstr(argv[1], "wifi_setApIsolationEnable")!=NULL) {
+		unsigned char enable = atoi(argv[3]);
+		BOOL out_put;
+		if (enable)
+			wifi_setApIsolationEnable(index, TRUE);
+		else
+			wifi_setApIsolationEnable(index, FALSE);
+		wifi_getApIsolationEnable(index, &out_put);
+		printf("isolation input=%d, output=%d\n", enable, out_put);
 	}
 	if(strstr(argv[1], "wifi_setRadioMode")!=NULL)
 	{
