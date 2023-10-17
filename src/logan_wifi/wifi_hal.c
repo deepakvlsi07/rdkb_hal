@@ -16971,14 +16971,26 @@ int main(int argc,char **argv)
 	}
 	if(strstr(argv[1], "wifi_setRadioMode")!=NULL)
 	{
-		UINT pureMode = atoi(argv[3]);
+		UINT pureMode;
+		if(argc <= 3)
+		{
+			wifi_debug(DEBUG_ERROR, "Insufficient arguments \n");
+			exit(-1);
+		}
 
+		pureMode = atoi(argv[3]);
 		wifi_setRadioMode(index, NULL, pureMode);
 		printf("Ap SET Radio mode 0x%x\n", pureMode);
 		return 0;
 	}
 	if (strstr(argv[1], "wifi_setRadioAutoBlockAckEnable") != NULL) {
-		unsigned char enable = atoi(argv[3]);
+		unsigned char enable;
+		if(argc <= 3)
+		{
+			wifi_debug(DEBUG_ERROR, "Insufficient arguments \n");
+			exit(-1);
+		}
+		enable = atoi(argv[3]);
 		if (enable)
 			wifi_setRadioAutoBlockAckEnable(index, TRUE);
 		else
@@ -17001,26 +17013,40 @@ int main(int argc,char **argv)
 	}
 	if(strstr(argv[1], "wifi_setRadioTransmitPower")!=NULL)
 	{
-		ULONG TransmitPower = atoi(argv[3]);
-
+		ULONG TransmitPower;
+		if(argc <= 3)
+		{
+			wifi_debug(DEBUG_ERROR, "Insufficient arguments \n");
+			exit(-1);
+		}
+		TransmitPower = atoi(argv[3]);
 		wifi_setRadioTransmitPower(index, TransmitPower);
 		printf("Ap SET TransmitPower %lu\n", TransmitPower);
 		return 0;
 	}
 	if(strstr(argv[1], "wifi_setApManagementFramePowerControl")!=NULL)
 	{
-		INT TransmitPower = atoi(argv[3]);
-
+		INT TransmitPower;
+		if(argc <= 3)
+		{
+			wifi_debug(DEBUG_ERROR, "Insufficient arguments \n");
+			exit(-1);
+		}
+		TransmitPower = atoi(argv[3]);
 		wifi_setApManagementFramePowerControl(index, TransmitPower);
 		printf("Ap SET Mgnt TransmitPower %d\n", TransmitPower);
 		return 0;
 	}
 	if(strstr(argv[1], "wifi_setRadioBW")!=NULL)
 	{
-		CHAR *bandwith = argv[3];
+		if(argc <= 3)
+		{
+			wifi_debug(DEBUG_ERROR, "Insufficient arguments \n");
+			exit(-1);
+		}
 
-		wifi_setRadioOperatingChannelBandwidth(index, bandwith);
-		printf("Ap SET bw %s\n", bandwith);
+		wifi_setRadioOperatingChannelBandwidth(index, argv[3]);
+		printf("Ap SET bw %s\n", argv[3]);
 		return 0;
 	}
 	if(strstr(argv[1], "wifi_factoryResetRadio")!=NULL)
@@ -17116,7 +17142,7 @@ int main(int argc,char **argv)
 		wifi_debug(DEBUG_NOTICE, "Ap set IGMP Snooping Enable: %d\n", enable);
 		return 0;
 	}
-	if (strncmp(argv[1], "wifi_setRadioDCSEnable(", strlen(argv[1])) == 0) {
+	if (strncmp(argv[1], "wifi_setRadioDCSEnable", strlen(argv[1])) == 0) {
 		int enable = 0;
 		if(argc <= 3 )
 		{
@@ -17128,30 +17154,38 @@ int main(int argc,char **argv)
 		wifi_debug(DEBUG_NOTICE, "Ap set DCS Enable: %d\n", enable);
 		return 0;
 	}
-	if (strncmp(argv[1], "wifi_getRadioAutoChannelRefreshPeriod(", strlen(argv[1])) == 0) {
+	if (strncmp(argv[1], "wifi_getRadioAutoChannelRefreshPeriod", strlen(argv[1])) == 0) {
 		ULONG period = 0;
 
 		wifi_getRadioAutoChannelRefreshPeriod(index, &period);
 		wifi_debug(DEBUG_NOTICE, "Get RefreshPeriod: %ld\n", period);
 		return 0;
 	}
-	if (strncmp(argv[1], "wifi_setRadioDfsRefreshPeriod(", strlen(argv[1])) == 0) {
+	if (strncmp(argv[1], "wifi_setRadioDfsRefreshPeriod", strlen(argv[1])) == 0) {
 		ULONG period = 0;
-
+		if(argc <= 3)
+		{
+			wifi_debug(DEBUG_ERROR, "Insufficient arguments \n");
+			exit(-1);
+		}
 		period = (ULONG)atoi(argv[3]);
 		wifi_setRadioDfsRefreshPeriod(index, period);
 		wifi_debug(DEBUG_NOTICE, "Set RefreshPeriod: %ld\n", period);
 		return 0;
 	}
-	if (strncmp(argv[1], "wifi_setRadioDCSChannelPool(", strlen(argv[1])) == 0) {
+	if (strncmp(argv[1], "wifi_setRadioDCSChannelPool", strlen(argv[1])) == 0) {
 		char pool[256] = {'\0'};
-
+		if(argc <= 3)
+		{
+			wifi_debug(DEBUG_ERROR, "Insufficient arguments \n");
+			exit(-1);
+		}
 		strncpy(pool, argv[3], strlen(argv[3]));
 		wifi_setRadioDCSChannelPool(index, pool);
 		wifi_debug(DEBUG_NOTICE, "Set DCSChannelPool: %s\n", pool);
 		return 0;
 	}
-	if (strncmp(argv[1], "wifi_getRadioDCSChannelPool(", strlen(argv[1])) == 0) {
+	if (strncmp(argv[1], "wifi_getRadioDCSChannelPool", strlen(argv[1])) == 0) {
 		char pool[256] = {'\0'};
 
 		wifi_getRadioDCSChannelPool(index, pool);
@@ -17278,7 +17312,13 @@ int main(int argc,char **argv)
 		printf("%s %d: %d, returns %d\n", argv[1], index, enable, ret);
 	}
 	else if(strstr(argv[1], "setApEnable")!=NULL) {
-		BOOL enable = atoi(argv[3]);
+		BOOL enable;
+		if(argc <= 3)
+		{
+			wifi_debug(DEBUG_ERROR, "Insufficient arguments \n");
+			exit(-1);
+		}
+		enable = atoi(argv[3]);
 		ret=wifi_setApEnable(index, enable);
 		printf("%s %d: %d, returns %d\n", argv[1], index, enable, ret);
 	}
@@ -17547,12 +17587,23 @@ int main(int argc,char **argv)
 	}
 	if(strstr(argv[1],"wifi_enableGreylistAccessControl")!=NULL)
 	{
-		int enable = atoi(argv[3]);
+		int enable;
+		if(argc <= 3)
+		{
+			wifi_debug(DEBUG_ERROR, "Insufficient arguments \n");
+			exit(-1);
+		}
+		enable = atoi(argv[3]);
 		wifi_enableGreylistAccessControl(enable == 0 ? FALSE : TRUE);
 		printf("wifi_enableGreylistAccessControl enable=%d\n", enable);
 	}
 	if(strstr(argv[1],"wifi_setApBridgeInfo")!=NULL)
 	{
+		if(argc <= 5)
+		{
+			wifi_debug(DEBUG_ERROR, "Insufficient arguments \n");
+			exit(-1);
+		}
 		wifi_setApBridgeInfo(0, argv[3], argv[4], argv[5]);
 		printf("wifi_setApBridgeInfo br_name = %s, ip = %s, subset = %s\n", argv[3], argv[4], argv[5]);
 	}
@@ -17604,7 +17655,13 @@ int main(int argc,char **argv)
 	}
 	if (strstr(argv[1],"setGF")!=NULL)
 	{
-		BOOL enable = atoi(argv[3]);
+		BOOL enable;
+		if(argc <= 3)
+		{
+			wifi_debug(DEBUG_ERROR, "Insufficient arguments \n");
+			exit(-1);
+		}
+		enable = atoi(argv[3]);
 		if((ret=wifi_setRadio11nGreenfieldEnable(index, enable))==RETURN_OK)
 			printf("wifi_setRadio11nGreenfieldEnable success\n");
 		else
@@ -17612,7 +17669,13 @@ int main(int argc,char **argv)
 	}
 	if (strstr(argv[1],"setVID")!=NULL)
 	{
-		INT vid = atoi(argv[3]);
+		INT vid;
+		if(argc <= 3)
+		{
+			wifi_debug(DEBUG_ERROR, "Insufficient arguments \n");
+			exit(-1);
+		}
+		vid = atoi(argv[3]);
 		if((ret=wifi_setApVlanID(index, vid))==RETURN_OK)
 			printf("wifi_setApVlanID success.\n");
 		else
