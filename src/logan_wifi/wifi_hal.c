@@ -2480,6 +2480,152 @@ INT wifi_getRadioEnable(INT radioIndex, BOOL *output_bool)	  //RDKB
 typedef long time_t;
 static time_t radio_up_time[MAX_NUM_RADIOS];
 
+enum mwctl_chan_width {
+	MWCTL_CHAN_WIDTH_20,
+	MWCTL_CHAN_WIDTH_40,
+	MWCTL_CHAN_WIDTH_80,
+	MWCTL_CHAN_WIDTH_160,
+	MWCTL_CHAN_WIDTH_320,
+};
+
+struct bw_option  {
+	unsigned int bandwith;
+	enum mwctl_chan_width mode;
+};
+
+struct bw_option bw_opt[] = {
+	{20, MWCTL_CHAN_WIDTH_20},
+	{40, MWCTL_CHAN_WIDTH_40},
+	{80, MWCTL_CHAN_WIDTH_80},
+	{160, MWCTL_CHAN_WIDTH_160},
+	{320, MWCTL_CHAN_WIDTH_320},
+};
+
+INT wifi_setChannel_netlink(INT radioIndex, ULONG* channel, UINT *bandwidth, UCHAR *ext_ch, UCHAR *ht_coex)
+{
+	int ret;
+	int i;
+	struct unl unl_ins;
+	struct nl_msg *msg  = NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+	bool b_match = FALSE;
+
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_CHANNEL;
+	param.if_type = NL80211_ATTR_WIPHY;
+	param.if_idx = radio_index_to_phy(radioIndex);
+
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+
+	/*add mtk vendor cmd data*/
+	if (channel != NULL)
+		if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_CHAN_SET_NUM, *channel)) {
+			wifi_debug(DEBUG_ERROR, "Nla put CHAN_SET_NUM attribute error\n");
+			nlmsg_free(msg);
+			goto err;
+		}
+
+	if (bandwidth != NULL) {
+		for (i = 0; i < (sizeof(bw_opt)/sizeof(bw_opt[0])); i++) {
+			if (bw_opt[i].bandwith == *bandwidth) {
+				b_match = true;
+				if (nla_put_u32(msg, MTK_NL80211_VENDOR_ATTR_CHAN_SET_BW, bw_opt[i].mode)) {
+					wifi_debug(DEBUG_ERROR, "Nla put CHAN_SET_BW attribute error\n");
+					nlmsg_free(msg);
+					goto err;
+				}
+				break;
+			}
+		}
+
+		if (!b_match) {
+			wifi_debug(DEBUG_ERROR, "Cannot find bandwith error\n");
+			nlmsg_free(msg);
+			goto err;
+		}
+	}
+
+	if (ext_ch != NULL)
+		if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_CHAN_SET_HT_EXTCHAN, *ext_ch)) {
+			wifi_debug(DEBUG_ERROR, "Nla put CHAN_SET_HT_EXTCHAN attribute error\n");
+			nlmsg_free(msg);
+			goto err;
+		}
+
+	if (ht_coex != NULL)
+		if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_CHAN_SET_HT_COEX, *ht_coex)) {
+			wifi_debug(DEBUG_ERROR, "Nla put CHAN_SET_HT_COEX attribute error\n");
+			nlmsg_free(msg);
+			goto err;
+		}
+
+	/*send mtk nl80211 vendor msg*/
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		goto err;
+	}
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_NOTICE, "set cmd success.\n");
+	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
+	return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR, "set cmd fails.\n");
+	return RETURN_ERR;
+}
+
+INT wifi_set80211h_netlink(INT radioIndex, unsigned char enable)
+{
+	int ret;
+	struct unl unl_ins;
+	struct nl_msg *msg  = NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_AP_RADIO;
+	param.if_type = NL80211_ATTR_WIPHY;
+	param.if_idx = radio_index_to_phy(radioIndex);
+
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+
+	/*add mtk vendor cmd data*/
+	if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_AP_IEEE80211H_INFO, enable)) {
+		wifi_debug(DEBUG_ERROR, "Nla put IEEE80211H_INFO attribute error\n");
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	/*send mtk nl80211 vendor msg*/
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		goto err;
+	}
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_NOTICE, "set cmd success.\n");
+	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
+	return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR, "set cmd fails.\n");
+	return RETURN_ERR;
+}
+
 INT wifi_setRadioEnable(INT radioIndex, BOOL enable)
 {
 	char interface_name[16] = {0};
@@ -4119,6 +4265,7 @@ INT wifi_setRadioChannel(INT radioIndex, ULONG channel)	//RDKB	//AP only
 	wifi_band band = band_invalid;
 	bool acs_channel = false;
 	int res;
+	int ret = 0;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -4161,8 +4308,8 @@ INT wifi_setRadioChannel(INT radioIndex, ULONG channel)	//RDKB	//AP only
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
 	}
-
 	wifi_datfileWrite(config_file_dat, &dat, 1);
+
 	if (acs_channel == true) {
 		acs.name = "AutoChannelSelect";
 		acs.value = "3";
@@ -4171,9 +4318,12 @@ INT wifi_setRadioChannel(INT radioIndex, ULONG channel)	//RDKB	//AP only
 		acs.value = "0";
 	}
 	wifi_datfileWrite(config_file_dat, &acs, 1);
-	if (multiple_set == FALSE) {
-		wifi_setRadioEnable(radioIndex, FALSE);
-		wifi_setRadioEnable(radioIndex, TRUE);
+
+	/*do channel quick setting*/
+	if (channel != 0) {
+		ret = wifi_setChannel_netlink(radioIndex, &channel, NULL, NULL, NULL);
+		if (ret != RETURN_OK)
+			wifi_debug(DEBUG_ERROR, "channel quick setting fail\n");
 	}
 
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n", __func__, __LINE__);
@@ -4934,94 +5084,6 @@ INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) 
 	return RETURN_OK;
 }
 
-enum mwctl_chan_width {
-	MWCTL_CHAN_WIDTH_20,
-	MWCTL_CHAN_WIDTH_40,
-	MWCTL_CHAN_WIDTH_80,
-	MWCTL_CHAN_WIDTH_160,
-	MWCTL_CHAN_WIDTH_320,
-};
-
-struct bw_option  {
-	unsigned int bandwith;
-	enum mwctl_chan_width mode;
-};
-
-struct bw_option bw_opt[] = {
-	{20, MWCTL_CHAN_WIDTH_20},
-	{40, MWCTL_CHAN_WIDTH_40},
-	{80, MWCTL_CHAN_WIDTH_80},
-	{160, MWCTL_CHAN_WIDTH_160},
-	{320, MWCTL_CHAN_WIDTH_320},
-};
-
-INT wifi_setChannel_netlink(INT radioIndex, UINT* channel, UINT *bandwidth)
-{
-	int ret = -1;
-	int i;
-	struct unl unl_ins;
-	struct nl_msg *msg  = NULL;
-	struct nlattr * msg_data = NULL;
-	struct mtk_nl80211_param param;
-	bool b_match = FALSE;
-
-	/*init mtk nl80211 vendor cmd*/
-	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_CHANNEL;
-	param.if_type = NL80211_ATTR_WIPHY;
-	param.if_idx = radio_index_to_phy(radioIndex);
-
-	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
-	if (ret) {
-		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
-		return RETURN_ERR;
-	}
-
-	/*add mtk vendor cmd data*/
-	if (channel != NULL)
-		if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_CHAN_SET_NUM, *channel)) {
-			wifi_debug(DEBUG_ERROR, "Nla put CHAN_SET_NUM attribute error\n");
-			nlmsg_free(msg);
-			goto err;
-		}
-
-	if (bandwidth != NULL) {
-		for (i = 0; i < (sizeof(bw_opt)/sizeof(bw_opt[0])); i++) {
-			if (bw_opt[i].bandwith == *bandwidth) {
-				b_match = true;
-				if (nla_put_u32(msg, MTK_NL80211_VENDOR_ATTR_CHAN_SET_BW, bw_opt[i].mode)) {
-					wifi_debug(DEBUG_ERROR, "Nla put CHAN_SET_BW attribute error\n");
-					nlmsg_free(msg);
-					goto err;
-				}
-				break;
-			}
-		}
-
-		if (!b_match) {
-			wifi_debug(DEBUG_ERROR, "Cannot find bandwith error\n");
-			nlmsg_free(msg);
-			goto err;
-		}
-	}
-
-	/*send mtk nl80211 vendor msg*/
-	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
-	if (ret) {
-		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
-		goto err;
-	}
-	/*deinit mtk nl80211 vendor msg*/
-	mtk_nl80211_deint(&unl_ins);
-	wifi_debug(DEBUG_NOTICE, "set cmd success.\n");
-	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
-
-	return RETURN_OK;
-err:
-	mtk_nl80211_deint(&unl_ins);
-	wifi_debug(DEBUG_ERROR, "set cmd fails.\n");
-	return RETURN_ERR;
-}
-
 //Set the Operating Channel Bandwidth.
 INT wifi_setRadioOperatingChannelBandwidth(INT radioIndex, CHAR *bandwidth) //Tr181	//AP only
 {
@@ -5090,11 +5152,13 @@ INT wifi_setRadioOperatingChannelBandwidth(INT radioIndex, CHAR *bandwidth) //Tr
 	dat[2].name = "EHT_ApBw";
 	dat[2].value = eht_value;
 	wifi_datfileWrite(config_file, dat, 3);
-	ret = wifi_setChannel_netlink(radioIndex, NULL, &bw);
+
+	/*do bw quick setting*/
+	ret = wifi_setChannel_netlink(radioIndex, NULL, &bw, NULL, NULL);
 	if (ret != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "bw quick setting fail\n");
 		if (fprintf(stderr, "%s: wifi_setChannel return error.\n", __func__) < 0)
 			wifi_debug(DEBUG_ERROR, "Unexpected fprintf fail\n");
-		return RETURN_ERR;
 	}
 
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
@@ -5203,8 +5267,8 @@ INT wifi_setRadioExtChannel(INT radioIndex, CHAR *string) //Tr181	//AP only
 	char config_file[64] = {0};
 	char config_dat_file[64] = {0};
 	char ext_channel[64] = {0};
+	unsigned char ext_ch;
 	char buf[128] = {0};
-
 	int max_radio_num =0, ret = 0;
 	long int bandwidth = 0;
 	unsigned long channel = 0;
@@ -5256,13 +5320,15 @@ INT wifi_setRadioExtChannel(INT radioIndex, CHAR *string) //Tr181	//AP only
 		if ((band == band_2_4 && channel > 9) || (band == band_5 && ret == -1))
 			return RETURN_OK;
 		memcpy(ext_channel, "1", strlen("1"));
+		ext_ch = 1;
 	} else if(NULL!= strstr(string,"Below")) {
 		if ((band == band_2_4 && channel < 5) || (band == band_5 && ret == -1))
 			return RETURN_OK;
 		memcpy(ext_channel, "0", strlen("0"));
+		ext_ch = 0;
 	} else {
 		printf("%s: invalid EXT_CHA:%s\n", __func__, string);
-	return RETURN_ERR;
+		return RETURN_ERR;
 	}
 	params.name = "HT_EXTCHA";
 	params.value = ext_channel;
@@ -5288,7 +5354,13 @@ INT wifi_setRadioExtChannel(INT radioIndex, CHAR *string) //Tr181	//AP only
 		wifi_setRadioSTBCEnable(radioIndex+(max_radio_num*i), stbcEnable);
 	}
 
-	//Set to wifi config only. Wait for wifi reset or wifi_pushRadioChannel to apply.
+	/*do ext_ch quicking setting*/
+	if (ext_ch != -1) {
+		ret = wifi_setChannel_netlink(radioIndex, NULL, NULL, &ext_ch, NULL);
+		if (ret != RETURN_OK)
+			wifi_debug(DEBUG_ERROR, "ext_ch quicking setting fail\n");
+	}
+
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 	return RETURN_OK;
 }
@@ -5681,13 +5753,17 @@ INT wifi_setRadioIEEE80211hEnabled(INT radioIndex, BOOL enable)  //Tr181
 	char config_dat_file[MAX_BUF_SIZE] = {0};
 	wifi_band band = band_invalid;
 	int res;
+	int ret = -1;
+	unsigned char en_80211h;
 
 	params.name = "ieee80211h";
 
 	if (enable) {
 		params.value = "1";
+		en_80211h = 1;
 	} else {
 		params.value = "0";
+		en_80211h = 0;
 	}
 
 	dat.name = "IEEE80211H";
@@ -5709,6 +5785,12 @@ INT wifi_setRadioIEEE80211hEnabled(INT radioIndex, BOOL enable)  //Tr181
 	wifi_hostapdWrite(config_file, &params, 1);
 	wifi_datfileWrite(config_dat_file, &dat, 1);
 	wifi_hostapdProcessUpdate(radioIndex, &params, 1);
+
+	/*do IEEE80211h quick setting*/
+	ret = wifi_set80211h_netlink(radioIndex, en_80211h);
+	if (ret != RETURN_OK)
+		wifi_debug(DEBUG_ERROR, "IEEE80211h quick setting fail\n");
+
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 	return RETURN_OK;
 }
@@ -7278,8 +7360,14 @@ INT wifi_setRadioObssCoexistenceEnable(INT apIndex, BOOL enable)
 	struct params dat = {0};
 	wifi_band band = band_invalid;
 	int res;
+	unsigned char ht_coex = 0;
+	int ret = 0;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+	if (enable)
+		ht_coex = 1;
+
 	list.name = "ht_coex";
 	res = snprintf(buf, sizeof(buf), "%d", enable);
 	if (os_snprintf_error(sizeof(buf), res)) {
@@ -7309,8 +7397,12 @@ INT wifi_setRadioObssCoexistenceEnable(INT apIndex, BOOL enable)
 	wifi_datfileWrite(config_dat_file, &dat, 1);
 	wifi_hostapdProcessUpdate(apIndex, &list, 1);
 
-	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+	/*do ht_coex quick setting*/
+	ret = wifi_setChannel_netlink(band, NULL, NULL, NULL, &ht_coex);
+	if (ret != RETURN_OK)
+		wifi_debug(DEBUG_ERROR, "ht_coex quick setting fail\n");
 
+	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 	return RETURN_OK;
 }
 
@@ -13351,11 +13443,6 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
 			}
 		}
 		// Only the first AP, other are hanging on the same radio
-		ret = wifi_setChannel_netlink(radioIndex, &channel, NULL);
-		if (ret != RETURN_OK) {
-			wifi_debug(DEBUG_ERROR,"wifi_setChannel return error.\n");
-			return RETURN_ERR;
-		}
 		/* wifi_dbg_printf("execute: '%s'\n", cmd);
 		ret = _syscmd(cmd, buf, sizeof(buf));
 		wifi_reloadAp(radioIndex); */
@@ -17043,7 +17130,7 @@ int main(int argc,char **argv)
 		printf("Ap SET Mgnt TransmitPower %d\n", TransmitPower);
 		return 0;
 	}
-	if(strstr(argv[1], "wifi_setRadioBW")!=NULL)
+	if(strstr(argv[1], "wifi_setRadioBW") != NULL)
 	{
 		if(argc <= 3)
 		{
@@ -17055,6 +17142,84 @@ int main(int argc,char **argv)
 		printf("Ap SET bw %s\n", argv[3]);
 		return 0;
 	}
+
+	if(strstr(argv[1], "wifi_setChannel") != NULL)
+	{
+		UINT channel;
+		if(argc <= 3)
+		{
+			wifi_debug(DEBUG_ERROR, "Insufficient arguments \n");
+			exit(-1);
+		}
+		channel = atoi(argv[3]);
+
+		wifi_setRadioChannel(index, channel);
+		printf("Ap SET channel %d\n", channel);
+		return 0;
+	}
+
+	if(strstr(argv[1], "wifi_setExtCh") != NULL)
+	{
+		if(argc <= 3)
+		{
+			wifi_debug(DEBUG_ERROR, "Insufficient arguments \n");
+			exit(-1);
+		}
+
+		wifi_setRadioExtChannel(index, argv[3]);
+		printf("Ap SET ExtChannel %s\n", argv[3]);
+		return 0;
+	}
+
+	if(strstr(argv[1], "wifi_setHtCoex") != NULL)
+	{
+		UINT ht_coex;
+		BOOL enable = FALSE;
+		if(argc <= 3)
+		{
+			wifi_debug(DEBUG_ERROR, "Insufficient arguments \n");
+			exit(-1);
+		}
+		ht_coex = atoi(argv[3]);
+
+		if (ht_coex == 1)
+			enable = TRUE;
+		wifi_setRadioObssCoexistenceEnable(index, enable);
+		printf("Ap SET ht_coex %d\n", enable);
+		return 0;
+	}
+
+	if(strstr(argv[1], "wifi_setChMode") != NULL)
+	{
+		if(argc <= 3)
+		{
+			wifi_debug(DEBUG_ERROR, "Insufficient arguments \n");
+			exit(-1);
+		}
+
+		wifi_setRadioChannelMode(index, argv[3], FALSE, FALSE, FALSE);
+		printf("Ap SET ChannelMode %s\n", argv[3]);
+		return 0;
+	}
+
+	if(strstr(argv[1], "wifi_set80211h") != NULL)
+	{
+		UINT en_11h;
+		BOOL enable = FALSE;
+		if(argc <= 3)
+		{
+			wifi_debug(DEBUG_ERROR, "Insufficient arguments \n");
+			exit(-1);
+		}
+		en_11h = atoi(argv[3]);
+
+		if (en_11h == 1)
+			enable = TRUE;
+		wifi_setRadioIEEE80211hEnabled(index, enable);
+		printf("Ap SET 80211h %d\n", enable);
+		return 0;
+	}
+
 	if(strstr(argv[1], "wifi_factoryResetRadio")!=NULL)
 	{
 		wifi_factoryResetRadio(index);
