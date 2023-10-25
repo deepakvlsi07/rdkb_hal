@@ -3563,18 +3563,45 @@ INT wifi_halGetIfStatsNull(wifi_radioTrafficStats2_t *output_struct)
     return RETURN_OK;
 }
 
+static ULONG File_ReadValuefromMultiLine(CHAR *file)
+{
+    FILE *fp = NULL;
+    char buf[MAX_BUF_SIZE] = {0};
+	int buf_len = 0;
+	ULONG sum = 0, num = 0;
+
+    WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+    fp = popen(file,"r");
+    if(fp == NULL)
+        return 0;
+
+    while(fgets(buf,MAX_BUF_SIZE,fp) != NULL)
+    {
+	    buf_len = strlen(buf);
+		if(buf_len) {
+			num= strtoul(buf, NULL, 10);
+			sum += num;
+			WIFI_ENTRY_EXIT_DEBUG("%s sum=%ld num=%ld\n", __func__, sum, num);
+			memset(buf, 0, MAX_BUF_SIZE);
+		}
+    }
+
+    pclose(fp);
+    WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
+    return sum;
+}
 
 INT wifi_halGetIfStats(char *ifname, wifi_radioTrafficStats2_t *pStats)
 {
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
-    CHAR buf[MAX_CMD_SIZE] = {0};
-    CHAR Value[MAX_BUF_SIZE] = {0};
+    CHAR buf[MAX_BUF_SIZE] = {0};
     FILE *fp = NULL;
 
     if (ifname == NULL || strlen(ifname) <= 1)
         return RETURN_OK;
 
-    snprintf(buf, sizeof(buf), "ifconfig -a %s > /tmp/Radio_Stats.txt", ifname);
+    snprintf(buf, sizeof(buf), "iw dev %s station dump > /tmp/Radio_Stats.txt", ifname);
     system(buf);
 
     fp = fopen("/tmp/Radio_Stats.txt", "r");
@@ -3585,37 +3612,29 @@ INT wifi_halGetIfStats(char *ifname, wifi_radioTrafficStats2_t *pStats)
     }
     fclose(fp);
 
-    sprintf(buf, "cat /tmp/Radio_Stats.txt | grep 'RX packets' | tr -s ' ' | cut -d ':' -f2 | cut -d ' ' -f1");
-    File_Reading(buf, Value);
-    pStats->radio_PacketsReceived = strtoul(Value, NULL, 10);
+	sprintf(buf, "cat /tmp/Radio_Stats.txt | grep 'rx packets' | tr -s ' ' | cut -d ':' -f2 | cut -d ' ' -f1");
+	pStats->radio_PacketsReceived = File_ReadValuefromMultiLine(buf);
 
-    sprintf(buf, "cat /tmp/Radio_Stats.txt | grep 'TX packets' | tr -s ' ' | cut -d ':' -f2 | cut -d ' ' -f1");
-    File_Reading(buf, Value);
-    pStats->radio_PacketsSent = strtoul(Value, NULL, 10);
+	sprintf(buf, "cat /tmp/Radio_Stats.txt  | grep 'tx packets' | tr -s ' ' | cut -d ':' -f2 | cut -d ' ' -f1");
+	pStats->radio_PacketsSent = File_ReadValuefromMultiLine(buf);
 
-    sprintf(buf, "cat /tmp/Radio_Stats.txt | grep 'RX bytes' | tr -s ' ' | cut -d ':' -f2 | cut -d ' ' -f1");
-    File_Reading(buf, Value);
-    pStats->radio_BytesReceived = strtoul(Value, NULL, 10);
+	sprintf(buf, "cat /tmp/Radio_Stats.txt  | grep 'rx bytes' | tr -s ' ' | cut -d ':' -f2 | cut -d ' ' -f1");
+	pStats->radio_BytesReceived = File_ReadValuefromMultiLine(buf);
 
-    sprintf(buf, "cat /tmp/Radio_Stats.txt | grep 'TX bytes' | tr -s ' ' | cut -d ':' -f3 | cut -d ' ' -f1");
-    File_Reading(buf, Value);
-    pStats->radio_BytesSent = strtoul(Value, NULL, 10);
+	sprintf(buf, "cat /tmp/Radio_Stats.txt  | grep 'tx bytes' | tr -s ' ' | cut -d ':' -f2 | cut -d ' ' -f1");
+	pStats->radio_BytesSent = File_ReadValuefromMultiLine(buf);
 
-    sprintf(buf, "cat /tmp/Radio_Stats.txt | grep 'RX packets' | tr -s ' ' | cut -d ':' -f3 | cut -d ' ' -f1");
-    File_Reading(buf, Value);
-    pStats->radio_ErrorsReceived = strtoul(Value, NULL, 10);
+	sprintf(buf, "cat /tmp/Radio_Stats.txt  | grep 'rx drop misc' | tr -s ' ' | cut -d ':' -f2 | cut -d ' ' -f1");
+	pStats->radio_ErrorsReceived = File_ReadValuefromMultiLine(buf);
 
-    sprintf(buf, "cat /tmp/Radio_Stats.txt | grep 'TX packets' | tr -s ' ' | cut -d ':' -f3 | cut -d ' ' -f1");
-    File_Reading(buf, Value);
-    pStats->radio_ErrorsSent = strtoul(Value, NULL, 10);
+	sprintf(buf, "cat /tmp/Radio_Stats.txt  | grep 'tx failed' | tr -s ' ' | cut -d ':' -f2 | cut -d ' ' -f1");
+	pStats->radio_ErrorsSent = File_ReadValuefromMultiLine(buf);
 
-    sprintf(buf, "cat /tmp/Radio_Stats.txt | grep 'RX packets' | tr -s ' ' | cut -d ':' -f4 | cut -d ' ' -f1");
-    File_Reading(buf, Value);
-    pStats->radio_DiscardPacketsReceived = strtoul(Value, NULL, 10);
+	sprintf(buf, "cat /tmp/Radio_Stats.txt  | grep 'rx drop misc' | tr -s ' ' | cut -d ':' -f2 | cut -d ' ' -f1");
+	pStats->radio_DiscardPacketsReceived = File_ReadValuefromMultiLine(buf);
 
-    sprintf(buf, "cat /tmp/Radio_Stats.txt | grep 'TX packets' | tr -s ' ' | cut -d ':' -f4 | cut -d ' ' -f1");
-    File_Reading(buf, Value);
-    pStats->radio_DiscardPacketsSent = strtoul(Value, NULL, 10);
+	sprintf(buf, "cat /tmp/Radio_Stats.txt  | grep 'tx failed' | tr -s ' ' | cut -d ':' -f2 | cut -d ' ' -f1");
+	pStats->radio_DiscardPacketsSent = File_ReadValuefromMultiLine(buf);
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n", __func__, __LINE__);
     return RETURN_OK;
@@ -3674,29 +3693,35 @@ INT wifi_getRadioTrafficStats2(INT radioIndex, wifi_radioTrafficStats2_t *output
     CHAR interface_name[64] = {0};
     BOOL iface_status = FALSE;
     wifi_radioTrafficStats2_t radioTrafficStats = {0};
+	INT max_radio_num = 0, apIndex = 0;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
     if (NULL == output_struct)
         return RETURN_ERR;
 
-    if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
-        return RETURN_ERR;
+    wifi_getMaxRadioNumber(&max_radio_num);
 
-    wifi_getApEnable(radioIndex, &iface_status);
+	memset(output_struct, 0, sizeof(wifi_radioTrafficStats2_t));
 
-    if (iface_status == TRUE)
-        wifi_halGetIfStats(interface_name, &radioTrafficStats);
-    else
-        wifi_halGetIfStatsNull(&radioTrafficStats);     // just set some transmission statistic value to 0
+	for(apIndex = radioIndex; apIndex < MAX_APS; apIndex += max_radio_num) {
+	    if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+	        continue;
+	    wifi_getApEnable(radioIndex, &iface_status);
 
-    output_struct->radio_BytesSent = radioTrafficStats.radio_BytesSent;
-    output_struct->radio_BytesReceived = radioTrafficStats.radio_BytesReceived;
-    output_struct->radio_PacketsSent = radioTrafficStats.radio_PacketsSent;
-    output_struct->radio_PacketsReceived = radioTrafficStats.radio_PacketsReceived;
-    output_struct->radio_ErrorsSent = radioTrafficStats.radio_ErrorsSent;
-    output_struct->radio_ErrorsReceived = radioTrafficStats.radio_ErrorsReceived;
-    output_struct->radio_DiscardPacketsSent = radioTrafficStats.radio_DiscardPacketsSent;
-    output_struct->radio_DiscardPacketsReceived = radioTrafficStats.radio_DiscardPacketsReceived;
+	    if (iface_status == TRUE)
+	        wifi_halGetIfStats(interface_name, &radioTrafficStats);
+	    else
+	        wifi_halGetIfStatsNull(&radioTrafficStats);     // just set some transmission statistic value to 0
+
+		    output_struct->radio_BytesSent += radioTrafficStats.radio_BytesSent;
+		    output_struct->radio_BytesReceived += radioTrafficStats.radio_BytesReceived;
+		    output_struct->radio_PacketsSent += radioTrafficStats.radio_PacketsSent;
+		    output_struct->radio_PacketsReceived += radioTrafficStats.radio_PacketsReceived;
+		    output_struct->radio_ErrorsSent += radioTrafficStats.radio_ErrorsSent;
+		    output_struct->radio_ErrorsReceived += radioTrafficStats.radio_ErrorsReceived;
+		    output_struct->radio_DiscardPacketsSent += radioTrafficStats.radio_DiscardPacketsSent;
+		    output_struct->radio_DiscardPacketsReceived += radioTrafficStats.radio_DiscardPacketsReceived;
+	}
 
     output_struct->radio_PLCPErrorCount = 0;				  //The number of packets that were received with a detected Physical Layer Convergence Protocol (PLCP) header error.
     output_struct->radio_FCSErrorCount = 0;					  //The number of packets that were received with a detected FCS error. This parameter is based on dot11FCSErrorCount from [Annex C/802.11-2012].
