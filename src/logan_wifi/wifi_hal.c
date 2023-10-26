@@ -3761,12 +3761,9 @@ typedef enum _RT_802_11_PHY_MODE {
 
 unsigned int puremode_to_wireless_mode(INT radioIndex, UINT pureMode)
 {
-	int band_idx = 0;
 	unsigned char wireless_mode = PHY_MODE_MAX;
 
-	band_idx = radio_index_to_band(radioIndex);
-
-	switch (band_idx) {
+	switch (radioIndex) {
 	case band_2_4:
 		if (pureMode == (WIFI_MODE_G | WIFI_MODE_N))
 			wireless_mode = PHY_11GN_MIXED;
@@ -4147,16 +4144,83 @@ INT wifi_getRadioChannelsInUse(INT radioIndex, CHAR *output_string)	//RDKB
 	return RETURN_OK;
 }
 
+int get_channel_handler(struct nl_msg *msg, void *data)
+{
+	struct nlattr *tb[NL80211_ATTR_MAX + 1];
+	struct nlattr *vndr_tb[MTK_NL80211_VENDOR_ATTR_GET_BAND_INFO_MAX + 1];
+	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+	unsigned char *channel = (unsigned char *)data;
+	int err = 0;
+
+	err = nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+			  genlmsg_attrlen(gnlh, 0), NULL);
+	if (err < 0)
+		return err;
+
+	if (tb[NL80211_ATTR_VENDOR_DATA]) {
+		err = nla_parse_nested(vndr_tb, MTK_NL80211_VENDOR_ATTR_GET_BAND_INFO_MAX,
+			tb[NL80211_ATTR_VENDOR_DATA], NULL);
+		if (err < 0)
+			return err;
+
+		if (vndr_tb[MTK_NL80211_VENDOR_ATTR_GET_BAND_INFO_CHANNEL]) {
+			*channel = nla_get_u8(vndr_tb[MTK_NL80211_VENDOR_ATTR_GET_BAND_INFO_CHANNEL]);
+		}
+	}
+
+	return 0;
+}
+
+INT mtk_wifi_get_radio_info(
+	INT radioIndex, INT vendor_data_attr, mtk_nl80211_cb call_back, void *output)
+{
+	int ret = -1;
+	struct unl unl_ins;
+	struct nl_msg *msg	= NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_GET_BAND_INFO;
+	param.if_type = NL80211_ATTR_WIPHY;
+	param.if_idx = radio_index_to_phy(radioIndex);
+
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+	/*add mtk vendor cmd data*/
+	if (nla_put_u8(msg, vendor_data_attr, 1)) {
+		wifi_debug(DEBUG_ERROR, "Nla put vendor_data_attr(%d) attribute error\n", vendor_data_attr);
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	/*send mtk nl80211 vendor msg*/
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, call_back, output);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		goto err;
+	}
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_INFO, "send cmd success.\n");
+
+	return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR,"send cmd fails\n");
+	return RETURN_ERR;
+}
+
 //Get the running channel number
 INT wifi_getRadioChannel(INT radioIndex, ULONG *output_ulong)	//RDKB
 {
 	char channel_str[16] = {0};
 	char config_file[128] = {0};
-	char buf[MAX_BUF_SIZE] = {0};
-
-	char interface_name[IF_NAME_SIZE] = {0};
 	wifi_band band = band_invalid;
-	ULONG iwChannel = 0;
+	unsigned char channel;
 	int res;
 
 	if (output_ulong == NULL)
@@ -4173,19 +4237,12 @@ INT wifi_getRadioChannel(INT radioIndex, ULONG *output_ulong)	//RDKB
 		wifi_debug(DEBUG_ERROR, "strtol fail\n");
 	}
 	if (*output_ulong == 0) {
-		if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
-			return RETURN_ERR;
-
-	res = _syscmd_secure(buf, sizeof(buf), "iw dev %s info |grep channel | cut -d ' ' -f2", interface_name);
-		if (res) {
-			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-		}
-
-		if (sscanf(buf, "%lu", &iwChannel) != 1) {
-			wifi_debug(DEBUG_ERROR, "sscanf format error.\n");
+		if (mtk_wifi_get_radio_info(radioIndex, MTK_NL80211_VENDOR_ATTR_GET_BAND_INFO_CHANNEL,
+			get_channel_handler, &channel)!= RETURN_OK) {
+			wifi_debug(DEBUG_ERROR, "send MTK_NL80211_VENDOR_ATTR_GET_BAND_INFO_CHANNEL cmd fails\n");
 			return RETURN_ERR;
 		}
-		*output_ulong = iwChannel;
+		*output_ulong = channel;
 	}
 
 	return RETURN_OK;
@@ -5016,16 +5073,106 @@ err:
 	return RETURN_ERR;
 }
 
+int get_bandwidth_handler(struct nl_msg *msg, void *data)
+{
+	struct nlattr *tb[NL80211_ATTR_MAX + 1];
+	struct nlattr *vndr_tb[MTK_NL80211_VENDOR_ATTR_GET_BAND_INFO_MAX + 1];
+	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+	unsigned char *bw = (unsigned char *)data;
+	int err = 0;
+
+	err = nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+			  genlmsg_attrlen(gnlh, 0), NULL);
+	if (err < 0)
+		return err;
+
+	if (tb[NL80211_ATTR_VENDOR_DATA]) {
+		err = nla_parse_nested(vndr_tb, MTK_NL80211_VENDOR_ATTR_GET_BAND_INFO_MAX,
+			tb[NL80211_ATTR_VENDOR_DATA], NULL);
+		if (err < 0)
+			return err;
+
+		if (vndr_tb[MTK_NL80211_VENDOR_ATTR_GET_BAND_INFO_BANDWIDTH]) {
+			*bw = nla_get_u8(vndr_tb[MTK_NL80211_VENDOR_ATTR_GET_BAND_INFO_BANDWIDTH]);
+		}
+	}
+
+	return 0;
+}
+
+enum bw_idx {
+	BAND_WIDTH_20,
+	BAND_WIDTH_40,
+	BAND_WIDTH_80,
+	BAND_WIDTH_160,
+	BAND_WIDTH_8080 = 6,
+	BAND_WIDTH_320
+};
+
+int bwidx_to_string(unsigned char bw, char *buf)
+{
+	int res;
+	switch (bw) {
+	case BAND_WIDTH_20:
+		res = snprintf(buf, 32, "%s", "20");
+		if (os_snprintf_error(64, res)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			return -1;
+		}
+		break;
+	case BAND_WIDTH_40:
+		res = snprintf(buf, 32, "%s", "40");
+		if (os_snprintf_error(64, res)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			return -1;
+		}
+		break;
+	case BAND_WIDTH_80:
+		res = snprintf(buf, 32, "%s", "80");
+		if (os_snprintf_error(64, res)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			return -1;
+		}
+		break;
+	case BAND_WIDTH_160:
+		res = snprintf(buf, 32, "%s", "160");
+		if (os_snprintf_error(64, res)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			return -1;
+		}
+		break;
+	case BAND_WIDTH_8080:
+		res = snprintf(buf, 32, "%s", "80+80");
+		if (os_snprintf_error(64, res)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			return -1;
+		}
+		break;
+	case BAND_WIDTH_320:
+		res = snprintf(buf, 32, "%s", "320");
+		if (os_snprintf_error(64, res)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			return -1;
+		}
+		break;
+	default:
+		wifi_debug(DEBUG_ERROR, "unkown bw[%d]\n", bw);
+		return -1;
+	}
+
+	return 0;
+}
+
 //Get the Operating Channel Bandwidth. eg "20MHz", "40MHz", "80MHz", "80+80", "160"
 //The output_string is a max length 64 octet string that is allocated by the RDKB code.  Implementations must ensure that strings are not longer than this.
 INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) //Tr181
 {
-	char cmd[MAX_CMD_SIZE] = {0}, buf[32] = {0};
+	char buf[32] = {0};
 	char extchannel[128] = {0};
-	char interface_name[64] = {0};
-	int ret = 0, len=0, res;
+	int ret = 0, res;
 	BOOL radio_enable = FALSE;
 	wifi_band band;
+	unsigned char bw;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -5041,25 +5188,15 @@ INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) 
 		WIFI_ENTRY_EXIT_DEBUG("Radio %d is not enable failed %s: %d \n", radioIndex, __func__, __LINE__);
 		return RETURN_OK;
 	}
-	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
-		return RETURN_ERR;
-	/*IW command get BW320 to do*/
-
-	res = snprintf(cmd, sizeof(cmd),"iw dev %s info | grep 'width' | cut -d  ' ' -f6 | tr -d '\\n'", interface_name);
-	if (os_snprintf_error(sizeof(cmd), res)) {
-		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+	if (mtk_wifi_get_radio_info(radioIndex, MTK_NL80211_VENDOR_ATTR_GET_BAND_INFO_BANDWIDTH,
+		get_bandwidth_handler, &bw)!= RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "send MTK_NL80211_VENDOR_ATTR_GET_BAND_INFO_BANDWIDTH cmd fails\n");
 		return RETURN_ERR;
 	}
 
-	ret = _syscmd_secure(buf, sizeof(buf), "iw dev %s info | grep 'width' | cut -d  ' ' -f6 | tr -d '\\n'", interface_name);
-	if(ret) {
-		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-	}
-
-	len = strlen(buf);
-	if((ret != 0) || (len == 0))
-	{
-		WIFI_ENTRY_EXIT_DEBUG("failed with Command %s %s:%d\n",cmd,__func__, __LINE__);
+	ret = bwidx_to_string(bw, buf);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "bwidx_to_string fails\n");
 		return RETURN_ERR;
 	}
 
@@ -17750,6 +17887,13 @@ int main(int argc,char **argv)
 		INT ret = wifi_pushRadioChannel2(index,channel,width,beacon);
 		printf("Result = %d", ret);
 	}
+	if(strstr(argv[1],"wifi_getRadioChannel")!=NULL)
+	{
+		ULONG channel = 0;
+		wifi_getRadioChannel(index, &channel);
+		printf("channel is %ld \n",channel);
+		return 0;
+	}
 	if(strstr(argv[1],"wifi_getApBridgeInfo")!=NULL)
 	{
 		char br_name[64], ip[64], subset[64] = {0};
@@ -18039,6 +18183,8 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 			set_mode |= WIFI_MODE_AC;
 		if (operationParam->variant & WIFI_80211_VARIANT_AX)
 			set_mode |= WIFI_MODE_AX;
+		if (operationParam->variant & WIFI_80211_VARIANT_BE)
+			set_mode |= WIFI_MODE_BE;
 		// Second parameter is to set channel band width, it is done by wifi_pushRadioChannel2 if changed.
 		memset(buf, 0, sizeof(buf));
 		drv_dat_change = TRUE;
