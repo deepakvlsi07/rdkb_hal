@@ -18983,12 +18983,6 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 			return RETURN_ERR;
 		}
 
-		ret = wifi_setApIsolationEnable(vap_info->vap_index, vap_info->u.bss_info.isolation);
-		if (ret != RETURN_OK) {
-			wifi_debug(DEBUG_ERROR, "wifi_setApIsolationEnable return error\n");
-			return RETURN_ERR;
-		}
-
 		ret = wifi_setApMaxAssociatedDevices(vap_info->vap_index, vap_info->u.bss_info.bssMaxSta);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApMaxAssociatedDevices return error\n");
@@ -19063,6 +19057,12 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 		ret = wifi_setApWmmEnable(vap_info->vap_index, vap_info->u.bss_info.wmm_enabled);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApWmmEnable return error\n");
+			return RETURN_ERR;
+		}
+
+		ret = wifi_setApIsolationEnable(vap_info->vap_index, vap_info->u.bss_info.isolation);
+		if (ret != RETURN_OK) {
+			wifi_debug(DEBUG_ERROR, "wifi_setApIsolationEnable return error\n");
 			return RETURN_ERR;
 		}
 
