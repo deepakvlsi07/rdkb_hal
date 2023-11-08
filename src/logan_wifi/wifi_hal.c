@@ -286,6 +286,23 @@ typedef struct GNU_PACKED _wdev_ap_metric {
 	wdev_extended_ap_metric ext_ap_metric;
 } wdev_ap_metric;
 
+enum mld_type {
+	AP_MLD_SINGLE_LINK,
+	AP_MLD_MULTI_LINK,
+};
+
+struct multi_link_device {
+	unsigned char mld_mac[6];
+	unsigned char mld_index;
+//	enum mld_type type;
+	unsigned char affiliated_ap_bitmap[6];
+};
+
+struct mld_configuration {
+	unsigned char valid_mld_bitmap[9];
+	struct multi_link_device mld[66]; /*0,65 - invalid, 1~16 multi-link mld, 17-64 single link mld*/
+};
+struct mld_configuration mld_config;
 
 static int util_unii_5g_centerfreq(const char *ht_mode, int channel);
 static int util_unii_6g_centerfreq(const char *ht_mode, int channel);
@@ -527,6 +544,37 @@ wifi_secur_list * wifi_get_item_by_str(wifi_secur_list *list, int list_sz, const
 }
 #endif /* WIFI_HAL_VERSION_3 */
 
+#define _syscmd_secure(retBuf, retBufSize, fmt, args...) \
+	({ \
+		FILE *f;	\
+		char *ptr = retBuf; \
+		int bufSize = retBufSize, bufbytes = 0, readbytes = 0, cmd_ret = -1;	\
+		WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);	\
+		f = v_secure_popen("r", fmt, ##args);	\
+		if(f) {	\
+			while(!feof(f))	\
+			{	\
+				*ptr = 0;	\
+				if(bufSize>=128) {	\
+					bufbytes=128;	\
+				} else {	\
+					bufbytes=bufSize-1;	\
+				}	\
+				if (fgets(ptr,bufbytes,f) == NULL)	\
+					break;	\
+				readbytes=strlen(ptr);	\
+				if(!readbytes)	\
+					break;	\
+				bufSize-=readbytes;	\
+				ptr += readbytes;	\
+			}	\
+			cmd_ret = v_secure_pclose(f);	\
+			retBuf[retBufSize-1]=0;	\
+		}	\
+		WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);	\
+		cmd_ret;	\
+	})
+
 
 static char l1profile[32] = "/etc/wireless/l1profile.dat";
 char main_prefix[MAX_NUM_RADIOS][IFNAMSIZ];
@@ -537,7 +585,615 @@ int radio_band[MAX_NUM_RADIOS];
 
 static int array_index_to_vap_index(UINT radioIndex, int arrayIndex);
 static int vap_index_to_array_index(int vapIndex, int *radioIndex, int *arrayIndex);
+static int wifi_datfileRead(char *conf_file, char *param, char *output, int output_size);
+int hwaddr_aton2(const char *txt, unsigned char *addr);
+static int wifi_GetInterfaceName(int apIndex, char *interface_name);
+INT wifi_getMaxRadioNumber(INT *max_radio_num);
+static int wifi_BandProfileRead(int card_idx,
+								int radio_idx,
+								char *param,
+								char *output,
+								int output_size,
+								char *default_value);
+static int array_index_to_vap_index(UINT radioIndex, int arrayIndex);
+struct params
+{
+	char * name;
+	char * value;
+};
+static int wifi_datfileWrite(char *conf_file, struct params *list, int item_count);
 
+#ifdef WIFI_HAL_VERSION_3
+#define MAX_ML_MLD_CNT	16	/*Max multi-link MLD*/
+//#define MAX_SL_MLD_CNT	48	/*MAX single-link MLD*/
+
+static void mld_set(unsigned char mld_index, unsigned char set)
+{
+	mld_config.valid_mld_bitmap[mld_index / 8] |= set ? (1 << (mld_index % 8)) : ~(1 << (mld_index % 8));
+}
+
+static unsigned char mld_test(unsigned char mld_index)
+{
+	return mld_config.valid_mld_bitmap[mld_index / 8] & (1 << (mld_index % 8));
+}
+
+static void mld_ap_set(struct multi_link_device *mld, unsigned char ap_index, unsigned char set)
+{
+	mld->affiliated_ap_bitmap[ap_index / 8] |= set ? (1 << (ap_index % 8)) : ~(1 << (ap_index % 8));
+}
+
+static unsigned char mld_ap_test(struct multi_link_device *mld, unsigned char ap_index)
+{
+	return mld->affiliated_ap_bitmap[ap_index / 8] & (1 << (ap_index % 8));
+}
+
+static int eht_mld_config_init(void)
+{
+	char config_file[128] = {0}, str_mldgroup[256], *buf, mac_str[32] = {0};
+	int res, band, bss_idx;
+	char *token;
+	long mld_index;
+	unsigned char ap_index;
+	struct multi_link_device *mld;
+	char *mld_start, *mldaddr_start, *mldaddr_end;
+
+	buf = (char*)malloc(4096);
+	if (!buf) {
+		wifi_debug(DEBUG_ERROR, "fail to allocate memory\n");
+		return RETURN_ERR;
+	}
+	wifi_debug(DEBUG_ERROR, "==========>\n");
+
+	memset(&mld_config, 0, sizeof(mld_config));
+	for (band = 0; band < MAX_NUM_RADIOS; band++) {
+		res = snprintf(config_file, sizeof(config_file), "%s%d.dat", LOGAN_DAT_FILE, band);
+		if (os_snprintf_error(sizeof(config_file), res)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			free(buf);
+			return RETURN_ERR;
+		}
+
+		wifi_datfileRead(config_file, "MldGroup", str_mldgroup, sizeof(str_mldgroup));
+		token = strtok(str_mldgroup, ";");
+		bss_idx = 0;
+		while(token != NULL && bss_idx < 16) {
+			if (hal_strtol(token, 10, &mld_index) < 0) {
+				wifi_debug(DEBUG_ERROR, "strtol fail\n");
+				break;
+			}
+
+			if (mld_index == 0 || mld_index > MAX_ML_MLD_CNT) {
+				wifi_debug(DEBUG_ERROR, "invalid mld_index %ld, skip it.\n", mld_index);
+				bss_idx++;
+				token = strtok(NULL, ";");
+				continue;
+			}
+
+			mld_set(mld_index, 1);
+			ap_index = array_index_to_vap_index(band, bss_idx);
+
+			mld = &(mld_config.mld[mld_index]);
+			mld->mld_index = mld_index;
+			/* need to fulfill mld mac later.
+			memcpy(mld->mld_mac, mac, sizeof(mld->mld_mac));
+			*/
+//			mld->type = mld_index <= MAX_ML_MLD_CNT ? AP_MLD_MULTI_LINK : AP_MLD_SINGLE_LINK;
+			mld_ap_set(mld, ap_index, 1);
+			bss_idx++;
+			token = strtok(NULL, ";");
+			wifi_debug(DEBUG_ERROR, "mld[%ld] affiliated ap[%d].\n", mld_index, ap_index);
+		}
+	}
+
+	res = _syscmd_secure(buf, 4096,
+		"mwctl ra0 show bssmngr;dmesg | tail -500 | grep -e \"MLD\" -e \"bss_mngr_con_info_show\"");
+	if (res) {
+		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+		free(buf);
+		return RETURN_ERR;
+	}
+
+	/*fulfill mld mac address from bssmngr information*/
+	mld_start = strstr(buf, "bss_mngr_con_info_show");
+	if (!mld_start) {
+		wifi_debug(DEBUG_ERROR, "fail to find string \"bss_mngr_con_info_show\"\n");
+		printf("*************************\n");
+		printf("buf:%s\n", buf);
+		printf("*************************\n");
+		free(buf);
+		return RETURN_ERR;
+	}
+	mld_start = strstr(mld_start, "MLD[");
+	if (!mld_start) {
+		printf("*************************\n");
+		printf("mld_start:%s\n", buf);
+		printf("*************************\n");
+	}
+	while (mld_start) {
+		if (hal_strtol(mld_start + 4, 10, &mld_index) < 0) {
+			wifi_debug(DEBUG_ERROR, "strtol fail\n");
+			free(buf);
+			return RETURN_ERR;
+		}
+
+		if (mld_index == 0 || mld_index > MAX_ML_MLD_CNT) {
+			wifi_debug(DEBUG_ERROR, "invalid mld_index %ld\n", mld_index);
+			mld_start = strstr(mld_start + 4, "MLD[");
+			continue;
+		}
+
+		if (!mld_test(mld_index)) {
+			wifi_debug(DEBUG_ERROR, "mld(%ld) is not obvoiusly config in dat file, stll maintain it!",
+				mld_index);
+			mld_set(mld_index, 1);
+		}
+
+		mld = &(mld_config.mld[mld_index]);
+		mldaddr_start = strstr(mld_start, "MLD Addr:");
+		if (!mldaddr_start) {
+			wifi_debug(DEBUG_ERROR, "invalid mld address from bssmngr, mld_index=%ld\n", mld_index);
+			free(buf);
+			return RETURN_ERR;
+		}
+		mldaddr_end = strstr(mldaddr_start, ")");
+		if (!mldaddr_end) {
+			wifi_debug(DEBUG_ERROR, "invalid mld address from bssmngr, mld_index=%ld\n", mld_index);
+			free(buf);
+			return RETURN_ERR;
+		}
+
+		memset(mac_str, 0, sizeof(mac_str));
+		if ((mldaddr_end - mldaddr_start - 10) >= sizeof(mac_str)) {
+			wifi_debug(DEBUG_ERROR, "invalid mld address string from bssmngr, mld_index=%ld\n",
+				mld_index);
+			free(buf);
+			return RETURN_ERR;
+		}
+		strncpy(mac_str, mldaddr_start + 10, mldaddr_end - mldaddr_start - 10);
+		if (!hwaddr_aton2(mac_str, mld->mld_mac)) {
+			wifi_debug(DEBUG_ERROR, "invalid mld address from bssmngr, mld_index=%ld\n", mld_index);
+			free(buf);
+			return RETURN_ERR;
+		}
+
+		mld_start = strstr(mldaddr_end, "MLD[");
+	}
+	wifi_debug(DEBUG_ERROR, "<==========\n");
+
+	free(buf);
+	return RETURN_OK;
+}
+
+static unsigned char mld_ap_test_all_mlds(unsigned char ap_index)
+{
+	unsigned char mld_index;
+	struct multi_link_device *mld;
+
+	for (mld_index = 1; mld_index <= MAX_ML_MLD_CNT; mld_index++) {
+
+		if (!mld_test(mld_index))
+			continue;
+
+		mld = &(mld_config.mld[mld_index]);
+
+		if (mld_ap_test(mld, ap_index))
+			return mld_index;
+	}
+
+	return 0;
+}
+
+static void mld_info_display(void)
+{
+	unsigned char mld_index, ap_index;
+	struct multi_link_device *mld;
+	char interface_name[IF_NAME_SIZE] = {0};
+
+	wifi_debug(DEBUG_ERROR, "==========>\n");
+	for (mld_index = 1; mld_index <= MAX_ML_MLD_CNT; mld_index++) {
+		if (!mld_test(mld_index))
+			continue;
+
+		mld = &(mld_config.mld[mld_index]);
+
+		printf("MLD[%02d]: %02x:%02x:%02x:%02x:%02x:%02x\n\tAffiliated AP:\n", (int)(mld->mld_index),
+			mld->mld_mac[0], mld->mld_mac[1], mld->mld_mac[2],
+			mld->mld_mac[3], mld->mld_mac[4], mld->mld_mac[5]);
+
+		for (ap_index = 0; ap_index <= MAX_APS; ap_index++) {
+			if (!mld_ap_test(mld, ap_index))
+				continue;
+			if (wifi_GetInterfaceName(ap_index, interface_name) != RETURN_OK) {
+				wifi_debug(DEBUG_ERROR, "invalid ap_index %d\n", ap_index);
+				continue;
+			}
+			printf("\tap[%d] %s\n", (int)ap_index, interface_name);
+		}
+	}
+	wifi_debug(DEBUG_ERROR, "<==========\n");
+}
+
+INT wifi_eht_create_ap_mld(unsigned char mld_index, unsigned char *mac)
+{
+	int res;
+//	enum mld_type type;
+	struct multi_link_device *mld;
+
+//	if (mld_index == 0 || mld_index > (MAX_ML_MLD_CNT + MAX_SL_MLD_CNT)) {
+	if (mld_index == 0 || mld_index > MAX_ML_MLD_CNT) {
+		wifi_debug(DEBUG_ERROR, "invalid mld_index %d\n", mld_index);
+		return RETURN_ERR;
+	}
+
+	if (mld_test(mld_index)) {
+		wifi_debug(DEBUG_ERROR, "mld already exist with mld_index %d\n", mld_index);
+		return RETURN_ERR;
+	}
+
+//	type = mld_index <= MAX_ML_MLD_CNT ? AP_MLD_MULTI_LINK : AP_MLD_SINGLE_LINK;
+
+	res = v_secure_system("mwctl ra0 set apmld=create:group=%u,addr=%02x:%02x:%02x:%02x:%02x:%02x",
+		mld_index, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+	if (res) {
+		wifi_debug(DEBUG_ERROR, "fail to create mld with mld_index %d\n", mld_index);
+		return RETURN_ERR;
+	}
+
+	mld_set(mld_index, 1);
+
+	mld = &(mld_config.mld[mld_index]);
+	mld->mld_index = mld_index;
+	memcpy(mld->mld_mac, mac, sizeof(mld->mld_mac));
+//	mld->type = type;
+	memset(mld->affiliated_ap_bitmap, 0, sizeof(mld->affiliated_ap_bitmap));
+
+	return RETURN_OK;
+
+}
+
+INT wifi_eht_destroy_ap_mld(unsigned char mld_index)
+{
+	int res;
+	struct multi_link_device *mld;
+
+//	if (mld_index == 0 || mld_index > (MAX_ML_MLD_CNT + MAX_SL_MLD_CNT)) {
+	if (mld_index == 0 || mld_index > MAX_ML_MLD_CNT) {
+		wifi_debug(DEBUG_ERROR, "invalid mld_index %d\n", mld_index);
+		return RETURN_ERR;
+	}
+
+	if (!mld_test(mld_index)) {
+		wifi_debug(DEBUG_ERROR, "mld does not exist with mld_index %d\n", mld_index);
+		return RETURN_ERR;
+	}
+
+	res = v_secure_system("mwctl ra0 set apmld=destroy:group=%u", mld_index);
+
+	if (res) {
+		wifi_debug(DEBUG_ERROR, "fail to destroy mld with mld_index %d\n", mld_index);
+		return RETURN_ERR;
+	}
+
+	mld_set(mld_index, 0);
+	mld = &(mld_config.mld[mld_index]);
+	memset(mld, 0, sizeof(*mld));
+
+	return RETURN_OK;
+}
+
+INT wifi_eht_list_ap_mld(unsigned char mld_index[], unsigned char *mld_num)
+{
+	unsigned char i, j = 0;
+
+//	for (i = 1; i <= (MAX_ML_MLD_CNT + MAX_SL_MLD_CNT); i++) {
+	for (i = 1; i <= MAX_ML_MLD_CNT; i++) {
+		if (mld_test(i))
+			mld_index[j++] = i;
+	}
+
+	*mld_num = j;
+
+	return RETURN_OK;
+}
+
+INT wifi_eht_add_to_ap_mld(unsigned char mld_index, INT ap_index)
+{
+	int res;
+//	enum mld_type type;
+	struct multi_link_device *mld;
+	char interface_name[IF_NAME_SIZE] = {0};
+	unsigned char i;
+	int max_radio_num;
+
+	if (ap_index < 0 || ap_index >= MAX_APS) {
+		wifi_debug(DEBUG_ERROR, "invalid ap_index %d\n", ap_index);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(ap_index, interface_name) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid ap_index %d\n", ap_index);
+		return RETURN_ERR;
+	}
+
+//	if (mld_index == 0 || mld_index > (MAX_ML_MLD_CNT + MAX_SL_MLD_CNT)) {
+	if (mld_index == 0 || mld_index > MAX_ML_MLD_CNT) {
+		wifi_debug(DEBUG_ERROR, "invalid mld_index %d\n", mld_index);
+		return RETURN_ERR;
+	}
+
+	if (!mld_test(mld_index)) {
+		wifi_debug(DEBUG_ERROR, "mld does not exist with mld_index %d\n", mld_index);
+		return RETURN_ERR;
+	}
+
+	mld = &(mld_config.mld[mld_index]);
+#if 0
+	if (mld->type == AP_MLD_SINGLE_LINK) {
+		/*check single link mld is not occupied by other ap*/
+		for (i = 0; i < MAX_APS; i++) {
+			if(mld_ap_test(mld, i))
+				break;
+		}
+
+		if (i < MAX_APS) {
+			if (i == ap_index) {
+				wifi_debug(DEBUG_ERROR, "current ap(%d) has already joined single link mld(%d)\n", i, mld_index);
+				return RETURN_OK;
+			}
+			wifi_debug(DEBUG_ERROR,
+				"single link mld(%d) already has an affiliated AP(ap_index %d)\n", mld_index, i);
+			return RETURN_ERR;
+		}
+	} else if (mld->type == AP_MLD_MULTI_LINK) {
+#endif
+		/*check if a same band ap already has been joined before*/
+	wifi_getMaxRadioNumber(&max_radio_num);
+	if(max_radio_num == 0){
+		return RETURN_ERR;
+	}
+	for (i = 0; i < MAX_APS; i++) {
+		if(mld_ap_test(mld, i)) {
+			if (i == ap_index) {
+				wifi_debug(DEBUG_ERROR, "current ap(index=%d) has already joined current mld\n", i);
+				return RETURN_OK;
+			}
+			if ((i % max_radio_num) == (ap_index % max_radio_num)) {
+				wifi_debug(DEBUG_ERROR, "same band ap(index=%d) has already joined current mld\n", i);
+				return RETURN_ERR;
+			}
+		}
+	}
+
+	res = v_secure_system("mwctl %s set apmld=addlink:group=%u", interface_name, mld_index);
+
+	if (res) {
+		wifi_debug(DEBUG_ERROR, "fail to add ap to ap mld with mld_index %d\n", mld_index);
+		return RETURN_ERR;
+	}
+
+	mld_ap_set(mld, ap_index, 1);
+
+	return RETURN_OK;
+}
+
+INT wifi_eht_remove_from_ap_mld(unsigned char mld_index, INT ap_index)
+{
+	int res;
+//	enum mld_type type;
+	struct multi_link_device *mld;
+	char interface_name[IF_NAME_SIZE] = {0};
+
+	if (ap_index < 0 || ap_index >= MAX_APS) {
+		wifi_debug(DEBUG_ERROR, "invalid ap_index %d\n", ap_index);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(ap_index, interface_name) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid ap_index %d\n", ap_index);
+		return RETURN_ERR;
+	}
+
+//	if (mld_index == 0 || mld_index > (MAX_ML_MLD_CNT + MAX_SL_MLD_CNT)) {
+	if (mld_index == 0 || mld_index > MAX_ML_MLD_CNT) {
+		wifi_debug(DEBUG_ERROR, "invalid mld_index %d\n", mld_index);
+		return RETURN_ERR;
+	}
+
+	if (!mld_test(mld_index)) {
+		wifi_debug(DEBUG_ERROR, "mld does not exist with mld_index %d\n", mld_index);
+		return RETURN_ERR;
+	}
+
+	mld = &(mld_config.mld[mld_index]);
+
+	res = v_secure_system("mwctl %s apmld=dellink", interface_name);
+
+	if (res) {
+		wifi_debug(DEBUG_ERROR, "fail to del ap from ap mld with mld_index %d\n", mld_index);
+		return RETURN_ERR;
+	}
+
+	mld_ap_set(mld, ap_index, 0);
+
+	return RETURN_OK;
+}
+
+INT wifi_eht_get_ap_from_mld(unsigned char mld_index, unsigned char ap_index[], unsigned char *ap_num)
+{
+	unsigned char i, j = 0;
+	struct multi_link_device *mld;
+
+//	if (mld_index == 0 || mld_index > (MAX_ML_MLD_CNT + MAX_SL_MLD_CNT)) {
+	if (mld_index == 0 || mld_index > MAX_ML_MLD_CNT) {
+		wifi_debug(DEBUG_ERROR, "invalid mld_index %d\n", mld_index);
+		return RETURN_ERR;
+	}
+
+	if (!mld_test(mld_index)) {
+		wifi_debug(DEBUG_ERROR, "mld does not exist with mld_index %d\n", mld_index);
+		return RETURN_ERR;
+	}
+
+	mld = &(mld_config.mld[mld_index]);
+
+	for (i = 0; i < MAX_APS; i++) {
+		if (mld_ap_test(mld, i))
+			ap_index[j++] = i;
+	}
+
+	*ap_num = j;
+
+	return RETURN_OK;
+}
+
+INT wifi_eht_mld_ap_transfer(unsigned char old_mld_index,
+	unsigned char new_mld_index, INT ap_index)
+{
+	int res;
+//	enum mld_type type;
+	struct multi_link_device *mld, *old_mld;
+	char interface_name[IF_NAME_SIZE] = {0};
+	unsigned char i;
+	int max_radio_num;
+
+	if (old_mld_index == new_mld_index) {
+		wifi_debug(DEBUG_ERROR, "same mld index %d\n", new_mld_index);
+		return RETURN_OK;
+	}
+
+	if (ap_index < 0 || ap_index >= MAX_APS) {
+		wifi_debug(DEBUG_ERROR, "invalid ap_index %d\n", ap_index);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(ap_index, interface_name) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid ap_index %d\n", ap_index);
+		return RETURN_ERR;
+	}
+
+	if (old_mld_index == 0 || old_mld_index > MAX_ML_MLD_CNT) {
+		wifi_debug(DEBUG_ERROR, "invalid old_mld_index %d\n", old_mld_index);
+		return RETURN_ERR;
+	}
+	old_mld = mld = &(mld_config.mld[new_mld_index]);
+
+	if (!mld_test(old_mld_index)) {
+		wifi_debug(DEBUG_ERROR, "mld does not exist with old_mld_index %d\n", old_mld_index);
+		return RETURN_ERR;
+	}
+
+
+//	if (mld_index == 0 || mld_index > (MAX_ML_MLD_CNT + MAX_SL_MLD_CNT)) {
+	if (new_mld_index == 0 || new_mld_index > MAX_ML_MLD_CNT) {
+		wifi_debug(DEBUG_ERROR, "invalid mld_index %d\n", new_mld_index);
+		return RETURN_ERR;
+	}
+
+	if (!mld_test(new_mld_index)) {
+		wifi_debug(DEBUG_ERROR, "mld does not exist with mld_index %d\n", new_mld_index);
+		return RETURN_ERR;
+	}
+
+	mld = &(mld_config.mld[new_mld_index]);
+
+	wifi_getMaxRadioNumber(&max_radio_num);
+	if(max_radio_num == 0){
+		return RETURN_ERR;
+	}
+	for (i = 0; i < MAX_APS; i++) {
+		if(mld_ap_test(mld, i)) {
+			if (i == ap_index) {
+				wifi_debug(DEBUG_ERROR, "current ap has already joined current mld\n");
+				return RETURN_OK;
+			}
+			if ((i % max_radio_num) == (ap_index % max_radio_num)) {
+				wifi_debug(DEBUG_ERROR, "same band ap(index=%d) has already joined current mld\n", i);
+				return RETURN_ERR;
+			}
+		}
+	}
+
+	res = v_secure_system("mwctl %s set apmld=tsfrlink:group=%u", interface_name, new_mld_index);
+
+	if (res) {
+		wifi_debug(DEBUG_ERROR, "fail to transfer ap to ap mld with mld_index %d\n", new_mld_index);
+		return RETURN_ERR;
+	}
+
+	mld_ap_set(old_mld, ap_index, 0);
+	mld_ap_set(mld, ap_index, 1);
+
+	return RETURN_OK;
+}
+
+INT wifi_eht_config_sync2_dat_by_radio(unsigned char band)
+{
+	unsigned char bss_idx, mld_index;
+	char config_file_dat[128] = {0}, MldGroup_V_Str[128] = {0}, buf[64] = {0};
+	int res, vap_index, len = 0, bssidnum;
+	struct params MldGroup;
+
+	if (band >= MAX_NUM_RADIOS) {
+		wifi_debug(DEBUG_ERROR, "invalid band %u\n", band);
+		return RETURN_ERR;
+	}
+
+	res = wifi_BandProfileRead(0, band, "BssidNum", buf, sizeof(buf), "0");
+	if (res != 0) {
+		wifi_debug(DEBUG_ERROR, "wifi_BandProfileRead BssidNum failed\n");
+		return RETURN_ERR;
+	}
+
+	bssidnum = atoi(buf);
+	if (bssidnum <= 0)  {
+		wifi_debug(DEBUG_ERROR, "invalid BssidNum %s\n", buf);
+		return RETURN_ERR;
+	}
+	if (bssidnum > LOGAN_MAX_NUM_VAP_PER_RADIO) {
+		wifi_debug(DEBUG_ERROR, "bss_num is larger than %d\n", LOGAN_MAX_NUM_VAP_PER_RADIO);
+		return RETURN_ERR;
+	}
+
+	res = snprintf(config_file_dat, sizeof(config_file_dat), "%s%d.dat", LOGAN_DAT_FILE, band);
+	if (os_snprintf_error(sizeof(config_file_dat), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
+
+	for (bss_idx = 0; bss_idx < bssidnum; bss_idx++) {
+		vap_index = array_index_to_vap_index(band, bss_idx);
+		if (vap_index == RETURN_ERR) {
+			wifi_debug(DEBUG_ERROR, "invalide vap index, band=%d, bss_idx=%d\n", (int)band, (int)bss_idx);
+			break;
+		}
+		mld_index = mld_ap_test_all_mlds(vap_index);
+		res = snprintf(&(MldGroup_V_Str[len]), sizeof(MldGroup_V_Str) - len, "%u;", mld_index);
+		if (os_snprintf_error(sizeof(MldGroup_V_Str) - len, res)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			break;
+		}
+		len += res;
+	}
+
+	MldGroup.name = "MldGroup";
+	MldGroup.value = MldGroup_V_Str;
+	wifi_datfileWrite(config_file_dat, &MldGroup, 1);
+	wifi_debug(DEBUG_ERROR, "band[%u] MldGroup=%s\n", band, MldGroup_V_Str);
+
+	return RETURN_OK;
+}
+
+void wifi_eht_config_sync2_dat(void)
+{
+	unsigned char band;
+
+	for (band = 0; band < MAX_NUM_RADIOS; band++) {
+		wifi_eht_config_sync2_dat_by_radio(band);
+	}
+}
+
+#endif
 
 static int
 get_value(const char *conf_file, const char *param, char *value, int len)
@@ -787,44 +1443,6 @@ static BOOL Radio_flag = TRUE;
 //wifi_setApBeaconRate(1, beaconRate);
 
 BOOL multiple_set = FALSE;
-
-struct params
-{
-	char * name;
-	char * value;
-};
-
-#define _syscmd_secure(retBuf, retBufSize, fmt, args...) \
-	({ \
-		FILE *f;	\
-		char *ptr = retBuf; \
-		int bufSize = retBufSize, bufbytes = 0, readbytes = 0, cmd_ret = -1;	\
-		WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);	\
-		f = v_secure_popen("r", fmt, ##args);	\
-		if(f) {	\
-			while(!feof(f))	\
-			{	\
-				*ptr = 0;	\
-				if(bufSize>=128) {	\
-					bufbytes=128;	\
-				} else {	\
-					bufbytes=bufSize-1;	\
-				}	\
-				if (fgets(ptr,bufbytes,f) == NULL)	\
-					break;	\
-				readbytes=strlen(ptr);	\
-				if(!readbytes)	\
-					break;	\
-				bufSize-=readbytes;	\
-				ptr += readbytes;	\
-			}	\
-			cmd_ret = v_secure_pclose(f);	\
-			retBuf[retBufSize-1]=0;	\
-		}	\
-		WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);	\
-		cmd_ret;	\
-	})
-
 
 /*static int _syscmd(char *cmd, char *retBuf, int retBufSize)
 {
@@ -2100,7 +2718,9 @@ INT wifi_init()							//RDKB
 		wifi_vap_status_reset();
 		wifi_radio_reset_count_reset();
 		wifi_BringUpInterfaces();
+		eht_mld_config_init();
 		CallOnce = 0;
+		mld_info_display();
 	}
 
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
@@ -8708,7 +9328,7 @@ INT wifi_getIndexFromName(CHAR *inputSsidString, INT *output_int)
 
 	ap_idx = array_index_to_vap_index(radio_idx, bss_idx);
 
-	if (ap_idx >= 0 && ap_idx < MAX_VAP) {
+	if (ap_idx >= 0 && ap_idx < MAX_APS) {
 		printf("%s: hostapd conf not find, inf(%s), use inf idx(%d).\n",
 			__func__, inputSsidString, ap_idx);
 		*output_int = ap_idx;
@@ -18609,6 +19229,9 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 	char buf[32] = {0};
 	wifi_vap_security_t security = {0};
 	int res = RETURN_OK;
+	wifi_vap_info_t *vap;
+	wifi_mld_info_t *mld_info;
+	unsigned char mld_index;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	printf("Entering %s index = %d\n", __func__, (int)index);
@@ -18682,14 +19305,6 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 			continue;
 		}
 		map->vap_array[i].u.bss_info.showSsid = enabled;
-
-		ret = wifi_getApIsolationEnable(vap_index, &enabled);
-		if (ret != RETURN_OK) {
-			printf("%s: wifi_getApIsolationEnable return error\n", __func__);
-			res = RETURN_ERR;
-			continue;
-		}
-		map->vap_array[i].u.bss_info.isolation = enabled;
 
 		ret = wifi_getApMaxAssociatedDevices(vap_index, &output);
 		if (ret != RETURN_OK) {
@@ -18784,7 +19399,33 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 		}
 		map->vap_array[i].u.bss_info.mcast2ucast = enabled;
 
-		// TODO: wps, noack
+		ret = wifi_getApIsolationEnable(vap_index, &enabled);
+		if (ret != RETURN_OK) {
+			printf("%s: wifi_getApIsolationEnable return error\n", __func__);
+//			res = RETURN_ERR;
+			continue;
+		}
+		map->vap_array[i].u.bss_info.isolation = enabled;
+	}
+
+	for (i = 0; i < map->num_vaps; i++)
+	{
+		map->vap_array[i].radio_index = index;
+		vap = &(map->vap_array[i]);
+
+		mld_info = &(vap->u.bss_info.mld_info);
+		memset(mld_info, 0, sizeof(*mld_info));
+		memcpy(mld_info->local_addr, map->vap_array[i].u.bss_info.bssid, 6);
+
+		mld_index = mld_ap_test_all_mlds(vap->vap_index);
+		if (mld_index) {
+			memcpy(mld_info->common_info.mld_addr, mld_config.mld[mld_index].mld_mac, 6);
+			mld_info->common_info.mld_enable = TRUE;
+			mld_info->common_info.mld_index = mld_index;
+		}
+		wifi_debug(DEBUG_ERROR,
+				"vap_index[%d], mld_enable=%d, mld_index[%d]\n",
+				vap->vap_index, mld_info->common_info.mld_enable, mld_info->common_info.mld_index);
 	}
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 	return res;
@@ -18906,7 +19547,11 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 	BOOL enable = FALSE;
 	int band_idx;
 	int res;
-
+	wifi_mld_common_info_t *mld_info;
+	unsigned char mld_index;
+	unsigned char ap_index_array[MAX_APS] = {0};
+	unsigned char ap_array_num;
+	char interface_name[IF_NAME_SIZE] = {0};
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	printf("Entering %s index = %d\n", __func__, (int)index);
@@ -19063,11 +19708,101 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 		ret = wifi_setApIsolationEnable(vap_info->vap_index, vap_info->u.bss_info.isolation);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApIsolationEnable return error\n");
-			return RETURN_ERR;
+//			return RETURN_ERR;
 		}
 
 		// TODO mgmtPowerControl, interworking, wps
 	}
+
+	/*process mlo operation*/
+	for (i = 0; i < map->num_vaps; i++)
+	{
+		vap_info = &map->vap_array[i];
+		mld_info = &vap_info->u.bss_info.mld_info.common_info;
+
+		wifi_debug(DEBUG_ERROR, "process mlo operation\n");
+		if (!mld_info->mld_enable) {
+			wifi_debug(DEBUG_ERROR, "disable mlo on vap[%d]\n",
+				(int)vap_info->vap_index);
+			mld_index = mld_ap_test_all_mlds((int)vap_info->vap_index);
+			if (mld_index) {
+				wifi_debug(DEBUG_ERROR, "mlo disabled, remove ap(%d) from mld group(%d)\n",
+					(int)vap_info->vap_index, (int)mld_index);
+				if (wifi_eht_remove_from_ap_mld(mld_index, vap_info->vap_index)) {
+					wifi_debug(DEBUG_ERROR, "fail to remove ap(%d) from mld(%d)\n",
+						(int)vap_info->vap_index, (int)mld_index);
+					continue;
+				}
+
+				if (wifi_GetInterfaceName(vap_info->vap_index, interface_name) == RETURN_OK) {
+						return RETURN_ERR;
+					res = _syscmd_secure(buf, sizeof(buf), "ifconfig %s down", interface_name);
+					if (res) {
+						wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+					}
+					res = _syscmd_secure(buf, sizeof(buf), "ifconfig %s up", interface_name);
+					if (res) {
+						wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+					}
+				}
+
+				if (wifi_eht_get_ap_from_mld(mld_index, ap_index_array, &ap_array_num)) {
+					wifi_debug(DEBUG_ERROR,
+						"fail to get all aps from mld(%d), destroy it.\n", mld_index);
+					continue;
+				}
+
+				if (ap_array_num == 0) {
+					wifi_debug(DEBUG_ERROR,
+						"there's no affiliated ap in mld(%d), destroy it.\n", mld_index);
+					wifi_eht_destroy_ap_mld(mld_index);
+				}
+			}
+		} else {
+			if (mld_info->mld_index == 0 || mld_info->mld_index > MAX_ML_MLD_CNT) {
+				wifi_debug(DEBUG_ERROR, "invalid mld index %d, ignore it.\n",
+					(int)mld_info->mld_index);
+				continue;
+			}
+
+			if (!mld_test(mld_info->mld_index)) {
+				if (wifi_eht_create_ap_mld(mld_info->mld_index, mld_info->mld_addr)) {
+					wifi_debug(DEBUG_ERROR,
+						"fail to create ap mld(%d)\n", mld_info->mld_index);
+					continue;
+				}
+			} else {
+				if(mld_ap_test(&(mld_config.mld[mld_info->mld_index]), vap_info->vap_index)) {
+					wifi_debug(DEBUG_ERROR,
+						"current vap(%d) is already the affiliated ap of mld(%d)\n",
+						vap_info->vap_index, mld_info->mld_index);
+					continue;
+				}
+			}
+			mld_index = mld_ap_test_all_mlds(vap_info->vap_index);
+
+			if (mld_index != 0) {
+				/*transfer*/
+				wifi_eht_mld_ap_transfer(mld_index, mld_info->mld_index, vap_info->vap_index);
+
+				if (wifi_eht_get_ap_from_mld(mld_index, ap_index_array, &ap_array_num)) {
+					wifi_debug(DEBUG_ERROR,
+						"fail to get all aps from mld(%d), destroy it.\n", mld_index);
+					continue;
+				}
+				if (ap_array_num == 0) {
+					wifi_debug(DEBUG_ERROR,
+						"there's no affiliated ap in mld(%d), destroy it.\n", mld_index);
+					wifi_eht_destroy_ap_mld(mld_index);
+				}
+			} else {
+				/*join*/
+				wifi_eht_add_to_ap_mld(mld_info->mld_index, vap_info->vap_index);
+			}
+		}
+	}
+	mld_info_display();
+	wifi_eht_config_sync2_dat_by_radio(index);
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 	return RETURN_OK;
 }
