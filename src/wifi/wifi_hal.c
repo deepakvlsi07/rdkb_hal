@@ -7843,6 +7843,50 @@ static const char *get_line_from_str_buf(const char *buf, char *line)
     return NULL;
 }
 
+static INT wifi_getAssocConnectMode(INT apIndex, CHAR *input_string, CHAR *OperatingStandard)
+{
+    wifi_band band;
+	int ieee80211_mode = 0;
+
+	if (!input_string || !OperatingStandard)
+		return RETURN_ERR;
+
+	band = wifi_index_to_band(apIndex);
+
+	if (strstr(input_string, "HE"))
+		ieee80211_mode = WIFI_MODE_AX;
+	else if (strstr(input_string, "VHT"))
+		ieee80211_mode = WIFI_MODE_AC;
+	else if (strstr(input_string, "EHT"))
+		ieee80211_mode = WIFI_MODE_BE;
+
+	switch (ieee80211_mode) {
+		case WIFI_MODE_AC:
+			strncpy(OperatingStandard, "ac", 2);
+			break;
+		case WIFI_MODE_AX:
+			strncpy(OperatingStandard, "ax", 2);
+			break;
+		case WIFI_MODE_BE:
+			strncpy(OperatingStandard, "be", 2);
+			break;
+		default:
+			if(band == band_2_4)
+				strncpy(OperatingStandard,"b,g,n", 5);
+			else if(band == band_5)
+				strncpy(OperatingStandard,"a,n", 3);
+			else if(band == band_6)
+				strncpy(OperatingStandard,"ax", 2);
+			else {
+				wifi_dbg_printf("%s: failed to parse band %d\n", __FUNCTION__, band);
+				return RETURN_ERR;
+			}
+	}
+
+
+	return RETURN_OK;
+}
+
 INT wifi_getApAssociatedDeviceDiagnosticResult3(INT apIndex, wifi_associated_dev3_t **associated_dev_array, UINT *output_array_size)
 {
     unsigned int assoc_cnt = 0;
@@ -7870,8 +7914,9 @@ INT wifi_getApAssociatedDeviceDiagnosticResult3(INT apIndex, wifi_associated_dev
     //    signal avg:-67 [-71, -71] dBm
     //    Station 28:c2:1f:25:5f:99 (on wifi0)
     //    signal avg:-67 [-71, -70] dBm
-    if (sprintf(cmd,"iw dev %s station dump | tr -d '\\t' | grep 'Station\\|signal avg'", interface_name) < 0) {
-        wifi_dbg_printf("%s: failed to build iw dev command for %s\n", __FUNCTION__, interface_name);
+    if (sprintf(cmd,"iw dev %s station dump | tr -d '\t' | grep -E 'Station|signal avg"
+		"|tx bitrate|rx bitrate'", interface_name) < 0) {
+		wifi_dbg_printf("%s: failed to build iw dev command for %s\n", __FUNCTION__, interface_name);
         return RETURN_ERR;
     }
 
@@ -7912,6 +7957,7 @@ INT wifi_getApAssociatedDeviceDiagnosticResult3(INT apIndex, wifi_associated_dev
             }
         }
         else if (i < 0) {
+			wifi_dbg_printf("%s: not find station\n", __FUNCTION__);
             ptr = get_line_from_str_buf(ptr, line);
             continue; // We didn't detect 'station' entry yet
         }
@@ -7926,13 +7972,30 @@ INT wifi_getApAssociatedDeviceDiagnosticResult3(INT apIndex, wifi_associated_dev
             temp[i].cli_RSSI = rssi;
             temp[i].cli_SNR = 95 + rssi; // We use constant -95 noise floor
         }
+        else if (strstr(line, "tx bitrate")) {
+			ret = wifi_getAssocConnectMode(apIndex, line, temp[i].cli_OperatingStandard);
+			if (ret == RETURN_ERR) {
+				wifi_dbg_printf("%s: failed to execute tx get assoc connect mode command.\n", __FUNCTION__);
+				return ret;
+			}
+        }
+        else if (strstr(line, "rx bitrate")) {
+			/* if tx get ac, ax, be mode, need not get mode from rx */
+			if (strncmp(temp[i].cli_OperatingStandard,"ac", 2) &&
+				strncmp(temp[i].cli_OperatingStandard,"ax", 2) &&
+				strncmp(temp[i].cli_OperatingStandard,"be", 2)) {
+				ret = wifi_getAssocConnectMode(apIndex, line, temp[i].cli_OperatingStandard);
+				if (ret == RETURN_ERR) {
+					wifi_dbg_printf("%s: failed to execute rx get assoc connect mode command.\n", __FUNCTION__);
+					return ret;
+				}
+			}
+		}
         // Here other fields can be parsed if added to filter of 'iw dev' command
-
         ptr = get_line_from_str_buf(ptr, line);
-    };
+	}
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
-
     return RETURN_OK;
 }
 
