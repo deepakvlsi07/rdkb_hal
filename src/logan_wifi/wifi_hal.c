@@ -132,6 +132,8 @@ Licensed under the ISC license
 #define PREFIX_SSID_2G	"RDKB_2G"
 #define PREFIX_SSID_5G	"RDKB_5G"
 #define PREFIX_SSID_6G	"RDKB_6G"
+#define PREFIX_SSID_MLD	"MLD_GROUP"
+
 
 #ifndef RADIO_PREFIX
 #define RADIO_PREFIX	"wlan"
@@ -2411,38 +2413,25 @@ wifi_PrepareDefaultHostapdConfigs(bool reset)
 				wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 			}
 
-
-
-
+			res = snprintf(ssid, sizeof(ssid), "%s_%d", PREFIX_SSID_MLD, bss_idx);
+			if (os_snprintf_error(sizeof(ssid), res)) {
+				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+				return;
+			}
 
 			if (radio_idx == band_2_4) {
-				res = snprintf(ssid, sizeof(ssid), "%s_%d", PREFIX_SSID_2G, bss_idx);
-				if (os_snprintf_error(sizeof(ssid), res)) {
-					wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-					return;
-				}
 				res = snprintf(interface, sizeof(interface), "%s%d", PREFIX_WIFI2G, bss_idx);
 				if (os_snprintf_error(sizeof(interface), res)) {
 					wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 					return;
 				}
 			} else if (radio_idx == band_5) {
-				res = snprintf(ssid, sizeof(ssid), "%s_%d", PREFIX_SSID_5G, bss_idx);
-				if (os_snprintf_error(sizeof(ssid), res)) {
-					wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-					return;
-				}
 				res = snprintf(interface, sizeof(interface), "%s%d", PREFIX_WIFI5G, bss_idx);
 				if (os_snprintf_error(sizeof(interface), res)) {
 					wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 					return;
 				}
 			} else if (radio_idx == band_6) {
-				res = snprintf(ssid, sizeof(ssid), "%s_%d", PREFIX_SSID_6G, bss_idx);
-				if (os_snprintf_error(sizeof(ssid), res)) {
-					wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-					return;
-				}
 				res = snprintf(interface, sizeof(interface), "%s%d", PREFIX_WIFI6G, bss_idx);
 				if (os_snprintf_error(sizeof(interface), res)) {
 					wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
@@ -2687,7 +2676,7 @@ static void wifi_radio_reset_count_reset()
 	char ret_buf[MAX_BUF_SIZE] = {0};
 	int res;
 
-	if (access(VAP_STATUS_FILE, F_OK) != 0) {
+	if (access(RADIO_RESET_FILE, F_OK) != 0) {
 		res =  _syscmd_secure(ret_buf, sizeof(ret_buf), "touch %s", RADIO_RESET_FILE);
 		if (res) {
 			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
