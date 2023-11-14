@@ -2700,6 +2700,98 @@ static void wifi_radio_reset_count_reset()
 	}
 }
 
+static void wifi_guard_interval_file_check()
+{
+	char ret_buf[MAX_BUF_SIZE] = {0};
+	int res;
+	unsigned char i = 0;
+	char file[MAX_SUB_CMD_SIZE] = {0};
+	FILE *f = NULL;
+	INT radio_num = 0;
+
+	wifi_getMaxRadioNumber(&radio_num);
+	for (i = 0; i < radio_num; i++) {
+		res = snprintf(file, sizeof(file), "%s%d.txt", GUARD_INTERVAL_FILE, i);
+		if (os_snprintf_error(sizeof(file), res)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		}
+		wifi_debug(DEBUG_ERROR, "%s:file %s", __func__, file);
+		if (access(file, F_OK) != 0) {
+			res =  _syscmd_secure(ret_buf, sizeof(ret_buf), "touch %s", file);
+			if (res) {
+				wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			}
+		}
+		f = fopen(file, "w");
+		if (f == NULL)
+			return;
+		fprintf(f, "%s", "auto");
+		if (fclose(f) == EOF)
+			wifi_debug(DEBUG_ERROR, "Unexpected fclose fail\n");
+	}
+}
+
+static void wifi_power_percentage_file_check()
+{
+	char ret_buf[MAX_BUF_SIZE] = {0};
+	int res;
+	unsigned char band = 0;
+	char file[MAX_SUB_CMD_SIZE] = {0};
+	FILE *f = NULL;
+
+	for (band = band_2_4; band <= band_6; band++) {
+		res = snprintf(file, sizeof(file), "%s%d.txt", POWER_PERCENTAGE, band);
+		if (os_snprintf_error(sizeof(file), res)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		}
+		wifi_debug(DEBUG_ERROR, "%s:file %s", __func__, file);
+		if (access(file, F_OK) != 0) {
+			res =  _syscmd_secure(ret_buf, sizeof(ret_buf), "touch %s", file);
+			if (res) {
+				wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			}
+		}
+		f = fopen(file, "w");
+		if (f == NULL)
+			return;
+		fprintf(f, "%s", "100");
+		if (fclose(f) == EOF)
+			wifi_debug(DEBUG_ERROR, "Unexpected fclose fail\n");
+	}
+}
+
+static void wifi_mcs_file_check()
+{
+	char ret_buf[MAX_BUF_SIZE] = {0};
+	int res;
+	unsigned char i = 0;
+	char file[MAX_SUB_CMD_SIZE] = {0};
+	FILE *f = NULL;
+	INT radio_num = 0;
+
+	wifi_getMaxRadioNumber(&radio_num);
+	for (i = 0; i < radio_num; i++) {
+		res = snprintf(file, sizeof(file), "%s%d.txt", MCS_FILE, i);
+		if (os_snprintf_error(sizeof(file), res)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		}
+		wifi_debug(DEBUG_ERROR, "%s:file %s", __func__, file);
+		if (access(file, F_OK) != 0) {
+			res =  _syscmd_secure(ret_buf, sizeof(ret_buf), "touch %s", file);
+			if (res) {
+				wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			}
+		}
+		f = fopen(file, "w");
+		if (f == NULL)
+			return;
+		fprintf(f, "%s", "11");
+		if (fclose(f) == EOF)
+			wifi_debug(DEBUG_ERROR, "Unexpected fclose fail\n");
+	}
+}
+
+
 // Initializes the wifi subsystem (all radios)
 INT wifi_init()							//RDKB
 {
@@ -2721,6 +2813,9 @@ INT wifi_init()							//RDKB
 		eht_mld_config_init();
 		CallOnce = 0;
 		mld_info_display();
+		wifi_guard_interval_file_check();
+		wifi_power_percentage_file_check();
+		wifi_mcs_file_check();
 	}
 
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
@@ -6316,7 +6411,7 @@ INT wifi_getRadioTransmitPower(INT radioIndex, ULONG *output_ulong)	//RDKB
 
 	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
 		return RETURN_ERR;
-	res = snprintf(pwr_file, sizeof(pwr_file), "%s%d.txt", POWER_PERCENTAGE, radioIndex);
+	res = snprintf(pwr_file, sizeof(pwr_file), "%s%d.txt", POWER_PERCENTAGE, radio_index_to_band(radioIndex));
 	if (os_snprintf_error(sizeof(pwr_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
@@ -6411,7 +6506,7 @@ INT wifi_setRadioTransmitPower(INT radioIndex, ULONG TransmitPower)	//RDKB
 	mtk_nl80211_deint(&unl_ins);
 	wifi_debug(DEBUG_NOTICE, "set cmd success.\n");
 
-	res = snprintf(pwr_file, sizeof(pwr_file), "%s%d.txt", POWER_PERCENTAGE, radioIndex);
+	res = snprintf(pwr_file, sizeof(pwr_file), "%s%d.txt", POWER_PERCENTAGE, radio_index_to_band(radioIndex));
 	if (os_snprintf_error(sizeof(pwr_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
@@ -8173,10 +8268,8 @@ INT wifi_setRadioSTBCEnable(INT radioIndex, BOOL STBC_Enable)
 	char config_file[64] = {'\0'};
 
 	char buf[512] = {'\0'};
-	char stbc_config[16] = {'\0'};
 	wifi_band band;
 	int iterator = 0;
-	BOOL current_stbc = FALSE;
 	int ant_count = 0;
 	int ant_bitmap = 0;
 	struct params list;
@@ -8210,29 +8303,11 @@ INT wifi_setRadioSTBCEnable(INT radioIndex, BOOL STBC_Enable)
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
 	}
-
 	// set ht and vht config
 	for (int i = 0; i < iterator; i++) {
-		memset(stbc_config, 0, sizeof(stbc_config));
 
 		memset(buf, 0, sizeof(buf));
 		list.name = (i == 0)?"ht_capab":"vht_capab";
-		res = snprintf(stbc_config, sizeof(stbc_config), "%s", list.name);
-		if (os_snprintf_error(sizeof(stbc_config), res)) {
-			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-			return RETURN_ERR;
-		}
-
-		res = _syscmd_secure(buf, sizeof(buf), "cat %s | grep -E '^%s' | grep 'STBC'", config_file, stbc_config);
-		if (res) {
-			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-		}
-
-		if (strlen(buf) != 0)
-			current_stbc = TRUE;
-		if (current_stbc == STBC_Enable)
-			continue;
-
 		if (STBC_Enable == TRUE) {
 			// Append the STBC flags in capab config
 
