@@ -13481,6 +13481,26 @@ INT wifi_getApSecurityMFPConfig(INT apIndex, CHAR *output_string)
 	wifi_dbg_printf("\n[%s]: ieee80211w is : %s", __func__, output);
 	return RETURN_OK;
 }
+INT wifi_setApMBOConfig(INT apIndex)
+{
+	struct params params;
+	char config_file[MAX_BUF_SIZE] = {0};
+	int res;
+
+	params.name = "mbo";
+	params.value = "0";
+
+	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, apIndex);
+	if (os_snprintf_error(sizeof(config_file), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
+
+	wifi_hostapdWrite(config_file, &params, 1);
+	wifi_hostapdProcessUpdate(apIndex, &params, 1);
+	return RETURN_OK;
+}
+
 INT wifi_setApSecurityMFPConfig(INT apIndex, CHAR *MfpConfig)
 {
 	struct params params;
@@ -13493,8 +13513,11 @@ INT wifi_setApSecurityMFPConfig(INT apIndex, CHAR *MfpConfig)
 		return RETURN_ERR;
 
 	params.name = "ieee80211w";
-	if (strncmp(MfpConfig, "Disabled", strlen("Disabled")) == 0)
+	if (strncmp(MfpConfig, "Disabled", strlen("Disabled")) == 0) {
 		params.value = "0";
+		/* mbo should disable when pmf = 0*/
+		wifi_setApMBOConfig(apIndex);
+	}
 	else if (strncmp(MfpConfig, "Optional", strlen("Optional")) == 0)
 		params.value = "1";
 	else if (strncmp(MfpConfig, "Required", strlen("Required")) == 0)
@@ -19027,6 +19050,7 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 	char band[64] = {0};
 	char buf[256] = {0};
 	char config_file[64] = {0};
+	char dat_file[128] = {0};
 
 	UINT mode = 0;
 	BOOL enabled = FALSE;
@@ -19045,6 +19069,11 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 	memset(operationParam, 0, sizeof(wifi_radio_operationParam_t));
 	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, index);
 	if (os_snprintf_error(sizeof(config_file), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
+	res = snprintf(dat_file, sizeof(dat_file), "%s%d.dat", LOGAN_DAT_FILE, index);
+	if (os_snprintf_error(sizeof(dat_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
 	}
@@ -19150,7 +19179,7 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 	operationParam->operationalDataTransmitRates = operationalDataTransmitRates;
 
 	memset(buf, 0, sizeof(buf));
-	wifi_hostapdRead(config_file, "fragm_threshold", buf, sizeof(buf));
+	wifi_datfileRead(dat_file, "FragThreshold", buf, sizeof(buf));
 	if (hal_strtoul(buf, 10, &tmp) < 0) {
 		wifi_debug(DEBUG_ERROR, "Unexpected strtoul fail\n");
 	}
@@ -19169,7 +19198,7 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 	operationParam->transmitPower = transmitPower;
 
 	memset(buf, 0, sizeof(buf));
-	wifi_hostapdRead(config_file, "rts_threshold", buf, sizeof(buf));
+	wifi_datfileRead(dat_file, "RTSThreshold", buf, sizeof(buf));
 	if (strcmp(buf, "-1") == 0) {
 		operationParam->rtsThreshold = (UINT)-1;	// maxuimum unsigned integer value
 		operationParam->ctsProtection = FALSE;
@@ -19182,7 +19211,7 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 	}
 
 	memset(buf, 0, sizeof(buf));
-	wifi_hostapdRead(config_file, "ht_coex", buf, sizeof(buf));
+	wifi_datfileRead(dat_file, "HT_BSSCoexistence", buf, sizeof(buf));
 	if (strcmp(buf, "0") == 0)
 		operationParam->obssCoex = FALSE;
 	else
