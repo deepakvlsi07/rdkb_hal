@@ -6530,20 +6530,20 @@ INT wifi_getRadioIEEE80211hSupported(INT radioIndex, BOOL *Supported)  //Tr181
 INT wifi_getRadioIEEE80211hEnabled(INT radioIndex, BOOL *enable) //Tr181
 {
 	char buf[64]={'\0'};
-	char config_file[64] = {'\0'};
+	char config_dat_file[64] = {'\0'};
 	int res;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	if(enable == NULL)
 		return RETURN_ERR;
 
-	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
-	if (os_snprintf_error(sizeof(config_file), res)) {
+	res = snprintf(config_dat_file, sizeof(config_dat_file), "%s%d.dat", LOGAN_DAT_FILE, radioIndex);
+	if (os_snprintf_error(sizeof(config_dat_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
 	}
 	/* wifi_hostapdRead(config_file, "ieee80211h", buf, sizeof(buf)); */
-	wifi_datfileRead(config_file, "IEEE80211H", buf, sizeof(buf));
+	wifi_datfileRead(config_dat_file, "IEEE80211H", buf, sizeof(buf));
 
 	if (strncmp(buf, "1", 1) == 0)
 		*enable = TRUE;
@@ -6560,14 +6560,11 @@ INT wifi_setRadioIEEE80211hEnabled(INT radioIndex, BOOL enable)  //Tr181
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	struct params params={'\0'};
 	struct params dat={0};
-	char config_file[MAX_BUF_SIZE] = {0};
 	char config_dat_file[MAX_BUF_SIZE] = {0};
 	wifi_band band = band_invalid;
 	int res;
 	int ret = -1;
 	unsigned char en_80211h;
-
-	params.name = "ieee80211h";
 
 	if (enable) {
 		params.value = "1";
@@ -6581,11 +6578,6 @@ INT wifi_setRadioIEEE80211hEnabled(INT radioIndex, BOOL enable)  //Tr181
 	dat.value = params.value;
 
 	band = wifi_index_to_band(radioIndex);
-	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
-	if (os_snprintf_error(sizeof(config_file), res)) {
-		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-		return RETURN_ERR;
-	}
 
 	res = snprintf(config_dat_file, sizeof(config_dat_file), "%s%d.dat", LOGAN_DAT_FILE, band);
 	if (os_snprintf_error(sizeof(config_dat_file), res)) {
@@ -6593,9 +6585,7 @@ INT wifi_setRadioIEEE80211hEnabled(INT radioIndex, BOOL enable)  //Tr181
 		return RETURN_ERR;
 	}
 
-	wifi_hostapdWrite(config_file, &params, 1);
 	wifi_datfileWrite(config_dat_file, &dat, 1);
-	wifi_hostapdProcessUpdate(radioIndex, &params, 1);
 
 	/*do IEEE80211h quick setting*/
 	ret = wifi_set80211h_netlink(radioIndex, en_80211h);
@@ -11492,7 +11482,7 @@ INT wifi_getApSecurityModesSupported(INT apIndex, CHAR *output)
 	if(!output || apIndex>=MAX_APS)
 		return RETURN_ERR;
 	//res = snprintf(output, 128, "None,WPA-Personal,WPA2-Personal,WPA-WPA2-Personal,WPA-Enterprise,WPA2-Enterprise,WPA-WPA2-Enterprise");
-	res = snprintf(output, 128, "None,WPA2-Personal,WPA-WPA2-Personal,WPA2-Enterprise,WPA-WPA2-Enterprise,WPA3-Personal,WPA3-Enterprise");
+	res = snprintf(output, 128, "None,WPA2-Personal,WPA-WPA2-Personal,WPA2-Enterprise,WPA-WPA2-Enterprise,WPA3-Personal,WPA3-Enterprise,WPA3-Personal-Transition");
 	if (os_snprintf_error(128, res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
