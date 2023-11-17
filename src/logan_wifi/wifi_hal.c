@@ -585,6 +585,110 @@ char ext_prefix[MAX_NUM_RADIOS][IFNAMSIZ];
 char default_ssid[MAX_NUM_RADIOS][MAX_SSID_LEN];;
 int radio_band[MAX_NUM_RADIOS];
 
+typedef enum _RT_802_11_PHY_MODE {
+	PHY_11BG_MIXED = 0,
+	PHY_11B = 1,
+	PHY_11A = 2,
+	PHY_11ABG_MIXED = 3,
+	PHY_11G = 4,
+	PHY_11ABGN_MIXED = 5,	/* both band   5 */
+	PHY_11N_2_4G = 6,		/* 11n-only with 2.4G band	  6 */
+	PHY_11GN_MIXED = 7,		/* 2.4G band	  7 */
+	PHY_11AN_MIXED = 8,		/* 5G  band	   8 */
+	PHY_11BGN_MIXED = 9,	/* if check 802.11b.	  9 */
+	PHY_11AGN_MIXED = 10,	/* if check 802.11b.	  10 */
+	PHY_11N_5G = 11,		/* 11n-only with 5G band				11 */
+	PHY_11VHT_N_ABG_MIXED = 12, /* 12 -> AC/A/AN/B/G/GN mixed */
+	PHY_11VHT_N_AG_MIXED = 13, /* 13 -> AC/A/AN/G/GN mixed  */
+	PHY_11VHT_N_A_MIXED = 14, /* 14 -> AC/AN/A mixed in 5G band */
+	PHY_11VHT_N_MIXED = 15, /* 15 -> AC/AN mixed in 5G band */
+	PHY_11AX_24G = 16,
+	PHY_11AX_5G = 17,
+	PHY_11AX_6G = 18,
+	PHY_11AX_24G_6G = 19,
+	PHY_11AX_5G_6G = 20,
+	PHY_11AX_24G_5G_6G = 21,
+	PHY_11BE_24G = 22,
+	PHY_11BE_5G = 23,
+	PHY_11BE_6G = 24,
+	PHY_11BE_24G_6G = 25,
+	PHY_11BE_5G_6G = 26,
+	PHY_11BE_24G_5G_6G = 27,
+	PHY_MODE_MAX,
+} RT_802_11_PHY_MODE;
+
+enum WIFI_MODE {
+	WMODE_INVALID = 0,
+	WMODE_A = 1 << 0,
+	WMODE_B = 1 << 1,
+	WMODE_G = 1 << 2,
+	WMODE_GN = 1 << 3,
+	WMODE_AN = 1 << 4,
+	WMODE_AC = 1 << 5,
+	WMODE_AX_24G = 1 << 6,
+	WMODE_AX_5G = 1 << 7,
+	WMODE_AX_6G = 1 << 8,
+	WMODE_BE_24G = 1 << 9,
+	WMODE_BE_5G = 1 << 10,
+	WMODE_BE_6G = 1 << 11,
+	/*
+	 * total types of supported wireless mode,
+	 * add this value once yow add new type
+	 */
+	WMODE_COMP = 12,
+};
+
+static unsigned int CFG_WMODE_MAP[] = {
+	PHY_11BG_MIXED, (WMODE_B | WMODE_G), /* 0 => B/G mixed */
+	PHY_11B, (WMODE_B), /* 1 => B only */
+	PHY_11A, (WMODE_A), /* 2 => A only */
+	PHY_11ABG_MIXED, (WMODE_A | WMODE_B | WMODE_G), /* 3 => A/B/G mixed */
+	PHY_11G, WMODE_G, /* 4 => G only */
+	PHY_11ABGN_MIXED, (WMODE_B | WMODE_G | WMODE_GN | WMODE_A | WMODE_AN), /* 5 => A/B/G/GN/AN mixed */
+	PHY_11N_2_4G, (WMODE_GN), /* 6 => N in 2.4G band only */
+	PHY_11GN_MIXED, (WMODE_G | WMODE_GN), /* 7 => G/GN, i.e., no CCK mode */
+	PHY_11AN_MIXED, (WMODE_A | WMODE_AN), /* 8 => A/N in 5 band */
+	PHY_11BGN_MIXED, (WMODE_B | WMODE_G | WMODE_GN), /* 9 => B/G/GN mode*/
+	PHY_11AGN_MIXED, (WMODE_G | WMODE_GN | WMODE_A | WMODE_AN), /* 10 => A/AN/G/GN mode, not support B mode */
+	PHY_11N_5G, (WMODE_AN), /* 11 => only N in 5G band */
+	PHY_11VHT_N_ABG_MIXED, (WMODE_B | WMODE_G | WMODE_GN | WMODE_A | WMODE_AN | WMODE_AC), /* 12 => B/G/GN/A/AN/AC mixed*/
+	PHY_11VHT_N_AG_MIXED, (WMODE_G | WMODE_GN | WMODE_A | WMODE_AN | WMODE_AC), /* 13 => G/GN/A/AN/AC mixed, no B mode */
+	PHY_11VHT_N_A_MIXED, (WMODE_A | WMODE_AN | WMODE_AC), /* 14 => A/AC/AN mixed */
+	PHY_11VHT_N_MIXED, (WMODE_AN | WMODE_AC), /* 15 => AC/AN mixed, but no A mode */
+	PHY_11AX_24G, (WMODE_B | WMODE_G | WMODE_GN | WMODE_AX_24G),
+	PHY_11AX_5G, (WMODE_A | WMODE_AN | WMODE_AC | WMODE_AX_5G),
+	PHY_11AX_6G, (WMODE_AN | WMODE_AC | WMODE_AX_5G | WMODE_AX_6G),
+	PHY_11AX_24G_6G, (WMODE_G | WMODE_GN | WMODE_AX_24G | WMODE_AX_6G),
+	PHY_11AX_5G_6G, (WMODE_A | WMODE_AN | WMODE_AC | WMODE_AX_5G | WMODE_AX_6G),
+	PHY_11AX_24G_5G_6G, (WMODE_G | WMODE_GN | WMODE_AX_24G | WMODE_A |
+						 WMODE_AN | WMODE_AC | WMODE_AX_5G | WMODE_AX_6G),
+	PHY_11BE_24G,
+	(WMODE_B | WMODE_G | WMODE_GN | WMODE_AX_24G | WMODE_BE_24G),
+	PHY_11BE_5G,
+	(WMODE_A | WMODE_AN | WMODE_AC | WMODE_AX_5G | WMODE_BE_5G),
+	PHY_11BE_6G,
+	(WMODE_AN | WMODE_AC | WMODE_AX_5G | WMODE_AX_6G | WMODE_BE_6G),
+	PHY_11BE_24G_6G,
+	(WMODE_G | WMODE_GN | WMODE_AX_24G | WMODE_AX_6G
+	| WMODE_BE_24G | WMODE_BE_6G),
+	PHY_11BE_5G_6G,
+	(WMODE_A | WMODE_AN | WMODE_AC | WMODE_AX_5G | WMODE_AX_6G
+	| WMODE_BE_5G | WMODE_BE_6G),
+	PHY_11BE_24G_5G_6G,
+	(WMODE_B | WMODE_G | WMODE_GN | WMODE_AX_24G | WMODE_A
+	| WMODE_AN | WMODE_AC | WMODE_AX_5G | WMODE_AX_6G
+	| WMODE_BE_24G | WMODE_BE_5G | WMODE_BE_6G),
+
+	PHY_MODE_MAX, WMODE_INVALID /* default phy mode if not match */
+};
+
+#define WMODE_CAP_6G(_x) \
+(((_x) & (WMODE_AX_6G | WMODE_BE_6G)) != 0)
+#define WMODE_CAP_5G(_x) \
+(((_x) & (WMODE_A | WMODE_AN | WMODE_AC | WMODE_AX_5G | WMODE_BE_5G)) != 0)
+#define WMODE_CAP_2G(_x) \
+(((_x) & (WMODE_B | WMODE_G | WMODE_GN | WMODE_AX_24G | WMODE_BE_24G)) != 0)
+
 static int array_index_to_vap_index(UINT radioIndex, int arrayIndex);
 static int vap_index_to_array_index(int vapIndex, int *radioIndex, int *arrayIndex);
 static int wifi_datfileRead(char *conf_file, char *param, char *output, int output_size);
@@ -2273,6 +2377,28 @@ INT wifi_initRadio(INT radioIndex)
 	return RETURN_OK;
 }
 
+USHORT cfgmode_to_wmode(UCHAR cfg_mode)
+{
+	if (cfg_mode >= PHY_MODE_MAX)
+		cfg_mode =  PHY_MODE_MAX;
+
+	return CFG_WMODE_MAP[cfg_mode * 2 + 1];
+}
+
+INT wlan_config_set_ch_band(unsigned int wmode)
+{
+	int band = band_2_4;
+
+	/* do not change sequence due to 6GHz might include AC/GN then confused */
+	if (WMODE_CAP_6G(wmode))
+		band = band_6;
+	else if (WMODE_CAP_5G(wmode))
+		band = band_5;
+
+	return band;
+}
+
+
 static void
 wifi_ParseProfile(void)
 {
@@ -2286,6 +2412,7 @@ wifi_ParseProfile(void)
 	char chip_name[12];
 	char card_profile[MAX_BUF_SIZE] = {0};
 	char band_profile[MAX_BUF_SIZE] = {0};
+	unsigned int wmode;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -2354,26 +2481,8 @@ wifi_ParseProfile(void)
 			}
 
 			wireless_mode = atoi(buf);
-			switch (wireless_mode) {
-			case 22:
-			case 16:
-			case 6:
-			case 4:
-			case 1:
-				radio_band[phy_idx] = band_2_4;
-				break;
-			case 23:
-			case 17:
-			case 14:
-			case 11:
-			case 2:
-				radio_band[phy_idx] = band_5;
-				break;
-			case 24:
-			case 18:
-				radio_band[phy_idx] = band_6;
-				break;
-			}
+			wmode = cfgmode_to_wmode(wireless_mode);
+			radio_band[phy_idx] = wlan_config_set_ch_band(wmode);
 			phy_idx++;
 		}
 	}
@@ -4069,27 +4178,6 @@ INT wifi_getRadioStandard(INT radioIndex, CHAR *output_string, BOOL *gOnly, BOOL
 	return RETURN_OK;
 }
 
-enum WIFI_MODE {
-	WMODE_INVALID = 0,
-	WMODE_A = 1 << 0,
-	WMODE_B = 1 << 1,
-	WMODE_G = 1 << 2,
-	WMODE_GN = 1 << 3,
-	WMODE_AN = 1 << 4,
-	WMODE_AC = 1 << 5,
-	WMODE_AX_24G = 1 << 6,
-	WMODE_AX_5G = 1 << 7,
-	WMODE_AX_6G = 1 << 8,
-	WMODE_BE_24G = 1 << 9,
-	WMODE_BE_5G = 1 << 10,
-	WMODE_BE_6G = 1 << 11,
-	/*
-	 * total types of supported wireless mode,
-	 * add this value once yow add new type
-	 */
-	WMODE_COMP = 12,
-};
-
 #define RADIO_MODE_LEN 32
 
 int get_radio_mode_handler(struct nl_msg *msg, void *cb)
@@ -4430,38 +4518,6 @@ INT wifi_setRadioChannelMode(INT radioIndex, CHAR *channelMode, BOOL gOnlyFlag, 
 
 	return RETURN_OK;
 }
-
-typedef enum _RT_802_11_PHY_MODE {
-	PHY_11BG_MIXED = 0,
-	PHY_11B = 1,
-	PHY_11A = 2,
-	PHY_11ABG_MIXED = 3,
-	PHY_11G = 4,
-	PHY_11ABGN_MIXED = 5,	/* both band   5 */
-	PHY_11N_2_4G = 6,		/* 11n-only with 2.4G band	  6 */
-	PHY_11GN_MIXED = 7,		/* 2.4G band	  7 */
-	PHY_11AN_MIXED = 8,		/* 5G  band	   8 */
-	PHY_11BGN_MIXED = 9,	/* if check 802.11b.	  9 */
-	PHY_11AGN_MIXED = 10,	/* if check 802.11b.	  10 */
-	PHY_11N_5G = 11,		/* 11n-only with 5G band				11 */
-	PHY_11VHT_N_ABG_MIXED = 12, /* 12 -> AC/A/AN/B/G/GN mixed */
-	PHY_11VHT_N_AG_MIXED = 13, /* 13 -> AC/A/AN/G/GN mixed  */
-	PHY_11VHT_N_A_MIXED = 14, /* 14 -> AC/AN/A mixed in 5G band */
-	PHY_11VHT_N_MIXED = 15, /* 15 -> AC/AN mixed in 5G band */
-	PHY_11AX_24G = 16,
-	PHY_11AX_5G = 17,
-	PHY_11AX_6G = 18,
-	PHY_11AX_24G_6G = 19,
-	PHY_11AX_5G_6G = 20,
-	PHY_11AX_24G_5G_6G = 21,
-	PHY_11BE_24G = 22,
-	PHY_11BE_5G = 23,
-	PHY_11BE_6G = 24,
-	PHY_11BE_24G_6G = 25,
-	PHY_11BE_5G_6G = 26,
-	PHY_11BE_24G_5G_6G = 27,
-	PHY_MODE_MAX,
-} RT_802_11_PHY_MODE;
 
 unsigned int puremode_to_wireless_mode(INT radioIndex, UINT pureMode)
 {
@@ -7449,6 +7505,7 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
 	bool filter_BSS = false;	 // The flag determine whether the BSS information need to be filterd.
 	int phyId = 0, res;
 	unsigned long len, tmp;
+	unsigned int DTIM_count;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s: %d\n", __func__, __LINE__);
 
@@ -7549,10 +7606,11 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
 			memcpy(scan_array[index].ap_SecurityModeEnabled, "None", strlen("None"));
 			memset(scan_array[index].ap_EncryptionMode, 0, sizeof(scan_array[index].ap_EncryptionMode));
 			memcpy(scan_array[index].ap_EncryptionMode, "None", strlen("None"));
-		} else if (strstr(line, "freq") != NULL) {
+		} else if (strstr(line, "freq:") != NULL) {
 			if (sscanf(line,"	freq: %d", &freq) != 1) {
 				wifi_debug(DEBUG_ERROR, "Unexpected sscanf fail\n");
 			}
+
 			scan_array[index].ap_Channel = ieee80211_frequency_to_channel(freq);
 
 			if (freq >= 2412 && freq <= 2484) {
@@ -7591,7 +7649,7 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
 				wifi_debug(DEBUG_ERROR, "Unexpected sscanf fail\n");
 				goto err;
 			}
-		} else if (strstr(line,"SSID") != NULL) {
+		} else if (strstr(line,"	SSID:") != NULL) {
 			if (sscanf(line,"	SSID: %32s", scan_array[index].ap_SSID) != 1) {
 				wifi_debug(DEBUG_ERROR, "Unexpected sscanf fail\n");
 				//goto err;
@@ -7635,7 +7693,7 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
 				goto err;
 			strncpy(scan_array[index].ap_SupportedDataTransferRates, SRate, strlen(SRate));
 		} else if (strstr(line, "DTIM") != NULL) {
-			if (sscanf(line,"DTIM Period %u", &(scan_array[index].ap_DTIMPeriod)) != 1) {
+			if (sscanf(line,"	TIM: DTIM Count %u DTIM Period %u", &DTIM_count, &(scan_array[index].ap_DTIMPeriod)) != 2) {
 				wifi_debug(DEBUG_ERROR, "Unexpected sscanf fail\n");
 			}
 		} else if (strstr(line, "VHT capabilities") != NULL) {
@@ -7652,7 +7710,7 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
 		} else if (strstr(line, "VHT operation") != NULL) {
 			if (fgets(line, sizeof(line), f) == NULL) 	{
 				wifi_debug(DEBUG_ERROR, "fgets fail\n");
-				goto err;
+				break;
 			}
 			if (sscanf(line,"		 * channel width: %d", &vht_channel_width) != 1) {
 				wifi_debug(DEBUG_ERROR, "Unexpected sscanf fail\n");
@@ -7673,7 +7731,7 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
 		} else if (strstr(line, "HT operation") != NULL) {
 			if (fgets(line, sizeof(line), f) == NULL) 	{
 				wifi_debug(DEBUG_ERROR, "fgets fail\n");
-				goto err;
+				break;
 			}
 			if (sscanf(line,"		 * secondary channel offset: %127s", buf) != 1) {
 				wifi_debug(DEBUG_ERROR, "Unexpected sscanf fail\n");
@@ -7704,7 +7762,7 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
 			scan_array[index].ap_OperatingStandards[2] = '\0';
 			if (fgets(line, sizeof(line), f) == NULL) 	{
 				wifi_debug(DEBUG_ERROR, "fgets fail\n");
-				goto err;
+				break;
 			}
 			if (strncmp(scan_array[index].ap_OperatingFrequencyBand, "2.4GHz", strlen("2.4GHz")) == 0) {
 				if (strstr(line, "HE40/2.4GHz") != NULL) {
@@ -7722,7 +7780,7 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
 					scan_array[index].ap_OperatingChannelBandwidth[len] = '\0';
 					if (fgets(line, sizeof(line), f) == NULL) 	{
 						wifi_debug(DEBUG_ERROR, "fgets fail\n");
-						goto err;
+						break;
 					}
 				} else
 					continue;
@@ -14404,7 +14462,7 @@ INT wifi_getNeighboringWiFiStatus(INT radio_index, wifi_neighbor_ap2_t **neighbo
 			memcpy(scan_array[index].ap_SecurityModeEnabled, "None", strlen("None"));
 			memset(scan_array[index].ap_EncryptionMode, 0, sizeof(scan_array[index].ap_EncryptionMode));
 			memcpy(scan_array[index].ap_EncryptionMode, "None", strlen("None"));
-		} else if (strstr(line, "freq") != NULL) {
+		} else if (strstr(line, "freq:") != NULL) {
 			if (sscanf(line,"	freq: %d", &freq) != 1) {
 				wifi_debug(DEBUG_ERROR, "sscanf fail\n");
 				//goto err;
@@ -14546,7 +14604,7 @@ INT wifi_getNeighboringWiFiStatus(INT radio_index, wifi_neighbor_ap2_t **neighbo
 		} else if (strstr(line, "VHT operation") != NULL) {
 			if (fgets(line, sizeof(line), f) == NULL) {
 				wifi_debug(DEBUG_ERROR, "fgets fail\n");
-				goto err;
+				break;
 			}
 			if (sscanf(line,"		 * channel width: %d", &vht_channel_width) != 1) {
 				wifi_debug(DEBUG_ERROR, "sscanf fail\n");
@@ -14567,7 +14625,7 @@ INT wifi_getNeighboringWiFiStatus(INT radio_index, wifi_neighbor_ap2_t **neighbo
 		} else if (strstr(line, "HT operation") != NULL) {
 			if (fgets(line, sizeof(line), f) == NULL) {
 				wifi_debug(DEBUG_ERROR, "fgets fail\n");
-				goto err;
+				break;
 			}
 			if (sscanf(line,"		 * secondary channel offset: %127s", buf) != 1) {
 				wifi_debug(DEBUG_ERROR, "sscanf fail\n");
@@ -14604,7 +14662,7 @@ INT wifi_getNeighboringWiFiStatus(INT radio_index, wifi_neighbor_ap2_t **neighbo
 			scan_array[index].ap_OperatingStandards[2] = '\0';
 			if (fgets(line, sizeof(line), f) == NULL) {
 				wifi_debug(DEBUG_ERROR, "fgets fail\n");
-				goto err;
+				break;
 			}
 			if (strncmp(scan_array[index].ap_OperatingFrequencyBand, "2.4GHz", strlen("2.4GHz")) == 0) {
 				if (strstr(line, "HE40/2.4GHz") != NULL) {
