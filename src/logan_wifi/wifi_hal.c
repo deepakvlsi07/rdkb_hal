@@ -13039,6 +13039,133 @@ static const char *get_line_from_str_buf(const char *buf, char *line)
 	return NULL;
 }
 
+int mtk_get_station_callback(struct nl_msg *msg, void *cb)
+{
+	struct nlattr *tb[NL80211_ATTR_MAX + 1];
+	struct nlattr *vndr_tb[MTK_NL80211_VENDOR_ATTR_STA_ATTR_MAX + 1];
+	struct genlmsghdr *gnlh;
+	int err = 0;
+	unsigned short len = 0;
+	struct station_information *sta;
+	struct mtk_nl80211_cb_data *cb_data = cb;
+	if (!msg || !cb_data) {
+		wifi_debug(DEBUG_ERROR, "msg(%p) or cb_data(%p) is null,error.\n", msg, cb_data);
+		return NL_SKIP;
+	}
+
+	gnlh = nlmsg_data(nlmsg_hdr(msg));
+	err = nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+			  genlmsg_attrlen(gnlh, 0), NULL);
+	if (err < 0) {
+		wifi_debug(DEBUG_ERROR, "nla_parse acl list nl80211 msg fails,error.\n");
+		return NL_SKIP;
+	}
+	if (tb[NL80211_ATTR_VENDOR_DATA]) {
+		err = nla_parse_nested(vndr_tb, MTK_NL80211_VENDOR_ATTR_STA_ATTR_MAX,
+			tb[NL80211_ATTR_VENDOR_DATA], NULL);
+		if (err < 0)
+			return NL_SKIP;
+		if (vndr_tb[MTK_NL80211_VENDOR_ATTR_STA_INFO]) {
+			len = nla_len(vndr_tb[MTK_NL80211_VENDOR_ATTR_STA_INFO]);
+			sta = (struct station_information*)nla_data(vndr_tb[MTK_NL80211_VENDOR_ATTR_STA_INFO]);
+			if (len != sizeof(*sta)){
+				wifi_debug(DEBUG_ERROR,"result len(%u) is invalid, expected len(%lu)!!!\n", len, sizeof(*sta));
+				return NL_SKIP;
+			}
+			memcpy(cb_data->out_buf, sta, len);
+		} else
+			wifi_debug(DEBUG_ERROR, "no MTK_NL80211_VENDOR_ATTR_STA_INFO attr\n");
+	} else
+		wifi_debug(DEBUG_ERROR, "no any station result from driver\n");
+	return NL_OK;
+}
+INT station_info_2_dev3(struct station_information *sta, wifi_associated_dev3_t *dev3)
+{
+	int i = 0, n = 0;
+
+	dev3->cli_LastDataDownlinkRate = sta->rx_rate;
+	dev3->cli_LastDataUplinkRate = sta->tx_rate;
+	dev3->cli_SNR = sta->snr[0];
+	dev3->cli_BytesReceived = sta->rx_bytes;
+	dev3->cli_BytesSent = sta->tx_bytes;
+	for (i = 0; i < 4; i++) {
+		if (sta->rssi[0] == -127)
+			continue;
+		dev3->cli_RSSI += sta->rssi[i];
+		n++;
+	}
+	dev3->cli_RSSI = dev3->cli_RSSI/n;
+	dev3->cli_PacketsReceived = sta->rx_packets;
+	dev3->cli_PacketsSent = sta->tx_packets;
+	dev3->mld_enable = sta->mlo_enable;
+	memcpy(dev3->mld_addr, sta->mld_mac, 6);
+	for (i = 0; i < 3; i++) {
+		dev3->mld_link_info[i].valid = sta->mlo_link[i].valid;
+		if (!dev3->mld_link_info[i].valid)
+			continue;
+		memcpy(dev3->mld_link_info[i].link_addr, sta->mlo_link[i].link_address, 6);
+		dev3->mld_link_info[i].rssi = sta->mlo_link[i].rssi[0];
+		dev3->mld_link_info[i].rx_bytes = sta->mlo_link[i].rx_bytes;
+		dev3->mld_link_info[i].tx_bytes = sta->mlo_link[i].tx_bytes;
+		dev3->mld_link_info[i].rx_rate = sta->mlo_link[i].rx_rate;
+		dev3->mld_link_info[i].tx_rate = sta->mlo_link[i].tx_rate;
+	}
+
+	return RETURN_OK;
+}
+
+INT fill_dev3_statistics_by_mac(INT apIndex, wifi_associated_dev3_t *dev3, unsigned char *mac)
+{
+	char inf_name[IF_NAME_SIZE] = {0};
+	unsigned int if_idx = 0;
+	int ret = -1;
+	struct unl unl_ins;
+	struct nl_msg *msg	= NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param nl_param;
+	struct mtk_nl80211_cb_data cb_data;
+	struct station_information station;
+
+	if (wifi_GetInterfaceName(apIndex, inf_name) != RETURN_OK)
+			return RETURN_ERR;
+
+	if_idx = if_nametoindex(inf_name);
+	if (!if_idx) {
+		wifi_debug(DEBUG_ERROR,"can't finde ifname(%s) index,ERROR\n", inf_name);
+		return RETURN_ERR;
+	}
+	/*init mtk nl80211 vendor cmd*/
+	nl_param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_GET_STA;
+	nl_param.if_type = NL80211_ATTR_IFINDEX;
+	nl_param.if_idx = if_idx;
+
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &nl_param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+	/*add mtk vendor cmd data*/
+	if (nla_put(msg, MTK_NL80211_VENDOR_ATTR_STA_MAC, ETH_ALEN, mac)) {
+		wifi_debug(DEBUG_ERROR, "Nla put ACL_SHOW_ALL attribute error\n");
+		nlmsg_free(msg);
+		mtk_nl80211_deint(&unl_ins);
+		return RETURN_ERR;
+	}
+	cb_data.out_buf = (void*)&station;
+
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, mtk_get_station_callback, &cb_data);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		mtk_nl80211_deint(&unl_ins);
+		return RETURN_ERR;
+	}
+	station_info_2_dev3(&station, dev3);
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+
+	return RETURN_OK;
+}
+
 INT wifi_getApAssociatedDeviceDiagnosticResult3(INT apIndex, wifi_associated_dev3_t **associated_dev_array, UINT *output_array_size)
 {
 	char interface_name[16] = {0};
@@ -13048,7 +13175,7 @@ INT wifi_getApAssociatedDeviceDiagnosticResult3(INT apIndex, wifi_associated_dev
 	char *param = NULL, *value = NULL, *line=NULL;
 	size_t len = 0;
 	wifi_associated_dev3_t *dev=NULL;
-	int res;
+	int res, i;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	*associated_dev_array = NULL;
@@ -13127,6 +13254,16 @@ INT wifi_getApAssociatedDeviceDiagnosticResult3(INT apIndex, wifi_associated_dev
 
 	if (fclose(f) != 0) {
 		wifi_debug(DEBUG_ERROR, "fclose fail\n");
+	}
+
+	for (i = 0; i < *output_array_size; i++) {
+		if (fill_dev3_statistics_by_mac(apIndex, &dev[i], dev[i].cli_MACAddress)) {
+			wifi_debug(DEBUG_ERROR, "fail to get dev3(%02x:%02x:%02x:%02x:%02x:%02x)"
+				" statistic information from logan driver\n", dev[i].cli_MACAddress[0],
+				dev[i].cli_MACAddress[1], dev[i].cli_MACAddress[2], dev[i].cli_MACAddress[3],
+				dev[i].cli_MACAddress[4], dev[i].cli_MACAddress[5]);
+			continue;
+		}
 	}
 
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
@@ -13209,11 +13346,6 @@ INT wifi_getApInactiveAssociatedDeviceDiagnosticResult(char *filename,wifi_assoc
 	unsigned char mac[MACADDRESS_SIZE] = {0};
 	char path[1024] = {0},str[1024] = {0},ipaddr[50] = {0},buf[512] = {0};
 	int res;
-
-
-
-
-
 
 	fp = v_secure_popen("r","cat %s | grep Station | sort | uniq | wc -l",filename);
 	if(fp == NULL)
@@ -16939,8 +17071,18 @@ err:
 
 INT wifi_getApAssociatedClientDiagnosticResult(INT apIndex, char *mac_addr, wifi_associated_dev3_t *dev_conn)
 {
-	// TODO Implement me!
-	return RETURN_ERR;
+
+	if (fill_dev3_statistics_by_mac(apIndex, dev_conn, (unsigned char *)mac_addr)) {
+		wifi_debug(DEBUG_ERROR, "fail to get dev3(%02x:%02x:%02x:%02x:%02x:%02x)"
+			" statistic information from logan driver\n", mac_addr[0],
+			mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+		return RETURN_ERR;
+	}
+
+	dev_conn->cli_Active = 1;
+	dev_conn->cli_AuthenticationState = 1;
+	
+	return RETURN_OK;
 }
 
 INT wifi_switchBand(char *interface_name,INT radioIndex,char *freqBand)
@@ -18013,6 +18155,45 @@ int main(int argc,char **argv)
 	{
 		wifi_getRadioExtChannel(index,buf);
 		printf("extchannel is %s \n",buf);
+		return 0;
+	}
+	if(strstr(argv[1], "wifi_getApAssociatedDeviceDiagnosticResult3")!=NULL)
+	{
+		wifi_associated_dev3_t *associated_dev_array = NULL, *dev3;
+		INT sta_count, i, j;
+		wifi_getApAssociatedDeviceDiagnosticResult3(index, &associated_dev_array, (unsigned int *)(&sta_count));
+		printf("wifi_getApAssociatedDeviceDiagnosticResult3\n");
+		if (associated_dev_array == NULL) {
+			printf("wifi_getApAssociatedDeviceDiagnosticResult3 fail\n");
+			return 0;
+		}
+		for (i = 0; i < sta_count; i++) {
+			dev3 = (wifi_associated_dev3_t *)(associated_dev_array + i);
+			printf("mac(%02x:%02x:%02x:%02x:%02x:%02x:)\n", dev3->cli_MACAddress[0], dev3->cli_MACAddress[1],
+				dev3->cli_MACAddress[2], dev3->cli_MACAddress[3], dev3->cli_MACAddress[4], dev3->cli_MACAddress[5]);
+			printf("\t tx_rate=%u, rx_rate=%u, snr=%u, rx_bytes=%lu, tx_bytes=%lu, rssi=%d, tx_pkts=%lu, rx_pkts=%lu\n"
+				"mlo_enable=%u\n", dev3->cli_LastDataUplinkRate , dev3->cli_LastDataDownlinkRate,
+				dev3->cli_SNR, dev3->cli_BytesReceived, dev3->cli_BytesSent, dev3->cli_RSSI, dev3->cli_PacketsReceived,
+				dev3->cli_BytesSent, dev3->mld_enable);
+
+			if (dev3->mld_enable) {
+				printf("\tmld mac(%02x:%02x:%02x:%02x:%02x:%02x:)\n", dev3->mld_addr[0], dev3->mld_addr[1],
+					dev3->mld_addr[2], dev3->mld_addr[3], dev3->mld_addr[4], dev3->mld_addr[5]);
+				
+				for (j = 0; j < 3; j++) {
+					if (!dev3->mld_link_info[j].valid)
+						continue;
+					printf("\tlink mac(%02x:%02x:%02x:%02x:%02x:%02x:)\n", dev3->mld_link_info[j].link_addr[0],
+						dev3->mld_link_info[j].link_addr[1],
+						dev3->mld_link_info[j].link_addr[2], dev3->mld_link_info[j].link_addr[3], dev3->mld_link_info[j].link_addr[4],
+						dev3->mld_link_info[j].link_addr[5]);
+					printf("\trssi=%d, tx_rate=%lu, rx_rate=%lu, tx_bytes=%llu, rx_bytes=%llu\n",
+						dev3->mld_link_info[j].rssi, dev3->mld_link_info[j].tx_rate, dev3->mld_link_info[j].rx_rate,
+						dev3->mld_link_info[j].tx_bytes, dev3->mld_link_info[j].rx_bytes);
+				}
+				
+			}
+		}
 		return 0;
 	}
 	if (strstr(argv[1], "wifi_setRadioAMSDUEnable")!=NULL) {
