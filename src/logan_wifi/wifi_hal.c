@@ -1801,8 +1801,6 @@ static UCHAR get_bssnum_byindex(INT radio_index, UCHAR *bss_cnt)
 static int wifi_hostapdProcessUpdate(int apIndex, struct params *list, int item_count)
 {
 	char interface_name[16] = {0};
-	if (multiple_set == TRUE)
-		return RETURN_OK;
 	char output[32]="";
 	FILE *fp;
 	int i;
@@ -2531,7 +2529,6 @@ wifiBringUpInterfacesForRadio(int radio_idx)
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 }
-
 
 static void
 wifi_BringUpInterfaces(void)
@@ -6756,7 +6753,6 @@ INT wifi_setRadioBasicDataTransmitRates(INT radioIndex, CHAR *TransmitRates)
 	char config_file[MAX_BUF_SIZE] = {0};
 	wifi_band band = wifi_index_to_band(radioIndex);
 	int res;
-	bool temp_multiple_set = multiple_set;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -6865,10 +6861,8 @@ INT wifi_setRadioBasicDataTransmitRates(INT radioIndex, CHAR *TransmitRates)
 	}
 
 	wifi_hostapdWrite(config_file,&params,1);
-	multiple_set = false;
 	wifi_hostapdProcessUpdate(radioIndex, &params, 1);
 	wifi_quick_reload_ap(radioIndex);
-	multiple_set = temp_multiple_set;
 
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 	return RETURN_OK;
@@ -13581,7 +13575,6 @@ INT wifi_setApSecurityMFPConfig(INT apIndex, CHAR *MfpConfig)
 	struct params params;
 	char config_file[MAX_BUF_SIZE] = {0};
 	int res;
-	bool temp_multiple_set = multiple_set;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	if(NULL == MfpConfig || strlen(MfpConfig) >= 32 )
@@ -13609,10 +13602,8 @@ INT wifi_setApSecurityMFPConfig(INT apIndex, CHAR *MfpConfig)
 	}
 
 	wifi_hostapdWrite(config_file, &params, 1);
-	multiple_set = false;
 	wifi_hostapdProcessUpdate(apIndex, &params, 1);
 	wifi_quick_reload_ap(apIndex);
-	multiple_set = temp_multiple_set;
 
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n", __func__, __LINE__);
 	return RETURN_OK;
@@ -13784,7 +13775,6 @@ INT wifi_setRadioOperationalDataTransmitRates(INT wlanIndex,CHAR *output)
 	wifi_band band = wifi_index_to_band(wlanIndex);
 	unsigned long len;
 	int res;
-	bool temp_multiple_set = multiple_set;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	if(NULL == output)
@@ -13869,10 +13859,8 @@ INT wifi_setRadioOperationalDataTransmitRates(INT wlanIndex,CHAR *output)
 	}
 
 	wifi_hostapdWrite(config_file,&params,1);
-	multiple_set = false;
 	wifi_hostapdProcessUpdate(wlanIndex, &params, 1);
 	wifi_quick_reload_ap(wlanIndex);
-	multiple_set = temp_multiple_set;
 
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
@@ -15388,7 +15376,6 @@ INT wifi_setBSSTransitionActivation(UINT apIndex, BOOL activate)
 	char config_file[MAX_BUF_SIZE] = {0};
 	struct params list;
 	int res;
-	bool temp_multiple_set = multiple_set;
 
 	list.name = "bss_transition";
 	list.value = activate?"1":"0";
@@ -15398,10 +15385,8 @@ INT wifi_setBSSTransitionActivation(UINT apIndex, BOOL activate)
 		return RETURN_ERR;
 	}
 	wifi_hostapdWrite(config_file, &list, 1);
-	multiple_set = false;
 	wifi_hostapdProcessUpdate(apIndex, &list, 1);
 	wifi_quick_reload_ap(apIndex);
-	multiple_set = temp_multiple_set;
 
 	return RETURN_OK;
 }
@@ -16036,7 +16021,6 @@ INT wifi_setNeighborReportActivation(UINT apIndex, BOOL activate)
 	char config_file[MAX_BUF_SIZE] = {0};
 	struct params list;
 	int res;
-	bool temp_multiple_set = multiple_set;
 
 	list.name = "rrm_neighbor_report";
 	list.value = activate?"1":"0";
@@ -16047,11 +16031,8 @@ INT wifi_setNeighborReportActivation(UINT apIndex, BOOL activate)
 	}
 
 	wifi_hostapdWrite(config_file, &list, 1);
-
-	multiple_set = false;
 	wifi_hostapdProcessUpdate(apIndex, &list, 1);
 	wifi_quick_reload_ap(apIndex);
-	multiple_set = temp_multiple_set;
 
 	return RETURN_OK;
 }
@@ -18938,18 +18919,36 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 	BOOL drv_dat_change = 0, hapd_conf_change = 0;
 	wifi_radio_operationParam_t current_param;
 	int ApIndex;
+	int ret, bss_num, i;
+	char ret_buf[MAX_BUF_SIZE] = {0};
+
+	ret = wifi_BandProfileRead(0, index, "BssidNum", ret_buf, sizeof(ret_buf), "1");
+	if (ret != 0) {
+		wifi_debug(DEBUG_ERROR, "wifi_BandProfileRead BssidNum failed\n");
+		return RETURN_ERR;
+	}
+	bss_num = atoi(ret_buf);
+	if (bss_num <= 0)  {
+		wifi_debug(DEBUG_ERROR, "invalid BssidNum %s\n", ret_buf);
+		return RETURN_ERR;
+	}
+	if (bss_num > LOGAN_MAX_NUM_VAP_PER_RADIO) {
+		wifi_debug(DEBUG_ERROR, "bss_num is larger than %d, use %d\n", LOGAN_MAX_NUM_VAP_PER_RADIO, LOGAN_MAX_NUM_VAP_PER_RADIO);
+		bss_num = LOGAN_MAX_NUM_VAP_PER_RADIO;
+	}
+	wifi_debug(DEBUG_ERROR, "band %d BssidNum %d\n", index, bss_num);
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
 	multiple_set = TRUE;
 	if (wifi_getRadioOperatingParameters(index, &current_param) != RETURN_OK) {
 		wifi_debug(DEBUG_ERROR, "wifi_getRadioOperatingParameters return error.\n");
-		return RETURN_ERR;
+		goto err;
 	}
 	if (current_param.autoChannelEnabled != operationParam->autoChannelEnabled) {
 		if (wifi_setRadioAutoChannelEnable(index, operationParam->autoChannelEnabled) != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setRadioAutoChannelEnable return error.\n");
-			return RETURN_ERR;
+			goto err;
 		}
 		drv_dat_change = TRUE;
 	}
@@ -18968,12 +18967,12 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 		if (operationParam->autoChannelEnabled) {
 			if (wifi_pushRadioChannel2(index, 0, bandwidth, operationParam->csa_beacon_count) != RETURN_OK) {
 				wifi_debug(DEBUG_ERROR, "wifi_pushRadioChannel2 return error.\n");
-				return RETURN_ERR;
+				goto err;
 			}
 		} else {
 			if (wifi_pushRadioChannel2(index, operationParam->channel, bandwidth, operationParam->csa_beacon_count) != RETURN_OK) {
 				wifi_debug(DEBUG_ERROR, "wifi_pushRadioChannel2 return error.\n");
-				return RETURN_ERR;
+				goto err;
 			}
 		}
 	}
@@ -18998,126 +18997,130 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 
 		if (wifi_setRadioMode(index, NULL, set_mode) != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setRadioMode return error.\n");
-			return RETURN_ERR;
+			goto err;
 		}
 	}
+	
 	if (current_param.dtimPeriod != operationParam->dtimPeriod) {
-		hapd_conf_change = TRUE;
-		if (wifi_setApDTIMInterval(index, operationParam->dtimPeriod) != RETURN_OK) {
-			wifi_debug(DEBUG_ERROR, "wifi_setApDTIMInterval return error.\n");
-			return RETURN_ERR;
+		for (i = 0; i < bss_num; i++) {
+			ApIndex = array_index_to_vap_index(index, i);
+			if (wifi_setApDTIMInterval(ApIndex, operationParam->dtimPeriod) != RETURN_OK) {
+				wifi_debug(DEBUG_ERROR, "wifi_setApDTIMInterval return error.\n");
+				goto err;
+			}
+			hapd_conf_change = TRUE;
 		}
 	}
 	if (current_param.beaconInterval != operationParam->beaconInterval) {
-		hapd_conf_change = TRUE;
-		if (wifi_setRadioBeaconPeriod(index, operationParam->beaconInterval) != RETURN_OK) {
-			wifi_debug(DEBUG_ERROR, "wifi_setRadioBeaconPeriod return error.\n");
-			return RETURN_ERR;
+		for (i = 0; i < bss_num; i++) {
+			ApIndex = array_index_to_vap_index(index, i);
+			if (wifi_setRadioBeaconPeriod(ApIndex, operationParam->beaconInterval) != RETURN_OK) {
+				wifi_debug(DEBUG_ERROR, "wifi_setRadioBeaconPeriod return error.\n");
+				goto err;
+			}
+			hapd_conf_change = TRUE;
 		}
 	}
 	if (current_param.operationalDataTransmitRates != operationParam->operationalDataTransmitRates) {
-		hapd_conf_change = TRUE;
 		BitMapToTransmitRates(operationParam->operationalDataTransmitRates, buf, sizeof(buf));
-		if (wifi_setRadioBasicDataTransmitRates(index, buf) != RETURN_OK) {
-			wifi_debug(DEBUG_ERROR, "wifi_setRadioBasicDataTransmitRates return error.\n");
-			return RETURN_ERR;
+		for (i = 0; i < bss_num; i++) {
+			ApIndex = array_index_to_vap_index(index, i);
+			if (wifi_setRadioBasicDataTransmitRates(ApIndex, buf) != RETURN_OK) {
+				wifi_debug(DEBUG_ERROR, "wifi_setRadioBasicDataTransmitRates return error.\n");
+				goto err;
+			}
+			hapd_conf_change = TRUE;
 		}
 	}
 	if (current_param.fragmentationThreshold != operationParam->fragmentationThreshold) {
-		hapd_conf_change = TRUE;
-		if (wifi_setRadioFragmentationThreshold(index, operationParam->fragmentationThreshold) != RETURN_OK) {
-			wifi_debug(DEBUG_ERROR, "wifi_setRadioFragmentationThreshold return error.\n");
-			return RETURN_ERR;
+		for (i = 0; i < bss_num; i++) {
+			ApIndex = array_index_to_vap_index(index, i);
+			if (wifi_setRadioFragmentationThreshold(ApIndex, operationParam->fragmentationThreshold) != RETURN_OK) {
+				wifi_debug(DEBUG_ERROR, "wifi_setRadioFragmentationThreshold return error.\n");
+				goto err;
+			}
+			hapd_conf_change = TRUE;
 		}
 	}
-	if (current_param.guardInterval != operationParam->guardInterval) {
+
+	if (current_param.rtsThreshold != operationParam->rtsThreshold) {
+		for (i = 0; i < bss_num; i++) {
+			ApIndex = array_index_to_vap_index(index, i);
+			if (wifi_setApRtsThreshold(ApIndex, operationParam->rtsThreshold) != RETURN_OK) {
+				wifi_debug(DEBUG_ERROR, "wifi_setApRtsThreshold return error.\n");
+				goto err;
+			}
+			hapd_conf_change = TRUE;
+		}
+	}
+
+	if (current_param.stbcEnable != operationParam->stbcEnable) {
+		if (wifi_setRadioSTBCEnable(index, operationParam->stbcEnable) != RETURN_OK) {
+			wifi_debug(DEBUG_ERROR, "wifi_setRadioSTBCEnable return error.\n");
+			goto err;
+		}
 		hapd_conf_change = TRUE;
 		drv_dat_change = TRUE;
+	}
+
+	if (current_param.guardInterval != operationParam->guardInterval) {	
 		if (wifi_setGuardInterval(index, operationParam->guardInterval) != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setGuardInterval return error.\n");
-			return RETURN_ERR;
+			goto err;
 		}
+		hapd_conf_change = TRUE;
+		drv_dat_change = TRUE;
 	}
 	if (current_param.transmitPower != operationParam->transmitPower) {
 		drv_dat_change = TRUE;
 		if (wifi_setRadioTransmitPower(index, operationParam->transmitPower) != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setRadioTransmitPower return error.\n");
-			return RETURN_ERR;
+			goto err;
 		}
 	}
-	if (current_param.rtsThreshold != operationParam->rtsThreshold) {
-		hapd_conf_change = TRUE;
-		if (wifi_setApRtsThreshold(index, operationParam->rtsThreshold) != RETURN_OK) {
-			wifi_debug(DEBUG_ERROR, "wifi_setApRtsThreshold return error.\n");
-			return RETURN_ERR;
-		}
-	}
+	
 	if (current_param.obssCoex != operationParam->obssCoex) {
-		hapd_conf_change = TRUE;
 		if (wifi_setRadioObssCoexistenceEnable(index, operationParam->obssCoex) != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setRadioObssCoexistenceEnable return error.\n");
-			return RETURN_ERR;
+			goto err;
 		}
 	}
-	if (current_param.stbcEnable != operationParam->stbcEnable) {
-		hapd_conf_change = TRUE;
-		drv_dat_change = TRUE;
-		if (wifi_setRadioSTBCEnable(index, operationParam->stbcEnable) != RETURN_OK) {
-			wifi_debug(DEBUG_ERROR, "wifi_setRadioSTBCEnable return error.\n");
-			return RETURN_ERR;
-		}
-	}
+	
 	if (current_param.greenFieldEnable != operationParam->greenFieldEnable) {
 		if (wifi_setRadio11nGreenfieldEnable(index, operationParam->greenFieldEnable) != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setRadio11nGreenfieldEnable return error.\n");
-			return RETURN_ERR;
+			goto err;
 		}
 	}
 	if (current_param.MRU_enable != operationParam->MRU_enable) {
 		if (wifi_setRadioMRUEnable(index, operationParam->MRU_enable) != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setRadioMRUEnable return error.\n");
-			return RETURN_ERR;
+			goto err;
 		}
 	}
 
 	/* only down/up interface when dat file has been changed,
 	 * if enable is true, then restart the radio.
-	 */
+	 */	 
+	multiple_set = false;
 	if (drv_dat_change == TRUE) {
 		wifi_setRadioEnable(index, FALSE);
 		if (operationParam->enable == TRUE)
 			wifi_setRadioEnable(index, TRUE);
 	} else if (hapd_conf_change == TRUE) {
-		int ret, bss_num, i;
-		char ret_buf[MAX_BUF_SIZE] = {0};
-
-		ret = wifi_BandProfileRead(0, index, "BssidNum", ret_buf, sizeof(ret_buf), "1");
-		if (ret != 0) {
-			wifi_debug(DEBUG_ERROR, "wifi_BandProfileRead BssidNum failed\n");
-			return RETURN_ERR;
-		}
-		bss_num = atoi(ret_buf);
-		if (bss_num <= 0)  {
-			wifi_debug(DEBUG_ERROR, "invalid BssidNum %s\n", ret_buf);
-			return RETURN_ERR;
-		}
-		if (bss_num > LOGAN_MAX_NUM_VAP_PER_RADIO) {
-			wifi_debug(DEBUG_ERROR, "bss_num is larger than %d, use %d\n", LOGAN_MAX_NUM_VAP_PER_RADIO, LOGAN_MAX_NUM_VAP_PER_RADIO);
-			bss_num = LOGAN_MAX_NUM_VAP_PER_RADIO;
-		}
-		wifi_debug(DEBUG_ERROR, "band %d BssidNum %d\n", index, bss_num);
-
 		for (i = 0; i < bss_num; i++) {
 			ApIndex = array_index_to_vap_index(index, i);
-			hostapd_raw_remove_bss(ApIndex);
-			if (operationParam->enable == TRUE)
-				hostapd_raw_add_bss(ApIndex);
+			wifi_quick_reload_ap(ApIndex);
 		}
 	}
+	
 
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
 	return RETURN_OK;
+err:
+	multiple_set = false;
+	return RETURN_ERR;
 }
 
 INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operationParam_t *operationParam)
@@ -19748,7 +19751,6 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 	char buf[256] = {0};
 	char cmd[128] = {0};
 	char config_file[64] = {0};
-	char psk_file[64] = {0};
 	BOOL enable = FALSE;
 	int band_idx;
 	int res;
@@ -19763,6 +19765,7 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 	for (i = 0; i < map->num_vaps; i++)
 	{
 		multiple_set = TRUE;
+		
 		vap_info = &map->vap_array[i];
 
 		// Check vap status file to enable multiple ap if the system boot.
@@ -19776,17 +19779,17 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 		res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, vap_info->vap_index);
 		if (os_snprintf_error(sizeof(config_file), res)) {
 			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-			return RETURN_ERR;
+			goto err;
 		}
 		if(band_idx >= 0 && band_idx < sizeof(wifi_band_str)/sizeof(wifi_band_str[0])){
 			res = snprintf(cmd, sizeof(cmd), "cp /etc/hostapd-%s.conf %s", wifi_band_str[band_idx], config_file);
 		} else{
 			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-			return RETURN_ERR;
+			goto err;
 		}
 		if (os_snprintf_error(sizeof(cmd), res)) {
 			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-			return RETURN_ERR;
+			goto err;
 		}
 
 		res = _syscmd_secure(buf, sizeof(buf), "cp /etc/hostapd-%s.conf %s", wifi_band_str[band_idx], config_file);
@@ -19798,57 +19801,42 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 		struct params params[3];
 		params[0].name = "interface";
 		params[0].value = vap_info->vap_name;
-		res = snprintf(psk_file, sizeof(psk_file), "\\/nvram\\/hostapd%d.psk", vap_info->vap_index);
-		if (os_snprintf_error(sizeof(psk_file), res)) {
-			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-			return RETURN_ERR;
-		}
-		params[1].name = "wpa_psk_file";
-		params[1].value = psk_file;
-		params[2].name = "ssid";
-		params[2].value = vap_info->u.bss_info.ssid;
 
 		res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, vap_info->vap_index);
 		if (os_snprintf_error(sizeof(config_file), res)) {
 			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-			return RETURN_ERR;
+			goto err;
 		}
-		wifi_hostapdWrite(config_file, params, 3);
-
-		res = _syscmd_secure(buf, sizeof(buf), "touch %s", psk_file);
-		if (res) {
-			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-
-		}
+		wifi_hostapdWrite(config_file, params, 1);
 
 		ret = wifi_setSSIDName(vap_info->vap_index, vap_info->u.bss_info.ssid);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR,"wifi_setSSIDName return error\n");
-			return RETURN_ERR;
+			goto err;
 		}
 
 		ret = wifi_setApSsidAdvertisementEnable(vap_info->vap_index, vap_info->u.bss_info.showSsid);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApSsidAdvertisementEnable return error\n");
-			return RETURN_ERR;
+			goto err;
 		}
 
 		ret = wifi_setApMaxAssociatedDevices(vap_info->vap_index, vap_info->u.bss_info.bssMaxSta);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApMaxAssociatedDevices return error\n");
-			return RETURN_ERR;
+			goto err;
 		}
 
 		ret = wifi_setBSSTransitionActivation(vap_info->vap_index, vap_info->u.bss_info.bssTransitionActivated);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setBSSTransitionActivation return error\n");
-			return RETURN_ERR;
+			goto err;
 		}
 
 		ret = wifi_setNeighborReportActivation(vap_info->vap_index, vap_info->u.bss_info.nbrReportActivated);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setNeighborReportActivation return error\n");
-			return RETURN_ERR;
+			goto err;
 		}
 
 		if (vap_info->u.bss_info.mac_filter_enable == false){
@@ -19870,7 +19858,7 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 		ret = wifi_setApWmmUapsdEnable(vap_info->vap_index, vap_info->u.bss_info.UAPSDEnabled);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApWmmUapsdEnable return error\n");
-			return RETURN_ERR;
+			goto err;
 		}
 
 		memset(buf, 0, sizeof(buf));
@@ -19878,42 +19866,39 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 		ret = wifi_setApBeaconRate(vap_info->radio_index, buf);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApBeaconRate return error\n");
-			return RETURN_ERR;
+			goto err;
 		}
 
 		ret = wifi_setRadioIGMPSnoopingEnable(vap_info->radio_index, vap_info->u.bss_info.mcast2ucast);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setRadioIGMPSnoopingEnable\n");
-			return RETURN_ERR;
+			goto err;
 		}
 
 		ret = wifi_setApSecurity(vap_info->vap_index, &vap_info->u.bss_info.security);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApSecurity return error\n");
-			return RETURN_ERR;
+			goto err;
 		}
-
-		hostapd_raw_restart_bss(vap_info->vap_index);
-
 		multiple_set = FALSE;
-
+		wifi_quick_reload_ap(vap_info->vap_index);
 		// If config use hostapd_cli to set, we calling these type of functions after enable the ap.
 		ret = wifi_setApMacAddressControlMode(vap_info->vap_index, acl_mode);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApMacAddressControlMode return error\n");
-			return RETURN_ERR;
+			goto err;
 		}
 
 		ret = wifi_setApWmmEnable(vap_info->vap_index, vap_info->u.bss_info.wmm_enabled);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApWmmEnable return error\n");
-			return RETURN_ERR;
+			goto err;
 		}
 
 		ret = wifi_setApIsolationEnable(vap_info->vap_index, vap_info->u.bss_info.isolation);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApIsolationEnable return error\n");
-//			return RETURN_ERR;
+			goto err;
 		}
 
 		// TODO mgmtPowerControl, interworking, wps
@@ -20010,6 +19995,9 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 	wifi_eht_config_sync2_dat_by_radio(index);
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 	return RETURN_OK;
+err:
+	multiple_set = FALSE;
+	return RETURN_ERR;
 }
 
 int parse_channel_list_int_arr(char *pchannels, wifi_channels_list_t* chlistptr)
@@ -20346,7 +20334,6 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-	multiple_set = TRUE;
 	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, ap_index);
 	if (os_snprintf_error(sizeof(config_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
@@ -20443,6 +20430,7 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
 			params.name = "sae_password";
 			params.value = security->u.key.key;
 			wifi_hostapdWrite(config_file, &params, 1);
+			wifi_hostapdProcessUpdate(ap_index, &params, 1);
 		} else {	// remove sae_password
 			res = _syscmd_secure(buf, sizeof(buf), "sed -i -n -e '/^sae_password=/!p' %s", config_file);
 			if (res) {
@@ -20462,6 +20450,7 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
 		else if (security->encr == wifi_encryption_aes_tkip)
 			params.value = "TKIP CCMP";
 		wifi_hostapdWrite(config_file, &params, 1);
+		wifi_hostapdProcessUpdate(ap_index, &params, 1);
 	}
 
 	if (security->mfp == wifi_mfp_cfg_disabled){
@@ -20483,6 +20472,7 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
 	else
 		params.value = "0x00";
 	wifi_hostapdWrite(config_file, &params, 1);
+	wifi_hostapdProcessUpdate(ap_index, &params, 1);
 
 	memset(&params, 0, sizeof(params));
 	params.name = "wpa_group_rekey";
@@ -20493,11 +20483,13 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
 	}
 	params.value = buf;
 	wifi_hostapdWrite(config_file, &params, 1);
+	wifi_hostapdProcessUpdate(ap_index, &params, 1);
 
 	memset(&params, 0, sizeof(params));
 	params.name = "wpa_strict_rekey";
 	params.value = security->strict_rekey?"1":"0";
 	wifi_hostapdWrite(config_file, &params, 1);
+	wifi_hostapdProcessUpdate(ap_index, &params, 1);
 
 	memset(&params, 0, sizeof(params));
 	params.name = "wpa_pairwise_update_count";
@@ -20510,11 +20502,13 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
 	}
 	params.value = buf;
 	wifi_hostapdWrite(config_file, &params, 1);
+	wifi_hostapdProcessUpdate(ap_index, &params, 1);
 
 	memset(&params, 0, sizeof(params));
 	params.name = "disable_pmksa_caching";
 	params.value = security->disable_pmksa_caching?"1":"0";
 	wifi_hostapdWrite(config_file, &params, 1);
+	wifi_hostapdProcessUpdate(ap_index, &params, 1);
 
 	if (multiple_set == FALSE) {
 		wifi_setApEnable(ap_index, FALSE);
