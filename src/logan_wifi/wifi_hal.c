@@ -18008,6 +18008,7 @@ INT wifi_getRadioMRUEnable(INT radioIndex, BOOL *output)
 
 	return RETURN_OK;
 }
+INT wifi_getApWpsLastConnectionStatus(INT apIndex, CHAR *output_string);
 
 #ifdef _WIFI_HAL_TEST_
 int main(int argc,char **argv)
@@ -18137,6 +18138,17 @@ int main(int argc,char **argv)
 		wifi_getRadioExtChannel(index,buf);
 		printf("extchannel is %s \n",buf);
 		return 0;
+	}
+
+	if(strstr(argv[1], "wifi_getApWpsLastConnectionStatus")!=NULL) {
+		char buf[32] = {0};
+		int res;
+
+		res = wifi_getApWpsLastConnectionStatus(index, buf);
+		if (res == RETURN_OK)
+			printf("ap_index=%d, wifi_getApWpsLastConnectionStatus=%s\n", index, buf);
+		else
+			printf("fail to get AP wps last connection status for ap_index=%d\n", index);
 	}
 	if(strstr(argv[1], "wifi_getApAssociatedDeviceDiagnosticResult3")!=NULL)
 	{
@@ -21194,3 +21206,50 @@ INT wifi_enableGreylistAccessControl(BOOL enable)
 
 	return RETURN_OK;
 }
+
+// Output string is Disabled, Requested, Failed or Success. max 32 characters
+INT wifi_getApWpsLastConnectionStatus(INT apIndex, CHAR *output_string)
+{
+	char interface_name[IF_NAME_SIZE] = {0};
+	char buf[MAX_BUF_SIZE] = {0};
+	int res;
+
+	if ((!output_string) || (apIndex < 0) || (apIndex >= MAX_APS))
+		return RETURN_ERR;
+
+	if ((apIndex < 0) && (apIndex >= MAX_APS))
+		return RETURN_ERR;
+
+	if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+		return RETURN_ERR;
+
+	if (strlen(interface_name) == 0)
+		return RETURN_ERR;
+
+	res = _syscmd_secure(buf, sizeof(buf), "hostapd_cli -i %s wps_get_status", interface_name);
+	if (res) {
+		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+		return RETURN_ERR;
+	}
+
+    if (strstr(buf, "PBC Status: Active")) {
+		res = snprintf(output_string, 32, "%s", "Requested");
+    } else if(strstr(buf, "PBC Status: Disabled")) {
+		if (strstr(buf, "Last WPS result: Success"))
+			res = snprintf(output_string, 32, "%s", "Success");
+		else if (strstr(buf, "Last WPS result: None"))
+			res = snprintf(output_string, 32, "%s", "Disabled");
+		else
+			res = snprintf(output_string, 32, "%s", "Failed");
+    } else
+		res = snprintf(output_string, 32, "%s", "Failed");
+
+	if (os_snprintf_error(32, res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
+
+	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+    return RETURN_OK;
+}
+
