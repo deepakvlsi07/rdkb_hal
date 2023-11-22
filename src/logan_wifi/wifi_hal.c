@@ -715,7 +715,10 @@ static int wifi_datfileWrite(char *conf_file, struct params *list, int item_coun
 
 static void mld_set(unsigned char mld_index, unsigned char set)
 {
-	mld_config.valid_mld_bitmap[mld_index / 8] |= set ? (1 << (mld_index % 8)) : ~(1 << (mld_index % 8));
+	if (set)
+		mld_config.valid_mld_bitmap[mld_index / 8] |= (1 << (mld_index % 8));
+	else
+		mld_config.valid_mld_bitmap[mld_index / 8] &= ~(1 << (mld_index % 8));
 }
 
 static unsigned char mld_test(unsigned char mld_index)
@@ -725,7 +728,10 @@ static unsigned char mld_test(unsigned char mld_index)
 
 static void mld_ap_set(struct multi_link_device *mld, unsigned char ap_index, unsigned char set)
 {
-	mld->affiliated_ap_bitmap[ap_index / 8] |= set ? (1 << (ap_index % 8)) : ~(1 << (ap_index % 8));
+	if (set)
+		mld->affiliated_ap_bitmap[ap_index / 8] |= (1 << (ap_index % 8));
+	else
+		mld->affiliated_ap_bitmap[ap_index / 8] &= ~(1 << (ap_index % 8));
 }
 
 static unsigned char mld_ap_test(struct multi_link_device *mld, unsigned char ap_index)
@@ -1113,7 +1119,7 @@ INT wifi_eht_remove_from_ap_mld(unsigned char mld_index, INT ap_index)
 
 	mld = &(mld_config.mld[mld_index]);
 
-	res = v_secure_system("mwctl %s apmld=dellink", interface_name);
+	res = v_secure_system("mwctl %s set apmld=dellink", interface_name);
 
 	if (res) {
 		wifi_debug(DEBUG_ERROR, "fail to del ap from ap mld with mld_index %d\n", mld_index);
@@ -1182,7 +1188,7 @@ INT wifi_eht_mld_ap_transfer(unsigned char old_mld_index,
 		wifi_debug(DEBUG_ERROR, "invalid old_mld_index %d\n", old_mld_index);
 		return RETURN_ERR;
 	}
-	old_mld = mld = &(mld_config.mld[new_mld_index]);
+	old_mld = &(mld_config.mld[old_mld_index]);
 
 	if (!mld_test(old_mld_index)) {
 		wifi_debug(DEBUG_ERROR, "mld does not exist with old_mld_index %d\n", old_mld_index);
@@ -18150,6 +18156,76 @@ int main(int argc,char **argv)
 		else
 			printf("fail to get AP wps last connection status for ap_index=%d\n", index);
 	}
+
+	if (strstr(argv[1], "mlo_test")) {
+		wifi_vap_info_map_t vap[3];
+		int i;
+		unsigned char mld_mac[6] = {0x00, 0x0c, 0x43, 0x11, 0x22, 0x33};
+		unsigned char mld_mac2[6] = {0x00, 0x0c, 0x43, 0x44, 0x55, 0x66};
+		radio_band[0] = band_2_4;
+		radio_band[1] = band_5;
+		radio_band[2] = band_6;
+
+		if (eht_mld_config_init() != RETURN_OK)
+			printf("eht_mld_config_init() fail!\n");
+
+		memset(vap, 0, sizeof(vap));
+		for (i = 0; i < 3; i++) {
+			if (wifi_getRadioVapInfoMap(i, &vap[i]) != RETURN_OK)
+				printf("wifi_getRadioVapInfoMap fail[%d]", i);
+		}
+
+		/*case 1-create mld[5], transfer ra0 mld[1]->mld[5]*/
+		vap[0].vap_array[0].u.bss_info.mld_info.common_info.mld_enable = 1;
+		vap[0].vap_array[0].u.bss_info.mld_info.common_info.mld_index = 5;	
+		memcpy(vap[0].vap_array[0].u.bss_info.mld_info.common_info.mld_addr, mld_mac, 6);
+
+		/*case 2-create mld[6], transfer ra1 mld[2]->mld[6]*/
+		vap[0].vap_array[1].u.bss_info.mld_info.common_info.mld_enable = 1;
+		vap[0].vap_array[1].u.bss_info.mld_info.common_info.mld_index = 6;	
+		memcpy(vap[0].vap_array[1].u.bss_info.mld_info.common_info.mld_addr, mld_mac2, 6);
+		if (wifi_createVAP(0, &vap[0]) != RETURN_OK)
+			printf("wifi_createVAP[0] fail\n");
+
+		/*case 3-rai0 keep in mld[1]*/
+		vap[1].vap_array[0].u.bss_info.mld_info.common_info.mld_enable = 1;
+		vap[1].vap_array[0].u.bss_info.mld_info.common_info.mld_index = 1;	
+		memcpy(vap[1].vap_array[0].u.bss_info.mld_info.common_info.mld_addr, mld_mac, 6);
+
+		/*case 4-rai1 leave mld[2]*/
+		vap[1].vap_array[1].u.bss_info.mld_info.common_info.mld_enable = 0;
+		vap[1].vap_array[1].u.bss_info.mld_info.common_info.mld_index = 2;	
+		memcpy(vap[1].vap_array[0].u.bss_info.mld_info.common_info.mld_addr, mld_mac2, 6);
+
+		if (wifi_createVAP(1, &vap[1]) != RETURN_OK)
+			printf("wifi_createVAP[0] fail\n");
+
+		/*case 5-rax1 leave mld[2]->null*/
+		vap[2].vap_array[1].u.bss_info.mld_info.common_info.mld_enable = 0;
+		vap[2].vap_array[1].u.bss_info.mld_info.common_info.mld_index = 2;	
+		memcpy(vap[1].vap_array[0].u.bss_info.mld_info.common_info.mld_addr, mld_mac2, 6);
+
+		if (wifi_createVAP(2, &vap[2]) != RETURN_OK)
+			printf("wifi_createVAP[0] fail\n");
+
+		/*case 6-rax1 null->join mld[7]*/
+		vap[2].vap_array[1].u.bss_info.mld_info.common_info.mld_enable = 1;
+		vap[2].vap_array[1].u.bss_info.mld_info.common_info.mld_index = 7;	
+		memcpy(vap[1].vap_array[0].u.bss_info.mld_info.common_info.mld_addr, mld_mac2, 6);
+
+		if (wifi_createVAP(2, &vap[2]) != RETURN_OK)
+			printf("wifi_createVAP[0] fail\n");
+
+		/*case 7-ra0 leve mld[5]->null, mld[5] destroy*/
+		vap[0].vap_array[0].u.bss_info.mld_info.common_info.mld_enable = 0;
+		vap[0].vap_array[0].u.bss_info.mld_info.common_info.mld_index = 5;	
+		memcpy(vap[0].vap_array[0].u.bss_info.mld_info.common_info.mld_addr, mld_mac, 6);
+		if (wifi_createVAP(0, &vap[0]) != RETURN_OK)
+			printf("wifi_createVAP[0] fail\n");
+
+		mld_info_display();
+	}
+	
 	if(strstr(argv[1], "wifi_getApAssociatedDeviceDiagnosticResult3")!=NULL)
 	{
 		wifi_associated_dev3_t *associated_dev_array = NULL, *dev3;
@@ -18164,7 +18240,7 @@ int main(int argc,char **argv)
 			dev3 = (wifi_associated_dev3_t *)(associated_dev_array + i);
 			printf("mac(%02x:%02x:%02x:%02x:%02x:%02x:)\n", dev3->cli_MACAddress[0], dev3->cli_MACAddress[1],
 				dev3->cli_MACAddress[2], dev3->cli_MACAddress[3], dev3->cli_MACAddress[4], dev3->cli_MACAddress[5]);
-			printf("\t tx_rate=%u, rx_rate=%u, snr=%u, rx_bytes=%lu, tx_bytes=%lu, rssi=%d, tx_pkts=%lu, rx_pkts=%lu\n"
+			printf("\t tx_rate=%u, rx_rate=%u, snr=%u, rx_bytes=%lu, tx_bytes=%lu, rssi=%hhd, tx_pkts=%lu, rx_pkts=%lu\n"
 				"mlo_enable=%u\n", dev3->cli_LastDataUplinkRate , dev3->cli_LastDataDownlinkRate,
 				dev3->cli_SNR, dev3->cli_BytesReceived, dev3->cli_BytesSent, dev3->cli_RSSI, dev3->cli_PacketsReceived,
 				dev3->cli_BytesSent, dev3->mld_enable);
@@ -18180,7 +18256,7 @@ int main(int argc,char **argv)
 						dev3->mld_link_info[j].link_addr[1],
 						dev3->mld_link_info[j].link_addr[2], dev3->mld_link_info[j].link_addr[3], dev3->mld_link_info[j].link_addr[4],
 						dev3->mld_link_info[j].link_addr[5]);
-					printf("\trssi=%d, tx_rate=%lu, rx_rate=%lu, tx_bytes=%llu, rx_bytes=%llu\n",
+					printf("\trssi=%hhd, tx_rate=%lu, rx_rate=%lu, tx_bytes=%llu, rx_bytes=%llu\n",
 						dev3->mld_link_info[j].rssi, dev3->mld_link_info[j].tx_rate, dev3->mld_link_info[j].rx_rate,
 						dev3->mld_link_info[j].tx_bytes, dev3->mld_link_info[j].rx_bytes);
 				}
@@ -20159,14 +20235,13 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 			if (mld_index) {
 				wifi_debug(DEBUG_ERROR, "mlo disabled, remove ap(%d) from mld group(%d)\n",
 					(int)vap_info->vap_index, (int)mld_index);
-				if (wifi_eht_remove_from_ap_mld(mld_index, vap_info->vap_index)) {
+				if (wifi_eht_remove_from_ap_mld(mld_index, vap_info->vap_index) != RETURN_OK) {
 					wifi_debug(DEBUG_ERROR, "fail to remove ap(%d) from mld(%d)\n",
 						(int)vap_info->vap_index, (int)mld_index);
 					continue;
 				}
 
 				if (wifi_GetInterfaceName(vap_info->vap_index, interface_name) == RETURN_OK) {
-						return RETURN_ERR;
 					res = _syscmd_secure(buf, sizeof(buf), "ifconfig %s down", interface_name);
 					if (res) {
 						wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
@@ -20177,9 +20252,9 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 					}
 				}
 
-				if (wifi_eht_get_ap_from_mld(mld_index, ap_index_array, &ap_array_num)) {
+				if (wifi_eht_get_ap_from_mld(mld_index, ap_index_array, &ap_array_num) != RETURN_OK) {
 					wifi_debug(DEBUG_ERROR,
-						"fail to get all aps from mld(%d), destroy it.\n", mld_index);
+						"fail to get all aps from mld(%d).\n", mld_index);
 					continue;
 				}
 
@@ -20197,7 +20272,7 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 			}
 
 			if (!mld_test(mld_info->mld_index)) {
-				if (wifi_eht_create_ap_mld(mld_info->mld_index, mld_info->mld_addr)) {
+				if (wifi_eht_create_ap_mld(mld_info->mld_index, mld_info->mld_addr) != RETURN_OK) {
 					wifi_debug(DEBUG_ERROR,
 						"fail to create ap mld(%d)\n", mld_info->mld_index);
 					continue;
@@ -20216,7 +20291,7 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 				/*transfer*/
 				wifi_eht_mld_ap_transfer(mld_index, mld_info->mld_index, vap_info->vap_index);
 
-				if (wifi_eht_get_ap_from_mld(mld_index, ap_index_array, &ap_array_num)) {
+				if (wifi_eht_get_ap_from_mld(mld_index, ap_index_array, &ap_array_num) != RETURN_OK) {
 					wifi_debug(DEBUG_ERROR,
 						"fail to get all aps from mld(%d), destroy it.\n", mld_index);
 					continue;
