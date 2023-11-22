@@ -709,6 +709,12 @@ struct params
 };
 static int wifi_datfileWrite(char *conf_file, struct params *list, int item_count);
 
+int get_bandwidth_handler(struct nl_msg *msg, void *data);
+
+INT mtk_wifi_get_radio_info(
+	INT radioIndex, INT vendor_data_attr, mtk_nl80211_cb call_back, void *output);
+
+
 #ifdef WIFI_HAL_VERSION_3
 #define MAX_ML_MLD_CNT	16	/*Max multi-link MLD*/
 //#define MAX_SL_MLD_CNT	48	/*MAX single-link MLD*/
@@ -4789,98 +4795,404 @@ INT wifi_halgetRadioExtChannel(CHAR *file,CHAR *Value)
 	return RETURN_OK;
 }
 
-//Get the list for used channel. eg: "1,6,9,11"
-//The output_string is a max length 256 octet string that is allocated by the RDKB code.  Implementations must ensure that strings are not longer than this.
-INT wifi_getRadioChannelsInUse(INT radioIndex, CHAR *output_string)	//RDKB
+enum bw_idx {
+	BAND_WIDTH_20,
+	BAND_WIDTH_40,
+	BAND_WIDTH_80,
+	BAND_WIDTH_160,
+	BAND_WIDTH_8080 = 6,
+	BAND_WIDTH_320
+};
+
+struct hal_ch_layout {
+	UCHAR ch_low_bnd;
+	UCHAR ch_up_bnd;
+	UCHAR cent_freq_idx;
+};
+
+static struct hal_ch_layout ch_5G_40M[] = {
+	{36, 40, 38},
+	{44, 48, 46},
+	{52, 56, 54},
+	{60, 64, 62},
+	{100, 104, 102},
+	{108, 112, 110},
+	{116, 120, 118},
+	{124, 128, 126},
+	{132, 136, 134},
+	{140, 144, 142},
+	{149, 153, 151},
+	{157, 161, 159},
+	{0, 0, 0},
+};
+
+static struct hal_ch_layout ch_5G_80M[] = {
+	{36, 48, 42},
+	{52, 64, 58},
+	{100, 112, 106},
+	{116, 128, 122},
+	{132, 144, 138},
+	{149, 161, 155},
+	{165, 177, 171},
+	{0, 0, 0},
+};
+
+static struct hal_ch_layout ch_5G_160M[] = {
+	{36, 64, 50},
+	{100, 128, 114},
+	{149, 177, 163},
+	{0, 0, 0},
+};
+
+static struct hal_ch_layout ch_6G_40M[] = {
+	{1, 5, 3},
+	{9, 13, 11},
+	{17, 21, 19},
+	{25, 29, 27},
+	{33, 37, 35},
+	{41, 45, 43},
+	{49, 53, 51},
+	{57, 61, 59},
+	{65, 69, 67},
+	{73, 77, 75},
+	{81, 85, 83},
+	{89, 93, 91},
+	{97, 101, 99},
+	{105, 109, 107},
+	{113, 117, 115},
+	{121, 125, 123},
+	{129, 133, 131},
+	{137, 141, 139},
+	{145, 149, 147},
+	{153, 157, 155},
+	{161, 165, 163},
+	{169, 173, 171},
+	{177, 181, 179},
+	{185, 189, 187},
+	{193, 197, 195},
+	{201, 205, 203},
+	{209, 213, 211},
+	{217, 221, 219},
+	{225, 229, 227},
+	{0, 0, 0},
+};
+
+static struct hal_ch_layout ch_6G_80M[] = {
+	{1, 13, 7},
+	{17, 29, 23},
+	{33, 45, 39},
+	{49, 61, 55},
+	{65, 77, 71},
+	{81, 93, 87},
+	{97, 109, 103},
+	{113, 125, 119},
+	{129, 141, 135},
+	{145, 157, 151},
+	{161, 173, 167},
+	{177, 189, 183},
+	{193, 205, 199},
+	{209, 221, 215},
+	{0, 0, 0},
+};
+
+static struct hal_ch_layout ch_6G_160M[] = {
+	{1, 29, 15},
+	{33, 61, 47},
+	{65, 93, 79},
+	{97, 125, 111},
+	{129, 157, 143},
+	{161, 189, 175},
+	{193, 221, 207},
+	{0, 0, 0},
+};
+
+static struct  hal_ch_layout ch_6G_320M[] = {
+	{1, 61, 31},
+	{33, 93, 63},
+	{65, 125, 95},
+	{97, 157, 127},
+	{129, 189, 159},
+	{161, 221, 191},
+	{0, 0, 0},
+};
+
+struct hal_ch_layout *hal_get_ch_array(UCHAR bw, UCHAR ch_band, UCHAR *layout_size)
 {
-	char interface_name[16] = {0};
+	switch (ch_band) {
+	case band_5:
+		if (bw == BAND_WIDTH_40) {
+			*layout_size = ARRAY_SIZE(ch_5G_40M);
+			return ch_5G_40M;
+		} else if (bw == BAND_WIDTH_80) {
+			*layout_size = ARRAY_SIZE(ch_5G_80M);
+			return ch_5G_80M;
+		} else if (bw == BAND_WIDTH_160) {
+			*layout_size = ARRAY_SIZE(ch_5G_160M);
+			return ch_5G_160M;
+		} else
+			return NULL;
 
-	char buf[128] = {0};
-	char config_file[64] = {0};
-	int channel = 0;
-	int freq = 0;
-	int bandwidth = 0;
-	int center_freq = 0;
-	int center_channel = 0;
-	int channel_delta = 0;
-	wifi_band band = band_invalid;
-	int res;
+	case band_6:
+		if (bw == BAND_WIDTH_40) {
+			*layout_size = ARRAY_SIZE(ch_6G_40M);
+			return ch_6G_40M;
+		} else if (bw == BAND_WIDTH_80) {
+			*layout_size = ARRAY_SIZE(ch_6G_80M);
+			return ch_6G_80M;
+		} else if (bw == BAND_WIDTH_160) {
+			*layout_size = ARRAY_SIZE(ch_6G_160M);
+			return ch_6G_160M;
+		} else if (bw == BAND_WIDTH_320) {
+			*layout_size = ARRAY_SIZE(ch_6G_320M);
+			return ch_6G_320M;
+		} else
+			return NULL;
 
-	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
+	default:
+		return NULL;
+	}
+}
 
-	if (NULL == output_string)
-		return RETURN_ERR;
+enum ext_ch {
+	EXT_NONE,
+	EXT_ABOVE,
+	EXT_BELOW = 3
+};
+
+int get_ExtCh_callback(struct nl_msg *msg, void *arg)
+{
+	UCHAR *data = (UCHAR *)arg;
+	struct nlattr *tb[NL80211_ATTR_MAX + 1];
+	struct nlattr *vndr_tb[MTK_NL80211_VENDOR_ATTR_GET_RUNTIME_INFO_MAX + 1];
+	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+	int err = 0;
+
+	err = nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+			  genlmsg_attrlen(gnlh, 0), NULL);
+	if (err < 0)
+		return NL_SKIP;
+
+	if (tb[NL80211_ATTR_VENDOR_DATA]) {
+		err = nla_parse_nested(vndr_tb, MTK_NL80211_VENDOR_ATTR_GET_RUNTIME_INFO_MAX,
+			tb[NL80211_ATTR_VENDOR_DATA], NULL);
+		if (err < 0)
+			return NL_SKIP;
+
+		if (vndr_tb[MTK_NL80211_VENDOR_ATTR_GET_RUNTIME_INFO_GET_EXTENSION_CHANNEL]) {
+			*data = nla_get_u8(vndr_tb[MTK_NL80211_VENDOR_ATTR_GET_RUNTIME_INFO_GET_EXTENSION_CHANNEL]);
+		}
+	}
+
+	return NL_OK;
+}
+
+//Get the extension channel via netlink
+UCHAR wifi_getExtCh_netlink(INT radioIndex)
+{
+	char interface_name[IF_NAME_SIZE] = {0};
+	int ret = -1;
+	unsigned int if_idx = 0;
+	struct unl unl_ins;
+	struct nl_msg *msg  = NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+	UCHAR ext_ch = EXT_NONE;
+
+	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
 	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 
-	res = _syscmd_secure(buf, sizeof(buf), "iw %s info | grep channel | sed -e 's/[^0-9 ]//g'", interface_name);
-	if (res) {
-		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-	}
-	if (strlen(buf) == 0) {
-		wifi_debug(DEBUG_ERROR, "failed to get channel information from iw.\n");
+	if_idx = if_nametoindex(interface_name);
+	if (!if_idx) {
+		wifi_debug(DEBUG_ERROR, "can't finde ifname(%s) index,ERROR\n", interface_name);
 		return RETURN_ERR;
 	}
-	if (sscanf(buf, "%d %d %d %*d %d", &channel, &freq, &bandwidth, &center_freq) != 4) {
-		wifi_debug(DEBUG_ERROR, "sscanf format error.\n");
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_GET_RUNTIME_INFO;
+	param.if_type = NL80211_ATTR_IFINDEX;
+	param.if_idx = if_idx;
+
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
 		return RETURN_ERR;
 	}
 
-	if (bandwidth == 20) {
-		res = snprintf(output_string, 256, "%d", channel);
-		if (os_snprintf_error(256, res)) {
-			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-			return RETURN_ERR;
-		}
-		return RETURN_OK;
+	/*add mtk vendor cmd data*/
+	if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_GET_RUNTIME_INFO_GET_EXTENSION_CHANNEL, 0)) {
+		wifi_debug(DEBUG_ERROR, "Nla put MTK_NL80211_VENDOR_ATTR_GET_RUNTIME_INFO_GET_EXTENSION_CHANNEL attribute error\n");
+		nlmsg_free(msg);
+		goto err;
 	}
 
-	center_channel = ieee80211_frequency_to_channel(center_freq);
+	/*send mtk nl80211 vendor msg*/
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, get_ExtCh_callback, &ext_ch);
+
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		goto err;
+	}
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_NOTICE,"send cmd success\n");
+
+	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+	return ext_ch;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR,"send cmd fails\n");
+	return EXT_NONE;
+
+}
+
+//Get the list for used channel. eg: "1,6,9,11"
+//the returned channels will be the all sub channels that the whole operating bw covers
+//The output_string is a max length 256 octet string that is allocated by the RDKB code.  Implementations must ensure that strings are not longer than this.
+INT wifi_getRadioChannelsInUse(INT radioIndex, CHAR *output_string)	//RDKB
+{
+	wifi_band band;
+	ULONG pri_ch = 0;
+	UCHAR bw = 0xff;
+	UCHAR ext_ch = EXT_NONE;
+	UCHAR sub_ch_list[16] = {0};
+	UCHAR sub_ch_num = 0;
+	struct hal_ch_layout *layout = NULL;
+	UCHAR layout_size = 0;
+	UCHAR sub_ch = 0;
+	UCHAR count = 0;
+	int res;
+
+	if (output_string == NULL) {
+		wifi_debug(DEBUG_ERROR, "output_string is NULL, return\n");
+		return RETURN_ERR;
+	}
 
 	band = wifi_index_to_band(radioIndex);
-	if (band == band_2_4 && bandwidth == 40) {
-		res = snprintf(config_file, sizeof(config_file), "%s%d.dat", LOGAN_DAT_FILE, band);
-		if (os_snprintf_error(sizeof(config_file), res)) {
-			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-			return RETURN_ERR;
-		}
-		memset(buf, 0, sizeof(buf));
-		wifi_halgetRadioExtChannel(config_file, buf);	   // read ht_capab for HT40+ or -
+	if (band == band_invalid) {
+		wifi_debug(DEBUG_ERROR, "invalid band, return\n");
+		return RETURN_ERR;
+	}
 
-		if (strncmp(buf, "AboveControlChannel", strlen("AboveControlChannel")) == 0 && channel < 10) {
-			res = snprintf(output_string, 256, "%d,%d", channel, channel+4);
-		} else if (strncmp(buf, "BelowControlChannel", strlen("BelowControlChannel")) == 0 && channel > 4) {
-			res = snprintf(output_string, 256, "%d,%d", channel-4, channel);
-		} else {
-			if (fprintf(stderr, "%s: invalid channel %d set with %s\n.", __func__, channel, buf) < 0)
-				wifi_debug(DEBUG_ERROR, "Unexpected fprintf fail\n");
-			return RETURN_ERR;
+	/*get pri_ch*/
+	if (wifi_getRadioChannel(radioIndex, &pri_ch) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "Fail to get primary ch, return\n");
+		return RETURN_ERR;
+	}
+
+	if (pri_ch == 0) {
+		wifi_debug(DEBUG_ERROR, "invalid primary ch, return\n");
+		return RETURN_ERR;
+	}
+
+	/*get bw*/
+	if (mtk_wifi_get_radio_info(radioIndex, MTK_NL80211_VENDOR_ATTR_GET_BAND_INFO_BANDWIDTH,
+		get_bandwidth_handler, &bw)!= RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "Fail to get bw, return\n");
+		return RETURN_ERR;
+	}
+
+	if (bw == 0xff) {
+		wifi_debug(DEBUG_ERROR, "invalid bw, return\n");
+		return RETURN_ERR;
+	}
+
+	ext_ch = wifi_getExtCh_netlink(radioIndex);
+
+	/*2G 40M ext_ch sainity check, if check fail, only return primary ch*/
+	if (band == band_2_4 && bw == BAND_WIDTH_40) {
+		if (((ext_ch == EXT_ABOVE) && ((pri_ch + 4) > 14))
+			|| ((ext_ch == EXT_BELOW) && ((pri_ch - 4) < 1))) {
+			wifi_debug(DEBUG_ERROR, "EXTCHA channels out of range\n");
+			bw = BAND_WIDTH_20;
+		} else if (ext_ch == EXT_NONE) {
+			wifi_debug(DEBUG_ERROR, "EXTCHA is NONE for 40M\n");
+			bw = BAND_WIDTH_20;
+		}
+	}
+
+	/*20M case, only return primary ch*/
+	if (bw == BAND_WIDTH_20) {
+		sub_ch_list[0] = pri_ch;
+		sub_ch_num = 1;
+		goto output;
+	}
+
+	/*2G/40M case, return all sub channels*/
+	if ((band == band_2_4) && (bw == BAND_WIDTH_40)) {
+		if (ext_ch == EXT_ABOVE) {
+			for (count = 0, sub_ch = pri_ch; (sub_ch <= 14) && (sub_ch <= pri_ch + 4); count++, sub_ch++)
+				sub_ch_list[count] = sub_ch;
+			sub_ch_num = count;
+		} else if (ext_ch == EXT_BELOW) {
+				for (count = 0, sub_ch = pri_ch - 4; (sub_ch > 0) && (sub_ch <= pri_ch); count++, sub_ch++)
+					sub_ch_list[count] = sub_ch;
+				sub_ch_num = count;
+		}
+		goto output;
+	}
+
+	/*for 5G/6G, need find layout*/
+	if ((band == band_5) || (band == band_6)) {
+		UCHAR index;
+		UCHAR i;
+		UCHAR ch_find = FALSE;
+
+		layout = hal_get_ch_array(bw, band, &layout_size);
+		/*can not find, only return primary ch*/
+		if (layout == NULL) {
+			sub_ch_list[0] = pri_ch;
+			sub_ch_num = 1;
+			goto output;
 		}
 
+		/*find the layout[index] which contains the channels in use*/
+		/*need consider 320M EXT here*/
+		for (i = 0; i < layout_size; i++) {
+			if (bw == BAND_WIDTH_320) {
+				if ((pri_ch >= layout[i].ch_low_bnd) && (pri_ch <= layout[i].ch_up_bnd)
+					&& (ext_ch == EXT_ABOVE) && (pri_ch < layout[i].cent_freq_idx)) {
+					ch_find = TRUE;
+					index = i;
+					break;
+				} else if ((pri_ch >= layout[i].ch_low_bnd) && (pri_ch <= layout[i].ch_up_bnd)
+					&& (ext_ch == EXT_BELOW) && (pri_ch > layout[i].cent_freq_idx)) {
+					ch_find = TRUE;
+					index = i;
+					break;
+				}
+			} else {
+				if ((pri_ch >= layout[i].ch_low_bnd) && (pri_ch <= layout[i].ch_up_bnd)) {
+					ch_find = TRUE;
+					index = i;
+					break;
+				}
+			}
+		}
+
+		/*fill in sub_ch_list from layout[index]*/
+		if (ch_find) {
+			UCHAR start_ch = layout[index].ch_low_bnd;
+			UCHAR end_ch = layout[index].ch_up_bnd;
+			for (count = 0, sub_ch = start_ch; sub_ch <= end_ch; count++, sub_ch = sub_ch + 4)
+				sub_ch_list[count] = sub_ch;
+			sub_ch_num = count;
+		} else
+			wifi_debug(DEBUG_ERROR, "find layout[index] fail\n");
+	}
+
+output:
+	for (count = 0; (count < sub_ch_num) && (sub_ch_num < 16); count++) {
+		if (count == (sub_ch_num - 1))
+			res = snprintf(output_string + strlen(output_string), 256 - strlen(output_string), "%d", sub_ch_list[count]);
+		else
+			res = snprintf(output_string + strlen(output_string), 256 - strlen(output_string), "%d,", sub_ch_list[count]);
 		if (os_snprintf_error(256, res)) {
 			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 			return RETURN_ERR;
 		}
-	} else if (band == band_5 || band == band_6){
-		// to minus 20 is an offset, because frequence of a channel have a range. We need to use offset to calculate correct channel.
-		// example: bandwidth 80: center is 42 (5210), channels are "36,40,44,48" (5170-5250). The delta should be 6.
-		channel_delta = (bandwidth-20)/10;
-		memset(output_string, 0, 256);
-		for (int i = center_channel-channel_delta; i <= center_channel+channel_delta; i+=4) {
-			// If i is not the last channel, we add a comma.
-			res = snprintf(buf, sizeof(buf), "%d%s", i, i==center_channel+channel_delta?"":",");
+	}
 
-			if (os_snprintf_error(sizeof(buf), res)) {
-				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-				return RETURN_ERR;
-			}
-			strncat(output_string, buf, sizeof(output_string) - strlen(output_string) - 1);
-		}
-	} else
-		return RETURN_ERR;
-
-	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n", __func__, __LINE__);
 	return RETURN_OK;
 }
 
@@ -5840,15 +6152,6 @@ int get_bandwidth_handler(struct nl_msg *msg, void *data)
 	return 0;
 }
 
-enum bw_idx {
-	BAND_WIDTH_20,
-	BAND_WIDTH_40,
-	BAND_WIDTH_80,
-	BAND_WIDTH_160,
-	BAND_WIDTH_8080 = 6,
-	BAND_WIDTH_320
-};
-
 int bwidx_to_string(unsigned char bw, char *buf)
 {
 	int res;
@@ -5901,6 +6204,109 @@ int bwidx_to_string(unsigned char bw, char *buf)
 	}
 
 	return 0;
+}
+
+/*Calculate radio bw from ht_bw, vht_bw and eht bw*/
+UCHAR calculate_radio_bw(UCHAR ht_bw, UCHAR vht_bw, UCHAR eht_bw) {
+	UCHAR bw = BAND_WIDTH_20;
+
+	if (ht_bw == HT_BW_20)
+		return bw;
+
+	if (ht_bw == HT_BW_40) {
+		if (vht_bw == VHT_BW_2040)
+			bw = BAND_WIDTH_40;
+		else if (vht_bw == VHT_BW_80)
+			bw = BAND_WIDTH_80;
+		else if (vht_bw == VHT_BW_160) {
+			if (eht_bw == EHT_BW_320)
+				bw = BAND_WIDTH_320;
+			else
+				bw = BAND_WIDTH_160;
+		} else if (vht_bw == VHT_BW_8080)
+			bw = BAND_WIDTH_8080;
+	}
+
+	return bw;
+}
+//Get the Configured Bandwidth. eg "20MHz", "40MHz", "80MHz", "80+80", "160"
+//The output_string is a max length 64 octet string that is allocated by the RDKB code.  Implementations must ensure that strings are not longer than this.
+INT wifi_getRadioConfiguredChannelBandwidth(INT radioIndex, CHAR *output_string)
+{
+	char config_file[128] = {0};
+	wifi_band band = band_invalid;
+	char ht_bw_str[16] = {0};
+	char vht_bw_str[16] = {0};
+	char eht_bw_str[16] = {0};
+	UCHAR ht_bw;
+	UCHAR vht_bw;
+	UCHAR eht_bw;
+	UCHAR bw;
+	char buf[32] = {0};
+	int res;
+	int ret;
+
+	if (output_string == NULL) {
+		wifi_debug(DEBUG_ERROR, "output_string is NULL\n");
+		return RETURN_ERR;
+	}
+
+	band = wifi_index_to_band(radioIndex);
+	res = snprintf(config_file, sizeof(config_file), "%s%d.dat", LOGAN_DAT_FILE, band);
+	if (os_snprintf_error(sizeof(config_file), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
+
+	/*parse HT_BW*/
+	wifi_datfileRead(config_file, "HT_BW", ht_bw_str, sizeof(ht_bw_str));
+	if (strncmp(ht_bw_str, "1", 1) == 0)
+		ht_bw = HT_BW_40;
+	else
+		ht_bw = HT_BW_20;
+
+	/*parse VHT_BW*/
+	wifi_datfileRead(config_file, "VHT_BW", vht_bw_str, sizeof(vht_bw_str));
+	if (strncmp(vht_bw_str, "0", 1) == 0)
+		vht_bw = VHT_BW_2040;
+	else if (strncmp(vht_bw_str, "1", 1) == 0)
+		vht_bw = VHT_BW_80;
+	else if (strncmp(vht_bw_str, "2", 1) == 0)
+		vht_bw = VHT_BW_160;
+	else if (strncmp(vht_bw_str, "3", 1) == 0)
+		vht_bw = VHT_BW_8080;
+	else
+		vht_bw = VHT_BW_2040;
+
+	/*parse EHT_BW*/
+	wifi_datfileRead(config_file, "EHT_ApBw", eht_bw_str, sizeof(eht_bw_str));
+	if (strncmp(eht_bw_str, "0", 1) == 0)
+		eht_bw = EHT_BW_20;
+	else if (strncmp(eht_bw_str, "1", 1) == 0)
+		eht_bw = EHT_BW_40;
+	else if (strncmp(eht_bw_str, "2", 1) == 0)
+		eht_bw = EHT_BW_80;
+	else if (strncmp(eht_bw_str, "3", 1) == 0)
+		eht_bw = EHT_BW_160;
+	else if (strncmp(eht_bw_str, "4", 1) == 0)
+		eht_bw = EHT_BW_320;
+	else
+		eht_bw = EHT_BW_20;
+
+	bw = calculate_radio_bw(ht_bw, vht_bw, eht_bw);
+	ret = bwidx_to_string(bw, buf);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "bwidx_to_string fails\n");
+		return RETURN_ERR;
+	}
+
+	res = snprintf(output_string, 64, "%sMHz", buf);
+	if (os_snprintf_error(64, res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
+
+	return RETURN_OK;
 }
 
 //Get the Operating Channel Bandwidth. eg "20MHz", "40MHz", "80MHz", "80+80", "160"
@@ -18881,7 +19287,31 @@ int main(int argc,char **argv)
 		}
 		char buf[64]= {'\0'};
 		wifi_getRadioOperatingChannelBandwidth(index,buf);
-		printf("Current bandwidth is %s \n",buf);
+		printf("Current operating bandwidth is %s \n",buf);
+		return 0;
+	}
+	if(strstr(argv[1],"wifi_getRadioConfiguredChannelBandwidth") != NULL)
+	{
+		if (argc <= 2)
+		{
+			printf("Insufficient arguments\n");
+			exit(-1);
+		}
+		char buf[64]= {'\0'};
+		wifi_getRadioConfiguredChannelBandwidth(index, buf);
+		printf("Current config bandwidth is %s \n",buf);
+		return 0;
+	}
+	if(strstr(argv[1],"wifi_getRadioChannelsInUse") != NULL)
+	{
+		if (argc <= 2)
+		{
+			printf("Insufficient arguments\n");
+			exit(-1);
+		}
+		char buf[256]= {'\0'};
+		wifi_getRadioChannelsInUse(index, buf);
+		printf("RadioChannelsInUse is %s \n",buf);
 		return 0;
 	}
 	if(strstr(argv[1],"pushRadioChannel2")!=NULL)
