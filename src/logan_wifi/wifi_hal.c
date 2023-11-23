@@ -18157,6 +18157,8 @@ int main(int argc,char **argv)
 			printf("fail to get AP wps last connection status for ap_index=%d\n", index);
 	}
 
+#ifndef WIFI_7992
+	/*it is only suitable for eagle*/
 	if (strstr(argv[1], "mlo_test")) {
 		wifi_vap_info_map_t vap[3];
 		int i;
@@ -18225,7 +18227,8 @@ int main(int argc,char **argv)
 
 		mld_info_display();
 	}
-	
+#endif
+
 	if(strstr(argv[1], "wifi_getApAssociatedDeviceDiagnosticResult3")!=NULL)
 	{
 		wifi_associated_dev3_t *associated_dev_array = NULL, *dev3;
