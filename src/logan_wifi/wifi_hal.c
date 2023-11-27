@@ -81,6 +81,7 @@ Licensed under the ISC license
 #define MAX_SUB_CMD_SIZE 200
 
 #define IF_NAME_SIZE 16
+#define MAX_SSID_NAME_LEN 33
 #define CONFIG_PREFIX "/nvram/hostapd"
 #define ACL_PREFIX "/nvram/hostapd-acl"
 #define DENY_PREFIX "/nvram/hostapd-deny"
@@ -2790,21 +2791,24 @@ static void wifi_vap_status_reset()
 
 static void wifi_radio_reset_count_reset()
 {
-
 	char ret_buf[MAX_BUF_SIZE] = {0};
 	int res;
+	FILE *f = NULL;
 
 	if (access(RADIO_RESET_FILE, F_OK) != 0) {
 		res =  _syscmd_secure(ret_buf, sizeof(ret_buf), "touch %s", RADIO_RESET_FILE);
 		if (res) {
 			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 		}
-	} else {
-		res =  _syscmd_secure(ret_buf, sizeof(ret_buf), "echo '' > /nvram/radio_reset");
-		if (res) {
-			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-		}
 	}
+	f = fopen("/nvram/radio_reset", "w");
+	if (f == NULL)
+		return;
+	fprintf(f, "%s", "reset0=0\n");
+	fprintf(f, "%s", "reset1=0\n");
+	fprintf(f, "%s", "reset2=0\n");
+	if (fclose(f) == EOF)
+		wifi_debug(DEBUG_ERROR, "Unexpected fclose fail\n");
 }
 
 static void wifi_guard_interval_file_check()
@@ -2898,12 +2902,26 @@ static void wifi_mcs_file_check()
 	}
 }
 
+static void wifi_upload_reset()
+{
+	FILE *f = NULL;
+
+	if (access("/tmp/upload", F_OK) != 0) {
+		f = fopen("/tmp/upload", "w+");
+		if (f == NULL)
+			return;
+		fprintf(f, "%s", "5");
+		if (fclose(f) == EOF)
+			wifi_debug(DEBUG_ERROR, "Unexpected fclose fail\n");
+	}
+}
 
 // Initializes the wifi subsystem (all radios)
 INT wifi_init()							//RDKB
 {
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	static int CallOnce = 1;
+
 	//Not intitializing macfilter for Turris-Omnia Platform for now
 	//macfilter_init();
 	if (CallOnce) {
@@ -2923,6 +2941,8 @@ INT wifi_init()							//RDKB
 		wifi_guard_interval_file_check();
 		wifi_power_percentage_file_check();
 		wifi_mcs_file_check();
+		/* for wifiagent TDK test */
+		wifi_upload_reset();
 	}
 
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
@@ -2950,7 +2970,7 @@ INT wifi_init()							//RDKB
 */
 INT wifi_reset()
 {
-
+	int radio_idx;
 	wifi_BringDownInterfaces();
 	sleep(2);
 
@@ -2967,6 +2987,8 @@ INT wifi_reset()
 	sleep(2);
 
 	wifi_vap_status_reset();
+	for (radio_idx = 0; radio_idx < MAX_NUM_RADIOS; radio_idx++)
+		update_radio_reset_cnt(radio_idx);
 
 	return RETURN_OK;
 }
@@ -7714,7 +7736,7 @@ INT wifi_getSSIDName(INT apIndex, CHAR *output)
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
 	}
-	wifi_hostapdRead(config_file,"ssid",output,32);
+	wifi_hostapdRead(config_file,"ssid",output, MAX_SSID_NAME_LEN);
 
 	wifi_dbg_printf("\n[%s]: SSID Name is : %s",__func__,output);
 	return RETURN_OK;
@@ -7728,7 +7750,7 @@ INT wifi_setSSIDName(INT apIndex, CHAR *ssid_string)
 	int res;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-	if(NULL == ssid_string || strlen(ssid_string) >= 32 || strlen(ssid_string) == 0 )
+	if(NULL == ssid_string || strlen(ssid_string) > 32 || strlen(ssid_string) == 0 )
 		return RETURN_ERR;
 
 	params.name = "ssid";
@@ -18223,8 +18245,8 @@ INT wifi_setNeighborReports(UINT apIndex,
 	char hex_bssid[13] = { 0 };
 	char bssid[18] = { 0 };
 	char nr[100] = { 0 };
-	char ssid[32];
-	char hex_ssid[32];
+	char ssid[MAX_SSID_NAME_LEN];
+	char hex_ssid[MAX_SSID_NAME_LEN];
 	char interface_name[16] = {0};
 	INT ret;
 	int res;
@@ -20181,7 +20203,7 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 	int i = 0;
 	int vap_index = 0;
 	BOOL enabled = FALSE;
-	char buf[32] = {0};
+	char buf[MAX_SSID_NAME_LEN] = {0};
 	wifi_vap_security_t security = {0};
 	int res = RETURN_OK;
 	wifi_vap_info_t *vap;
