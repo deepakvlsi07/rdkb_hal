@@ -19886,8 +19886,11 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 	multiple_set = false;
 	if (drv_dat_change == TRUE) {
 		wifi_setRadioEnable(index, FALSE);
-		if (operationParam->enable == TRUE)
+		if (operationParam->enable == TRUE) {
 			wifi_setRadioEnable(index, TRUE);
+			eht_mld_config_init();
+			mld_info_display();
+		}
 	} else if (hapd_conf_change == TRUE) {
 		for (i = 0; i < bss_num; i++) {
 			ApIndex = array_index_to_vap_index(index, i);
@@ -20702,8 +20705,8 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 
 		wifi_debug(DEBUG_ERROR, "process mlo operation\n");
 		if (!mld_info->mld_enable) {
-			wifi_debug(DEBUG_ERROR, "disable mlo on vap[%d]\n",
-				(int)vap_info->vap_index);
+			wifi_debug(DEBUG_ERROR, "disable mlo on vap[%d], vap->enabled=%d\n",
+				(int)vap_info->vap_index, vap_info->u.bss_info.enabled);
 			mld_index = mld_ap_test_all_mlds((int)vap_info->vap_index);
 			if (mld_index) {
 				wifi_debug(DEBUG_ERROR, "mlo disabled, remove ap(%d) from mld group(%d)\n",
@@ -20714,14 +20717,18 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 					continue;
 				}
 
-				if (wifi_GetInterfaceName(vap_info->vap_index, interface_name) == RETURN_OK) {
-					res = _syscmd_secure(buf, sizeof(buf), "ifconfig %s down", interface_name);
-					if (res) {
-						wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-					}
-					res = _syscmd_secure(buf, sizeof(buf), "ifconfig %s up", interface_name);
-					if (res) {
-						wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+				if (wifi_GetInterfaceName(vap_info->vap_index, interface_name) == RETURN_OK &&
+					wifi_getApEnable(vap_info->vap_index, &apEnable) == RETURN_OK) {
+					/*if ap is enabled, bring it down and up to make it init single link mld*/
+					if (apEnable) {
+						res = _syscmd_secure(buf, sizeof(buf), "ifconfig %s down", interface_name);
+						if (res) {
+							wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+						}
+						res = _syscmd_secure(buf, sizeof(buf), "ifconfig %s up", interface_name);
+						if (res) {
+							wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+						}
 					}
 				}
 
@@ -20744,6 +20751,12 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 				continue;
 			}
 
+			if (!vap_info->u.bss_info.enabled) {
+				wifi_debug(DEBUG_ERROR, "vap %d is disabled, not do mlo process.\n",
+					(int)vap_info->vap_index);
+				continue;
+			}
+			
 			if (!mld_test(mld_info->mld_index)) {
 				if (wifi_eht_create_ap_mld(mld_info->mld_index, mld_info->mld_addr) != RETURN_OK) {
 					wifi_debug(DEBUG_ERROR,
