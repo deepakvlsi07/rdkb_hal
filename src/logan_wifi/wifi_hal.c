@@ -11374,13 +11374,16 @@ INT wifi_setApEnable(INT apIndex, BOOL enable)
 			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 		}
 	} else {
-		res = _syscmd_secure(buf, sizeof(buf), "hostapd_cli -i global raw REMOVE %s", interface_name);
-	        if (res) {
-			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-		}
-		res = _syscmd_secure(buf, sizeof(buf), "ifconfig %s down", interface_name);
-	        if (res) {
-			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+		if (apIndex >= MAX_NUM_RADIOS) {
+			res = _syscmd_secure(buf, sizeof(buf), "hostapd_cli -i global raw REMOVE %s", interface_name);
+		    if (res) {
+				wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			}
+		} else {
+			res = _syscmd_secure(buf, sizeof(buf), "ifconfig %s down", interface_name);
+		    if (res) {
+				wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			}
 		}
 	}
 	res = _syscmd_secure(buf, sizeof(buf), "sed -i -n -e '/^%s=/!p' -e '$a%s=%d' %s",
@@ -11400,6 +11403,7 @@ INT wifi_getApEnable(INT apIndex, BOOL *output_bool)
 	int res, len;
 	char ctrl_interface[64] = {0};
 	char config_file[128] = {0};
+	BOOL is_ap_enable, hostapd_state;
 
 	if ((!output_bool) || (apIndex < 0) || (apIndex >= MAX_APS))
 		return RETURN_ERR;
@@ -11437,10 +11441,15 @@ INT wifi_getApEnable(INT apIndex, BOOL *output_bool)
 			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 		}
 
-		if(strncmp(buf, "ENABLED", 7) == 0 || strncmp(buf, "ACS", 3) == 0 ||
-			strncmp(buf, "HT_SCAN", 7) == 0 || strncmp(buf, "DFS", 3) == 0) {
-			*output_bool = TRUE;
+		if (strncmp(buf, "ENABLED", 7) == 0 || strncmp(buf, "ACS", 3) == 0 ||
+			strncmp(buf, "HT_SCAN", 7) == 0 || strncmp(buf, "DFS", 3) == 0)  {
+			hostapd_state = TRUE;
 		}
+
+		is_ap_enable = _syscmd_secure(buf, sizeof(buf), "ifconfig %s | grep UP", interface_name) ? FALSE : TRUE;
+
+		if (hostapd_state && is_ap_enable)
+			*output_bool = TRUE;
 	}
 
 	return RETURN_OK;
@@ -20523,7 +20532,7 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 	char buf[256] = {0};
 	char cmd[128] = {0};
 	char config_file[64] = {0};
-	BOOL enable = FALSE;
+	BOOL apEnable;
 	int band_idx;
 	int res;
 	wifi_mld_common_info_t *mld_info;
@@ -20533,17 +20542,26 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 	char interface_name[IF_NAME_SIZE] = {0};
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-	printf("Entering %s index = %d\n", __func__, (int)index);
+	printf("Entering %s index = %d, map->num_vaps = %d\n", __func__, (int)index, map->num_vaps);
 	for (i = 0; i < map->num_vaps; i++)
 	{
 		multiple_set = TRUE;
-		
+
 		vap_info = &map->vap_array[i];
 
-		// Check vap status file to enable multiple ap if the system boot.
-		checkVapStatus(vap_info->vap_index, &enable);
-		if (vap_info->u.bss_info.enabled == FALSE && enable == FALSE)
+		if (vap_info->u.bss_info.enabled == FALSE /* || enable == FALSE*/) {
+			wifi_getApEnable(vap_info->vap_index, &apEnable);
+            if (apEnable) {
+				wifi_setApEnable(vap_info->vap_index, FALSE);
+            }
 			continue;
+		}
+
+		if (vap_info->u.bss_info.enabled == TRUE) {
+			wifi_getApEnable(vap_info->vap_index, &apEnable);
+			if (!apEnable)
+				wifi_setApEnable(vap_info->vap_index, TRUE);
+		}
 
 		wifi_debug(DEBUG_ERROR, "\nCreate VAP for ssid_index=%d (vap_num=%d)\n", vap_info->vap_index, i);
 
