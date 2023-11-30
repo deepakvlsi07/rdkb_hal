@@ -746,21 +746,99 @@ static unsigned char mld_ap_test(struct multi_link_device *mld, unsigned char ap
 	return mld->affiliated_ap_bitmap[ap_index / 8] & (1 << (ap_index % 8));
 }
 
+int ml_info_callback(struct nl_msg *msg, void *data) {
+    struct nlattr *tb[NL80211_ATTR_MAX + 1];
+    struct nlattr *vndr_tb[MTK_NL80211_VENDOR_ATTR_BSS_MLO_INFO_ATTR_MAX + 1];
+    struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+    int err = 0;
+
+    err = nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+              genlmsg_attrlen(gnlh, 0), NULL);
+    if (err < 0){
+        wifi_debug(DEBUG_ERROR, "get NL80211_ATTR_MAX fails\n");
+        return err;
+    }
+
+    if (tb[NL80211_ATTR_VENDOR_DATA]) {
+        err = nla_parse_nested(vndr_tb, MTK_NL80211_VENDOR_ATTR_BSS_MLO_INFO_ATTR_MAX,
+            tb[NL80211_ATTR_VENDOR_DATA], NULL);
+        if (err < 0){
+            wifi_debug(DEBUG_ERROR, "get MTK_NL80211_VENDOR_ATTR_BSS_MLO_INFO fails\n");
+            return err;
+        }
+
+        if (vndr_tb[MTK_NL80211_VENDOR_ATTR_BSS_MLO_INFO]) {
+			if ((size_t)nla_len(vndr_tb[MTK_NL80211_VENDOR_ATTR_BSS_MLO_INFO]) !=
+				sizeof(struct bss_mlo_info)) {
+				wifi_debug(DEBUG_ERROR, "wrong mlo info from driver\n");
+				return -1;
+			}
+			memcpy(data, nla_data(vndr_tb[MTK_NL80211_VENDOR_ATTR_BSS_MLO_INFO]), sizeof(struct bss_mlo_info));
+        } else
+        return -1;
+    }
+
+    return 0;
+}
+
+static INT eht_mld_nl80211_get_bss_mlo_info(INT apIndex, struct bss_mlo_info *ml_info)
+{
+	char inf_name[IF_NAME_SIZE] = {0};
+	unsigned int if_idx = 0;
+	int ret = -1;
+	struct unl unl_ins;
+	struct nl_msg *msg	= NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+
+	if (wifi_GetInterfaceName(apIndex, inf_name) != RETURN_OK)
+		return RETURN_ERR;
+	if_idx = if_nametoindex(inf_name);
+
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_GET_BSS_MLO_INFO;
+	param.if_type = NL80211_ATTR_IFINDEX;
+	param.if_idx = if_idx;
+
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+	/*add mtk vendor cmd data*/
+	if (nla_put_flag(msg, MTK_NL80211_VENDOR_ATTR_BSS_MLO_INFO)) {
+		wifi_debug(DEBUG_ERROR, "Nla put vendor_data_attr(%d) attribute error\n", MTK_NL80211_VENDOR_ATTR_BSS_MLO_INFO);
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	/*send mtk nl80211 vendor msg*/
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, ml_info_callback, (void*)ml_info);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		goto err;
+	}
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_INFO,"send cmd success\n");
+	return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR,"send cmd fails\n");
+	return RETURN_ERR;
+}
+
 static int eht_mld_config_init(void)
 {
-	char config_file[128] = {0}, str_mldgroup[256], *buf, mac_str[32] = {0};
+	char config_file[128] = {0}, str_mldgroup[256];
 	int res, band, bss_idx;
 	char *token;
 	long mld_index;
 	unsigned char ap_index;
 	struct multi_link_device *mld;
-	char *mld_start, *mldaddr_start, *mldaddr_end;
+	BOOL ap_enable = 0;
+	struct bss_mlo_info ml_info;
 
-	buf = (char*)malloc(4096);
-	if (!buf) {
-		wifi_debug(DEBUG_ERROR, "fail to allocate memory\n");
-		return RETURN_ERR;
-	}
 	wifi_debug(DEBUG_ERROR, "==========>\n");
 
 	memset(&mld_config, 0, sizeof(mld_config));
@@ -768,7 +846,6 @@ static int eht_mld_config_init(void)
 		res = snprintf(config_file, sizeof(config_file), "%s%d.dat", LOGAN_DAT_FILE, band);
 		if (os_snprintf_error(sizeof(config_file), res)) {
 			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-			free(buf);
 			return RETURN_ERR;
 		}
 
@@ -793,9 +870,6 @@ static int eht_mld_config_init(void)
 
 			mld = &(mld_config.mld[mld_index]);
 			mld->mld_index = mld_index;
-			/* need to fulfill mld mac later.
-			memcpy(mld->mld_mac, mac, sizeof(mld->mld_mac));
-			*/
 //			mld->type = mld_index <= MAX_ML_MLD_CNT ? AP_MLD_MULTI_LINK : AP_MLD_SINGLE_LINK;
 			mld_ap_set(mld, ap_index, 1);
 			bss_idx++;
@@ -804,82 +878,37 @@ static int eht_mld_config_init(void)
 		}
 	}
 
-	res = _syscmd_secure(buf, 4096,
-		"mwctl ra0 show bssmngr;dmesg | tail -500 | grep -e \"MLD\" -e \"bss_mngr_con_info_show\"");
-	if (res) {
-		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-		free(buf);
-		return RETURN_ERR;
-	}
+	for (ap_index = 0; ap_index < MAX_APS; ap_index++) {
+		if (wifi_getApEnable(ap_index, &ap_enable) != RETURN_OK)
+			continue;
 
-	/*fulfill mld mac address from bssmngr information*/
-	mld_start = strstr(buf, "bss_mngr_con_info_show");
-	if (!mld_start) {
-		wifi_debug(DEBUG_ERROR, "fail to find string \"bss_mngr_con_info_show\"\n");
-		printf("*************************\n");
-		printf("buf:%s\n", buf);
-		printf("*************************\n");
-		free(buf);
-		return RETURN_ERR;
-	}
-	mld_start = strstr(mld_start, "MLD[");
-	if (!mld_start) {
-		printf("*************************\n");
-		printf("mld_start:%s\n", buf);
-		printf("*************************\n");
-	}
-	while (mld_start) {
-		if (hal_strtol(mld_start + 4, 10, &mld_index) < 0) {
-			wifi_debug(DEBUG_ERROR, "strtol fail\n");
-			free(buf);
-			return RETURN_ERR;
-		}
+		if (!ap_enable)
+			continue;
 
-		if (mld_index == 0 || mld_index > MAX_ML_MLD_CNT) {
-			wifi_debug(DEBUG_ERROR, "invalid mld_index %ld\n", mld_index);
-			mld_start = strstr(mld_start + 4, "MLD[");
+		memset(&ml_info, 0, sizeof(ml_info));
+		if (eht_mld_nl80211_get_bss_mlo_info(ap_index, &ml_info) != RETURN_OK) {
+			wifi_debug(DEBUG_ERROR, "fail to get bss[%d] ml info\n", ap_index);
 			continue;
 		}
 
-		if (!mld_test(mld_index)) {
-			wifi_debug(DEBUG_ERROR, "mld(%ld) is not obvoiusly config in dat file, stll maintain it!",
-				mld_index);
-			mld_set(mld_index, 1);
+		if (ml_info.mld_grp_idx == 0 || ml_info.mld_grp_idx > MAX_ML_MLD_CNT) {
+			wifi_debug(DEBUG_ERROR, "invalid mld_index %d\n", ml_info.mld_grp_idx);
+			continue;
 		}
 
-		mld = &(mld_config.mld[mld_index]);
-		mldaddr_start = strstr(mld_start, "MLD Addr:");
-		if (!mldaddr_start) {
-			wifi_debug(DEBUG_ERROR, "invalid mld address from bssmngr, mld_index=%ld\n", mld_index);
-			free(buf);
-			return RETURN_ERR;
+		if (!mld_test(ml_info.mld_grp_idx)) {
+			wifi_debug(DEBUG_ERROR, "!!mld(%d) is not obvoiusly config in dat file, skip it.",
+				ml_info.mld_grp_idx);
+			continue;
 		}
-		mldaddr_end = strstr(mldaddr_start, ")");
-		if (!mldaddr_end) {
-			wifi_debug(DEBUG_ERROR, "invalid mld address from bssmngr, mld_index=%ld\n", mld_index);
-			free(buf);
-			return RETURN_ERR;
-		}
-
-		memset(mac_str, 0, sizeof(mac_str));
-		if ((mldaddr_end - mldaddr_start - 10) >= sizeof(mac_str)) {
-			wifi_debug(DEBUG_ERROR, "invalid mld address string from bssmngr, mld_index=%ld\n",
-				mld_index);
-			free(buf);
-			return RETURN_ERR;
-		}
-		strncpy(mac_str, mldaddr_start + 10, mldaddr_end - mldaddr_start - 10);
-		if (!hwaddr_aton2(mac_str, mld->mld_mac)) {
-			wifi_debug(DEBUG_ERROR, "invalid mld address from bssmngr, mld_index=%ld\n", mld_index);
-			free(buf);
-			return RETURN_ERR;
-		}
-
-		mld_start = strstr(mldaddr_end, "MLD[");
+		wifi_debug(DEBUG_ERROR, "!Successfully get bss[%d] ml info from driver, mld_grp_idx=%d"
+			"mld_addr=%02x:%02x:%02x:%02x:%02x:%02x\n", ap_index, ml_info.mld_grp_idx,
+			ml_info.addr[0], ml_info.addr[1], ml_info.addr[2], ml_info.addr[3], ml_info.addr[4],
+			ml_info.addr[5]);
+		mld = &(mld_config.mld[ml_info.mld_grp_idx]);
+		memcpy(mld->mld_mac, ml_info.addr, sizeof(mld->mld_mac));
 	}
-	wifi_debug(DEBUG_ERROR, "<==========\n");
 
-	free(buf);
 	return RETURN_OK;
 }
 
