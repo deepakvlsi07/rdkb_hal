@@ -3657,9 +3657,11 @@ INT wifi_setATMEnable(BOOL enable)
 {
 	int max_radio_num = 0;
 	int radio_idx = 0;
+	int bss_idx;
 	char dat_file[MAX_BUF_SIZE] = {0};
 	int res;
 	struct params params[2];
+	struct vow_group_en_param atc_en_param;
 
 	wifi_getMaxRadioNumber(&max_radio_num);
 	for (radio_idx = 0; radio_idx < max_radio_num; radio_idx++) {
@@ -3675,6 +3677,18 @@ INT wifi_setATMEnable(BOOL enable)
 			NULL, (char *)&enable, 1, NULL)!= RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "send MTK_NL80211_VENDOR_ATTR_AP_VOW_ATF_EN_INFO cmd fails\n");
 			return RETURN_ERR;
+		}
+
+		/* atc support 15 group now , per band use 5 group */
+		for (bss_idx = 0; bss_idx < 5; bss_idx++) {
+			atc_en_param.group = bss_idx;
+			atc_en_param.en = enable;
+			if (mtk_wifi_set_air_time_management
+				(radio_idx, MTK_NL80211_VENDOR_ATTR_AP_VOW_ATC_EN_INFO,
+				NULL, (char *)&atc_en_param, sizeof(struct vow_group_en_param), NULL)!= RETURN_OK) {
+				wifi_debug(DEBUG_ERROR, "send MTK_NL80211_VENDOR_ATTR_AP_VOW_ATC_EN_INFO cmd fails\n");
+				return RETURN_ERR;
+			}
 		}
 
 		params[0].name = "VOW_Airtime_Fairness_En";
@@ -3730,47 +3744,24 @@ INT wifi_getATMEnable(BOOL *output_enable)
     return RETURN_OK;
 }
 
-UINT apidx_to_group(INT apIndex)
-{
-	int max_radio_num = 0;
-	unsigned int group = 0;
-
-	wifi_getMaxRadioNumber(&max_radio_num);
-	if (max_radio_num == 0) {
-		wifi_debug(DEBUG_ERROR, "invalid max radio num\n");
-		return 0;
-	}
-    group = apIndex / max_radio_num + 5 * (apIndex % max_radio_num);
-
-	return group;
-}
-
 INT wifi_setApATMAirTimePercent(INT apIndex, UINT ap_AirTimePercent)
 {
-	struct vow_group_en_param atc_en_param;
 	struct vow_ratio_param radio_param;
 	unsigned int group = 0;
-	//BOOL ATM_enable = FALSE;
+	int max_radio_num = 0;
 
-	if (ap_AirTimePercent < 5 || ap_AirTimePercent > 100) {
-		wifi_debug(DEBUG_ERROR, "invalid ait time percent!\n");
+	if (ap_AirTimePercent < 0 || ap_AirTimePercent > 100) {
+		wifi_debug(DEBUG_ERROR, "invalid air time percent!\n");
 		return RETURN_ERR;
 	}
 
-	/* mt7990 support 15 group now*/
-	group = apidx_to_group(apIndex);
+	if (wifi_getMaxRadioNumber(&max_radio_num))
+		return RETURN_ERR;
+	/*support per band 5 group now*/
+	group = apIndex / max_radio_num;
 
-	if (group > 15) {
+	if (group > 5) {
 		wifi_debug(DEBUG_ERROR, "invalid group!\n");
-		return RETURN_ERR;
-	}
-
-	atc_en_param.group = group;
-	atc_en_param.en = 1;
-	if (mtk_wifi_set_air_time_management
-		(apIndex, MTK_NL80211_VENDOR_ATTR_AP_VOW_ATC_EN_INFO,
-		NULL, (char *)&atc_en_param, sizeof(struct vow_group_en_param), NULL)!= RETURN_OK) {
-		wifi_debug(DEBUG_ERROR, "send MTK_NL80211_VENDOR_ATTR_AP_VOW_ATC_EN_INFO cmd fails\n");
 		return RETURN_ERR;
 	}
 
@@ -3798,12 +3789,16 @@ INT wifi_getApATMAirTimePercent(INT apIndex, UINT *output_ap_AirTimePercent)
 	unsigned int group = 0;
 	struct vow_info get_vow_info, vow_info;
 	struct mtk_nl80211_cb_data cb_data;
+	int max_radio_num = 0;
 
 	if (output_ap_AirTimePercent == NULL)
 		return RETURN_ERR;
 
-	group = apidx_to_group(apIndex);
-	if (group > 15) {
+	if (wifi_getMaxRadioNumber(&max_radio_num))
+		return RETURN_ERR;
+
+	group = apIndex / max_radio_num;
+	if (group > 5) {
 		wifi_debug(DEBUG_ERROR, "invalid group!\n");
 		return RETURN_ERR;
 	}
