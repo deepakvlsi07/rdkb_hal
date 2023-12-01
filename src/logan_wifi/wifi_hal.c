@@ -3689,7 +3689,7 @@ INT wifi_setATMEnable(BOOL enable)
 	int bss_idx;
 	char dat_file[MAX_BUF_SIZE] = {0};
 	int res;
-	struct params params[2];
+	struct params params[3];
 	struct vow_group_en_param atc_en_param;
 
 	wifi_getMaxRadioNumber(&max_radio_num);
@@ -3724,13 +3724,15 @@ INT wifi_setATMEnable(BOOL enable)
 		params[0].value = enable ? "1" : "0";
 		params[1].name = "VOW_BW_Ctrl";
 		params[1].value = enable ? "1" : "0";
+		params[2].name = "VOW_Airtime_Ctrl_En";
+		params[2].value = enable ? "1;1;1;1;1;0;0;0;0;0;0;0;0;0;0" : "0;0;0;0;0;0;0;0;0;0;0;0;0;0;0";
 
 		res = snprintf(dat_file, sizeof(dat_file), "%s%d.dat", LOGAN_DAT_FILE, radio_idx);
 		if (os_snprintf_error(sizeof(dat_file), res)) {
 			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 			return RETURN_ERR;
 		}
-		wifi_datfileWrite(dat_file, params, 2);
+		wifi_datfileWrite(dat_file, params, 3);
 	}
 
     return RETURN_OK;
@@ -20576,7 +20578,7 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 
 		vap_info = &map->vap_array[i];
 
-		if (vap_info->u.bss_info.enabled == FALSE /* || enable == FALSE*/) {
+		if (vap_info->u.bss_info.enabled == FALSE) {
 			wifi_getApEnable(vap_info->vap_index, &apEnable);
             if (apEnable) {
 				wifi_setApEnable(vap_info->vap_index, FALSE);
