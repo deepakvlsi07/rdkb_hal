@@ -6368,9 +6368,10 @@ INT wifi_getRadioConfiguredChannelBandwidth(INT radioIndex, CHAR *output_string)
 INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) //Tr181
 {
 	char buf[32] = {0};
-	int ret = 0, res;
+	int ret = 0, res, len = 0;
 	BOOL radio_enable = FALSE;
-	unsigned char bw;
+	//unsigned char bw;
+	char interface_name[64] = {0};
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -6386,15 +6387,18 @@ INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) 
 		WIFI_ENTRY_EXIT_DEBUG("Radio %d is not enable failed %s: %d \n", radioIndex, __func__, __LINE__);
 		return RETURN_OK;
 	}
-	if (mtk_wifi_get_radio_info(radioIndex, MTK_NL80211_VENDOR_ATTR_GET_BAND_INFO_BANDWIDTH,
-		get_bandwidth_handler, &bw)!= RETURN_OK) {
-		wifi_debug(DEBUG_ERROR, "send MTK_NL80211_VENDOR_ATTR_GET_BAND_INFO_BANDWIDTH cmd fails\n");
+
+	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
 		return RETURN_ERR;
+
+	ret = _syscmd_secure(buf, sizeof(buf), "iw dev %s info | grep 'width' | cut -d  ' ' -f6 | tr -d '\\n'", interface_name);
+	if(ret) {
+		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 	}
 
-	ret = bwidx_to_string(bw, buf);
-	if (ret) {
-		wifi_debug(DEBUG_ERROR, "bwidx_to_string fails\n");
+	len = strlen(buf);
+	if ((ret != 0) || (len == 0))  {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
 	}
 
@@ -19770,6 +19774,8 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 			bandwidth = 80;
 		else if (operationParam->channelWidth == WIFI_CHANNELBANDWIDTH_160MHZ || operationParam->channelWidth == WIFI_CHANNELBANDWIDTH_80_80MHZ)
 			bandwidth = 160;
+		else if (operationParam->channelWidth == WIFI_CHANNELBANDWIDTH_320MHZ)
+			bandwidth = 320;
 
 		if (operationParam->autoChannelEnabled) {
 			if (wifi_pushRadioChannel2(index, 0, bandwidth, operationParam->csa_beacon_count) != RETURN_OK) {
@@ -20012,6 +20018,7 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 	else if (!strcmp(buf, "40MHz")) operationParam->channelWidth = WIFI_CHANNELBANDWIDTH_40MHZ;
 	else if (!strcmp(buf, "80MHz")) operationParam->channelWidth = WIFI_CHANNELBANDWIDTH_80MHZ;
 	else if (!strcmp(buf, "160MHz")) operationParam->channelWidth = WIFI_CHANNELBANDWIDTH_160MHZ;
+	else if (!strcmp(buf, "320MHz")) operationParam->channelWidth = WIFI_CHANNELBANDWIDTH_320MHZ;
 	else
 	{
 		wifi_debug(DEBUG_ERROR, "Unknown channel bandwidth: %s\n", buf);
@@ -20035,6 +20042,9 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 		operationParam->variant |= WIFI_80211_VARIANT_AC;
 	if (mode & WIFI_MODE_AX)
 		operationParam->variant |= WIFI_80211_VARIANT_AX;
+	if (mode & WIFI_MODE_BE)
+		operationParam->variant |= WIFI_80211_VARIANT_BE;
+
 	if (wifi_getRadioDCSEnable(index, &operationParam->DCSEnabled) != RETURN_OK) {
 		wifi_debug(DEBUG_ERROR, "wifi_getRadioDCSEnable return error.\n");
 		return RETURN_ERR;
@@ -20934,24 +20944,29 @@ static int getRadioCapabilities(int radioIndex, wifi_radio_capabilities_t *rcap)
 		rcap->channelWidth[i] |= (WIFI_CHANNELBANDWIDTH_20MHZ |
 								WIFI_CHANNELBANDWIDTH_40MHZ);
 
-	}
-	else if (rcap->band[i] & (WIFI_FREQUENCY_5_BAND ) || rcap->band[i] & (WIFI_FREQUENCY_6_BAND)) {
+	} else if (rcap->band[i] & (WIFI_FREQUENCY_5_BAND ) || rcap->band[i] & (WIFI_FREQUENCY_6_BAND)) {
 		rcap->channelWidth[i] |= (WIFI_CHANNELBANDWIDTH_20MHZ |
 								WIFI_CHANNELBANDWIDTH_40MHZ |
 								WIFI_CHANNELBANDWIDTH_80MHZ | WIFI_CHANNELBANDWIDTH_160MHZ);
+	} else if (rcap->band[i] & (WIFI_FREQUENCY_6_BAND)) {
+		rcap->channelWidth[i] |= (WIFI_CHANNELBANDWIDTH_20MHZ |
+								WIFI_CHANNELBANDWIDTH_40MHZ |
+								WIFI_CHANNELBANDWIDTH_80MHZ | 
+								WIFI_CHANNELBANDWIDTH_160MHZ | 
+								WIFI_CHANNELBANDWIDTH_320MHZ);
 	}
 
 
 	/* mode - all supported variants */
 	// rcap->mode[i] = WIFI_80211_VARIANT_H;
 	if (rcap->band[i] & WIFI_FREQUENCY_2_4_BAND ) {
-		rcap->mode[i] = ( WIFI_80211_VARIANT_B | WIFI_80211_VARIANT_G | WIFI_80211_VARIANT_N | WIFI_80211_VARIANT_AX );
+		rcap->mode[i] = ( WIFI_80211_VARIANT_B | WIFI_80211_VARIANT_G | WIFI_80211_VARIANT_N | WIFI_80211_VARIANT_AX | WIFI_80211_VARIANT_BE);
 	}
 	else if (rcap->band[i] & WIFI_FREQUENCY_5_BAND ) {
-		rcap->mode[i] = ( WIFI_80211_VARIANT_A | WIFI_80211_VARIANT_N | WIFI_80211_VARIANT_AC | WIFI_80211_VARIANT_AX );
+		rcap->mode[i] = ( WIFI_80211_VARIANT_A | WIFI_80211_VARIANT_N | WIFI_80211_VARIANT_AC | WIFI_80211_VARIANT_AX | WIFI_80211_VARIANT_BE);
 	}
 	else if (rcap->band[i] & WIFI_FREQUENCY_6_BAND) {
-		rcap->mode[i] = ( WIFI_80211_VARIANT_AX );
+		rcap->mode[i] = ( WIFI_80211_VARIANT_AX | WIFI_80211_VARIANT_BE);
 	}
 	rcap->maxBitRate[i] = ( rcap->band[i] & WIFI_FREQUENCY_2_4_BAND ) ? 300 :
 		((rcap->band[i] & WIFI_FREQUENCY_5_BAND) ? 1734 : 0);
