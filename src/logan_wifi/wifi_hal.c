@@ -18694,6 +18694,38 @@ int main(int argc,char **argv)
 
 		mld_info_display();
 	}
+
+	if (strstr(argv[1], "change_bridge_test")) {
+		wifi_vap_info_map_t vap[3];
+		int i;
+		radio_band[0] = band_2_4;
+		radio_band[1] = band_5;
+		radio_band[2] = band_6;
+
+		if (eht_mld_config_init() != RETURN_OK)
+			printf("eht_mld_config_init() fail!\n");
+
+		memset(vap, 0, sizeof(vap));
+		for (i = 0; i < 3; i++) {
+			if (wifi_getRadioVapInfoMap(i, &vap[i]) != RETURN_OK)
+				printf("wifi_getRadioVapInfoMap fail[%d]", i);
+		}
+
+		/*case 1-change bridge name of ra0*/
+		strncpy(vap[0].vap_array[0].bridge_name, "brlan1", sizeof(vap[0].vap_array[0].bridge_name));
+		if (wifi_createVAP(0, &vap[0]) != RETURN_OK)
+			printf("wifi_createVAP[0] fail\n");
+
+		/*case 2-change bridge name of rai1*/
+		strncpy(vap[1].vap_array[1].bridge_name, "brlan2", sizeof(vap[1].vap_array[1].bridge_name));
+		if (wifi_createVAP(1, &vap[1]) != RETURN_OK)
+			printf("wifi_createVAP[1] fail\n");
+
+		/*case 2-change bridge name of rax0*/
+		strncpy(vap[2].vap_array[0].bridge_name, "brlan3", sizeof(vap[2].vap_array[2].bridge_name));
+		if (wifi_createVAP(2, &vap[2]) != RETURN_OK)
+			printf("wifi_createVAP[2] fail\n");
+	}
 #endif
 
 	if(strstr(argv[1], "wifi_getApAssociatedDeviceDiagnosticResult3")!=NULL)
@@ -20562,6 +20594,47 @@ int hostapd_raw_restart_bss(int apIndex)
 	return RETURN_OK;
 }
 
+static INT getVapBridge(int ap_index, char *bridge_name_buf, int buf_size)
+{
+	int res;
+	char config_file[128] = {0};
+
+	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, ap_index);
+	if (os_snprintf_error(sizeof(config_file), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
+	if (wifi_hostapdRead(config_file, "bridge", bridge_name_buf, buf_size) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "get bridge fail from %s\n", config_file);
+		return RETURN_ERR;
+	}
+
+	return RETURN_OK;
+}
+
+static INT setVapBridge(int ap_index, char *bridge_name)
+{
+	int res;
+	char config_file[128] = {0};
+	struct params param = {.name = "bridge"};
+
+	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, ap_index);
+	if (os_snprintf_error(sizeof(config_file), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
+	wifi_debug(DEBUG_ERROR, "set bridge to %s in %s\n", bridge_name, config_file);
+
+	param.name = "bridge";
+	param.value = bridge_name;
+	if (wifi_hostapdWrite(config_file, &param, 1) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "set bridge fail to %s\n", config_file);
+		return RETURN_ERR;
+	}
+
+	return RETURN_OK;
+}
+
 INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 {
 	unsigned int i;
@@ -20569,7 +20642,6 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 	int acl_mode;
 	int ret = 0;
 	char buf[256] = {0};
-	char cmd[128] = {0};
 	char config_file[64] = {0};
 	BOOL apEnable;
 	int band_idx;
@@ -20579,11 +20651,13 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 	unsigned char ap_index_array[MAX_APS] = {0};
 	unsigned char ap_array_num;
 	char interface_name[IF_NAME_SIZE] = {0};
+	char bridge_name[WIFI_BRIDGE_NAME_LEN] = {0};
+	unsigned char hostapd_if_restart;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	printf("Entering %s index = %d, map->num_vaps = %d\n", __func__, (int)index, map->num_vaps);
-	for (i = 0; i < map->num_vaps; i++)
-	{
+	for (i = 0; i < map->num_vaps; i++) {
+		hostapd_if_restart = 0;
 		multiple_set = TRUE;
 
 		vap_info = &map->vap_array[i];
@@ -20610,32 +20684,21 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 			goto err;
 		}
-		if(band_idx >= 0 && band_idx < sizeof(wifi_band_str)/sizeof(wifi_band_str[0])){
-			res = snprintf(cmd, sizeof(cmd), "cp /etc/hostapd-%s.conf %s", wifi_band_str[band_idx], config_file);
-		} else{
-			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-			goto err;
-		}
-		if (os_snprintf_error(sizeof(cmd), res)) {
-			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-			goto err;
-		}
 
-		res = _syscmd_secure(buf, sizeof(buf), "cp /etc/hostapd-%s.conf %s", wifi_band_str[band_idx], config_file);
-		if (res) {
-			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-
+		/*check if hostapd conf file exist or not, if not exist, create an new one*/
+		if (access(config_file, F_OK) != 0) {
+			if(band_idx >= 0 && band_idx < sizeof(wifi_band_str)/sizeof(wifi_band_str[0])) {
+				wifi_debug(DEBUG_ERROR, "\n%s not exist, create an new one\n", config_file);
+				res = _syscmd_secure(buf, sizeof(buf), "cp /etc/hostapd-%s.conf %s", wifi_band_str[band_idx], config_file);
+				if (res) {
+					wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+				}
+			}
 		}
 
 		struct params params[3];
 		params[0].name = "interface";
 		params[0].value = vap_info->vap_name;
-
-		res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, vap_info->vap_index);
-		if (os_snprintf_error(sizeof(config_file), res)) {
-			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-			goto err;
-		}
 		wifi_hostapdWrite(config_file, params, 1);
 
 		ret = wifi_setSSIDName(vap_info->vap_index, vap_info->u.bss_info.ssid);
@@ -20676,9 +20739,7 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 				res = _syscmd_secure(buf, sizeof(buf), "touch %s%d", DENY_PREFIX, vap_info->vap_index);
 				if (res) {
 					wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-
 				}
-
 			}else{
 				acl_mode = 1;
 			}
@@ -20709,8 +20770,21 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 			wifi_debug(DEBUG_ERROR, "wifi_setApSecurity return error\n");
 			goto err;
 		}
+
+		if (getVapBridge(vap_info->vap_index, bridge_name, sizeof(bridge_name)) == RETURN_OK) {
+			if (strlen(bridge_name) != strlen(vap_info->bridge_name) ||
+				(strlen(bridge_name) == strlen(vap_info->bridge_name) &&
+				strncmp(bridge_name, vap_info->bridge_name, strlen(bridge_name)))) {
+				hostapd_if_restart = 1;
+				setVapBridge(vap_info->vap_index, vap_info->bridge_name);
+			}
+		}
+
 		multiple_set = FALSE;
-		wifi_quick_reload_ap(vap_info->vap_index);
+		if (hostapd_if_restart)
+			hostapd_raw_restart_bss(vap_info->vap_index);
+		else
+			wifi_quick_reload_ap(vap_info->vap_index);
 		// If config use hostapd_cli to set, we calling these type of functions after enable the ap.
 		ret = wifi_setApMacAddressControlMode(vap_info->vap_index, acl_mode);
 		if (ret != RETURN_OK) {
@@ -20734,8 +20808,7 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 	}
 
 	/*process mlo operation*/
-	for (i = 0; i < map->num_vaps; i++)
-	{
+	for (i = 0; i < map->num_vaps; i++) {
 		vap_info = &map->vap_array[i];
 		mld_info = &vap_info->u.bss_info.mld_info.common_info;
 
@@ -20992,10 +21065,13 @@ static int getRadioCapabilities(int radioIndex, wifi_radio_capabilities_t *rcap)
 	rcap->transmitPowerSupported_list[i].transmitPowerSupported[4]=100;
 	rcap->cipherSupported = 0;
 	rcap->cipherSupported |= WIFI_CIPHER_CAPA_ENC_TKIP | WIFI_CIPHER_CAPA_ENC_CCMP;
-	rcap->maxNumberVAPs = MAX_NUM_VAP_PER_RADIO;
+	rcap->maxNumberVAPs = LOGAN_MAX_NUM_VAP_PER_RADIO;
 
 	return RETURN_OK;
 }
+
+
+wifi_hal_capability_t g_hal_cap;
 
 INT wifi_getHalCapability(wifi_hal_capability_t *cap)
 {
@@ -21036,25 +21112,26 @@ INT wifi_getHalCapability(wifi_hal_capability_t *cap)
 			iface_info = &cap->wifi_prop.interface_map[iter];
 			iface_info->phy_index = radioIndex; // XXX: parse phyX index instead
 			iface_info->rdk_radio_index = radioIndex;
-			memset(output, 0, sizeof(output));
-			if (wifi_getRadioIfName(radioIndex, output) == RETURN_OK)
-			{
+
+			iface_info->index = array_index_to_vap_index(radioIndex, j);
+
+			if (wifi_GetInterfaceName(iface_info->index, output))
 				strncpy(iface_info->interface_name, output, sizeof(iface_info->interface_name) - 1);
-			}
-			// TODO: bridge name
+
+			getVapBridge(iface_info->index, iface_info->bridge_name, sizeof(iface_info->bridge_name));
 			// TODO: vlan id
 			// TODO: primary
-			iface_info->index = array_index_to_vap_index(radioIndex, j);
-			memset(output, 0, sizeof(output));
 			if (wifi_getApName(iface_info->index, output) == RETURN_OK)
-			{
 				 strncpy(iface_info->vap_name, output, sizeof(iface_info->vap_name) - 1);
-			}
-		iter++;
+
+			iter++;
 		}
 	}
 
 	cap->BandSteeringSupported = FALSE;
+
+	memcpy(&g_hal_cap, cap, sizeof(g_hal_cap));
+
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 	return RETURN_OK;
 }
