@@ -307,6 +307,10 @@ struct mld_configuration {
 };
 struct mld_configuration mld_config;
 
+wifi_hal_capability_t g_hal_cap;
+
+#define RUNTIME_MAX_RADIO g_phy_count
+
 static int util_unii_5g_centerfreq(const char *ht_mode, int channel);
 static int util_unii_6g_centerfreq(const char *ht_mode, int channel);
 wifi_secur_list *	   wifi_get_item_by_key(wifi_secur_list *list, int list_sz, int key);
@@ -582,6 +586,7 @@ wifi_secur_list * wifi_get_item_by_str(wifi_secur_list *list, int list_sz, const
 static char l1profile[32] = "/etc/wireless/l1profile.dat";
 char main_prefix[MAX_NUM_RADIOS][IFNAMSIZ];
 char ext_prefix[MAX_NUM_RADIOS][IFNAMSIZ];
+int g_phy_count = 0;
 #define MAX_SSID_LEN  64
 char default_ssid[MAX_NUM_RADIOS][MAX_SSID_LEN];;
 int radio_band[MAX_NUM_RADIOS];
@@ -690,8 +695,8 @@ static unsigned int CFG_WMODE_MAP[] = {
 #define WMODE_CAP_2G(_x) \
 (((_x) & (WMODE_B | WMODE_G | WMODE_GN | WMODE_AX_24G | WMODE_BE_24G)) != 0)
 
-static int array_index_to_vap_index(UINT radioIndex, int arrayIndex);
-static int vap_index_to_array_index(int vapIndex, int *radioIndex, int *arrayIndex);
+static int array_index_to_vap_index(UINT radioIndex, int arrayIndex, int *vap_index);
+static int vap_index_to_radio_array_index(int vapIndex, int *radioIndex, int *arrayIndex);
 static int wifi_datfileRead(char *conf_file, char *param, char *output, int output_size);
 int hwaddr_aton2(const char *txt, unsigned char *addr);
 static int wifi_GetInterfaceName(int apIndex, char *interface_name);
@@ -702,7 +707,7 @@ static int wifi_BandProfileRead(int card_idx,
 								char *output,
 								int output_size,
 								char *default_value);
-static int array_index_to_vap_index(UINT radioIndex, int arrayIndex);
+static int array_index_to_vap_index(UINT radioIndex, int arrayIndex, int *vap_index);
 struct params
 {
 	char * name;
@@ -835,6 +840,7 @@ static int eht_mld_config_init(void)
 	char *token;
 	long mld_index;
 	unsigned char ap_index;
+	int vap_idx;
 	struct multi_link_device *mld;
 	BOOL ap_enable = 0;
 	struct bss_mlo_info ml_info;
@@ -842,7 +848,7 @@ static int eht_mld_config_init(void)
 	wifi_debug(DEBUG_ERROR, "==========>\n");
 
 	memset(&mld_config, 0, sizeof(mld_config));
-	for (band = 0; band < MAX_NUM_RADIOS; band++) {
+	for (band = 0; band < RUNTIME_MAX_RADIO; band++) {
 		res = snprintf(config_file, sizeof(config_file), "%s%d.dat", LOGAN_DAT_FILE, band);
 		if (os_snprintf_error(sizeof(config_file), res)) {
 			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
@@ -866,8 +872,11 @@ static int eht_mld_config_init(void)
 			}
 
 			mld_set(mld_index, 1);
-			ap_index = array_index_to_vap_index(band, bss_idx);
-
+			if (array_index_to_vap_index(band, bss_idx, &vap_idx) != RETURN_OK) {
+				wifi_debug(DEBUG_ERROR, "invalid band %d, bss_idx %d, skip it.\n", band, bss_idx);
+				continue;
+			}
+			ap_index = vap_idx;
 			mld = &(mld_config.mld[mld_index]);
 			mld->mld_index = mld_index;
 //			mld->type = mld_index <= MAX_ML_MLD_CNT ? AP_MLD_MULTI_LINK : AP_MLD_SINGLE_LINK;
@@ -1047,12 +1056,11 @@ INT wifi_eht_list_ap_mld(unsigned char mld_index[], unsigned char *mld_num)
 
 INT wifi_eht_add_to_ap_mld(unsigned char mld_index, INT ap_index)
 {
-	int res;
+	int res, radio1, radio2, bss_idx;
 //	enum mld_type type;
 	struct multi_link_device *mld;
 	char interface_name[IF_NAME_SIZE] = {0};
 	unsigned char i;
-	int max_radio_num;
 
 	if (ap_index < 0 || ap_index >= MAX_APS) {
 		wifi_debug(DEBUG_ERROR, "invalid ap_index %d\n", ap_index);
@@ -1096,17 +1104,24 @@ INT wifi_eht_add_to_ap_mld(unsigned char mld_index, INT ap_index)
 	} else if (mld->type == AP_MLD_MULTI_LINK) {
 #endif
 		/*check if a same band ap already has been joined before*/
-	wifi_getMaxRadioNumber(&max_radio_num);
-	if(max_radio_num == 0){
-		return RETURN_ERR;
-	}
 	for (i = 0; i < MAX_APS; i++) {
 		if(mld_ap_test(mld, i)) {
 			if (i == ap_index) {
 				wifi_debug(DEBUG_ERROR, "current ap(index=%d) has already joined current mld\n", i);
 				return RETURN_OK;
 			}
-			if ((i % max_radio_num) == (ap_index % max_radio_num)) {
+
+			if (vap_index_to_radio_array_index(i, &radio1, &bss_idx) != RETURN_OK) {
+				wifi_debug(DEBUG_ERROR, "invalid vap index %d\n", i);
+				return RETURN_ERR;
+			}
+
+			if (vap_index_to_radio_array_index(ap_index, &radio2, &bss_idx) != RETURN_OK) {
+				wifi_debug(DEBUG_ERROR, "invalid vap index %d\n", i);
+				return RETURN_ERR;
+			}
+
+			if (radio1 == radio2) {
 				wifi_debug(DEBUG_ERROR, "same band ap(index=%d) has already joined current mld\n", i);
 				return RETURN_ERR;
 			}
@@ -1198,12 +1213,11 @@ INT wifi_eht_get_ap_from_mld(unsigned char mld_index, unsigned char ap_index[], 
 INT wifi_eht_mld_ap_transfer(unsigned char old_mld_index,
 	unsigned char new_mld_index, INT ap_index)
 {
-	int res;
+	int res, radio1, radio2, bss_idx;
 //	enum mld_type type;
 	struct multi_link_device *mld, *old_mld;
 	char interface_name[IF_NAME_SIZE] = {0};
 	unsigned char i;
-	int max_radio_num;
 
 	if (old_mld_index == new_mld_index) {
 		wifi_debug(DEBUG_ERROR, "same mld index %d\n", new_mld_index);
@@ -1245,17 +1259,25 @@ INT wifi_eht_mld_ap_transfer(unsigned char old_mld_index,
 
 	mld = &(mld_config.mld[new_mld_index]);
 
-	wifi_getMaxRadioNumber(&max_radio_num);
-	if(max_radio_num == 0){
-		return RETURN_ERR;
-	}
+
 	for (i = 0; i < MAX_APS; i++) {
 		if(mld_ap_test(mld, i)) {
 			if (i == ap_index) {
 				wifi_debug(DEBUG_ERROR, "current ap has already joined current mld\n");
 				return RETURN_OK;
 			}
-			if ((i % max_radio_num) == (ap_index % max_radio_num)) {
+
+			if (vap_index_to_radio_array_index(i, &radio1, &bss_idx) != RETURN_OK) {
+				wifi_debug(DEBUG_ERROR, "invalid vap index %d\n", i);
+				return RETURN_ERR;
+			}
+
+			if (vap_index_to_radio_array_index(ap_index, &radio2, &bss_idx) != RETURN_OK) {
+				wifi_debug(DEBUG_ERROR, "invalid vap index %d\n", i);
+				return RETURN_ERR;
+			}
+
+			if (radio1 == radio2) {
 				wifi_debug(DEBUG_ERROR, "same band ap(index=%d) has already joined current mld\n", i);
 				return RETURN_ERR;
 			}
@@ -1282,7 +1304,7 @@ INT wifi_eht_config_sync2_dat_by_radio(unsigned char band)
 	int res, vap_index, len = 0, bssidnum;
 	struct params MldGroup;
 
-	if (band >= MAX_NUM_RADIOS) {
+	if (band >= RUNTIME_MAX_RADIO) {
 		wifi_debug(DEBUG_ERROR, "invalid band %u\n", band);
 		return RETURN_ERR;
 	}
@@ -1310,8 +1332,7 @@ INT wifi_eht_config_sync2_dat_by_radio(unsigned char band)
 	}
 
 	for (bss_idx = 0; bss_idx < bssidnum; bss_idx++) {
-		vap_index = array_index_to_vap_index(band, bss_idx);
-		if (vap_index == RETURN_ERR) {
+		if (array_index_to_vap_index(band, bss_idx, &vap_index) != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "invalide vap index, band=%d, bss_idx=%d\n", (int)band, (int)bss_idx);
 			break;
 		}
@@ -1336,7 +1357,7 @@ void wifi_eht_config_sync2_dat(void)
 {
 	unsigned char band;
 
-	for (band = 0; band < MAX_NUM_RADIOS; band++) {
+	for (band = 0; band < RUNTIME_MAX_RADIO; band++) {
 		wifi_eht_config_sync2_dat_by_radio(band);
 	}
 }
@@ -1671,17 +1692,16 @@ wifi_band wifi_index_to_band(int apIndex)
 	long int nl80211_band = 0;
 	int i = 0;
 	int phyIndex = 0;
-	int radioIndex = 0;
-	int max_radio_num = 0;
+	int radioIndex = 0, bss_idx;
 	wifi_band band = band_invalid;
 	int res;
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-	wifi_getMaxRadioNumber(&max_radio_num);
-	if(max_radio_num == 0){
+	if (vap_index_to_radio_array_index(apIndex, &radioIndex, &bss_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid vap index %d\n", apIndex);
 		return RETURN_ERR;
 	}
-	radioIndex = apIndex % max_radio_num;
+
 	phyIndex = radio_index_to_phy(radioIndex);
 	while (i < 10) {
 		res = _syscmd_secure(buf, sizeof(buf),
@@ -1920,8 +1940,13 @@ static UCHAR get_bssnum_byindex(INT radio_index, UCHAR *bss_cnt)
 	char buf[MAX_CMD_SIZE]={'\0'};
 	UCHAR channel = 0;
 	int res;
+	int main_vap_idx;
 
-	if (wifi_GetInterfaceName(radio_index, interface_name) != RETURN_OK)
+	if (array_index_to_vap_index(radio_index, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radio_index);
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 	/*interface name to channel number*/
 	res = _syscmd_secure(buf, sizeof(buf), "iw dev %s info | grep -i 'channel' | cut -d ' ' -f2", interface_name);
@@ -2492,7 +2517,7 @@ wifi_ParseProfile(void)
 			}
 			if (get_value(card_profile, buf, band_profile, sizeof(band_profile)) < 0) {
 				/* LOG */
-				break;
+				continue;
 			}
 
 			res = snprintf(buf, sizeof(buf), "INDEX%d_main_ifname", card_idx);
@@ -2524,6 +2549,7 @@ wifi_ParseProfile(void)
 			wmode = cfgmode_to_wmode(wireless_mode);
 			radio_band[phy_idx] = wlan_config_set_ch_band(wmode);
 			phy_idx++;
+			g_phy_count = phy_idx;
 		}
 	}
 
@@ -2548,7 +2574,10 @@ wifi_PrepareDefaultHostapdConfigs(bool reset)
 	for (radio_idx = 0; radio_idx < MAX_NUM_RADIOS; radio_idx++) {
 
 		for (bss_idx = 0; bss_idx < LOGAN_MAX_NUM_VAP_PER_RADIO; bss_idx++) {
-			ap_idx = array_index_to_vap_index(radio_idx, bss_idx);
+			if (array_index_to_vap_index(radio_idx, bss_idx, &ap_idx) != RETURN_OK) {
+				wifi_debug(DEBUG_ERROR, "invalid radio_idx %d, bss_idx %d\n", radio_idx, bss_idx);
+				continue;
+			}
 
 			res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, ap_idx);
 			if (os_snprintf_error(sizeof(config_file), res)) {
@@ -2643,7 +2672,10 @@ wifiBringUpInterfacesForRadio(int radio_idx)
 	wifi_debug(DEBUG_ERROR, "band %d BssidNum %d\n", radio_idx, bss_num);
 	/*TBD: we need refine setup flow and mbss flow*/
     for (bss_idx = 0; bss_idx < bss_num; bss_idx++) {
-		ap_idx = array_index_to_vap_index(radio_idx, bss_idx);
+		if (array_index_to_vap_index(radio_idx, bss_idx, &ap_idx) != RETURN_OK) {
+			wifi_debug(DEBUG_ERROR, "invalid radio_idx %d, bss_idx %d\n", radio_idx, bss_idx);
+			continue;
+		}
 
 		res = _syscmd_secure(ret_buf, sizeof(ret_buf), "touch %s%d.psk", PSK_FILE, ap_idx);
 		if (res) {
@@ -2688,7 +2720,7 @@ wifi_BringUpInterfaces(void)
     int band_idx;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    for (radio_idx = 0; radio_idx < MAX_NUM_RADIOS; radio_idx++) {
+    for (radio_idx = 0; radio_idx < RUNTIME_MAX_RADIO; radio_idx++) {
         band_idx = radio_index_to_band(radio_idx);
         if (band_idx < 0) {
             break;
@@ -2723,7 +2755,7 @@ wifi_BringDownInterfaces(void)
 	int band_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-	for (radio_idx = 0; radio_idx < MAX_NUM_RADIOS; radio_idx++) {
+	for (radio_idx = 0; radio_idx < RUNTIME_MAX_RADIO; radio_idx++) {
 		band_idx = radio_index_to_band(radio_idx);
 		if (band_idx < 0) {
 			break;
@@ -2847,10 +2879,8 @@ static void wifi_guard_interval_file_check()
 	unsigned char i = 0;
 	char file[MAX_SUB_CMD_SIZE] = {0};
 	FILE *f = NULL;
-	INT radio_num = 0;
 
-	wifi_getMaxRadioNumber(&radio_num);
-	for (i = 0; i < radio_num; i++) {
+	for (i = 0; i < RUNTIME_MAX_RADIO; i++) {
 		res = snprintf(file, sizeof(file), "%s%d.txt", GUARD_INTERVAL_FILE, i);
 		if (os_snprintf_error(sizeof(file), res)) {
 			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
@@ -2907,10 +2937,8 @@ static void wifi_mcs_file_check()
 	unsigned char i = 0;
 	char file[MAX_SUB_CMD_SIZE] = {0};
 	FILE *f = NULL;
-	INT radio_num = 0;
 
-	wifi_getMaxRadioNumber(&radio_num);
-	for (i = 0; i < radio_num; i++) {
+	for (i = 0; i < RUNTIME_MAX_RADIO; i++) {
 		res = snprintf(file, sizeof(file), "%s%d.txt", MCS_FILE, i);
 		if (os_snprintf_error(sizeof(file), res)) {
 			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
@@ -3044,10 +3072,7 @@ INT wifi_reset()
 INT wifi_down()
 {
 	//TODO: turns off transmit power for the entire Wifi subsystem, for all radios
-	int max_num_radios = 0;
-	wifi_getMaxRadioNumber(&max_num_radios);
-
-	for (int radioIndex = 0; radioIndex < max_num_radios; radioIndex++)
+	for (int radioIndex = 0; radioIndex < RUNTIME_MAX_RADIO; radioIndex++)
 		wifi_setRadioEnable(radioIndex, FALSE);
 
 	return RETURN_OK;
@@ -3161,10 +3186,15 @@ INT wifi_getRadioChannelStats2(INT radioIndex, wifi_channelStats2_t *outputChann
 	unsigned long tmp_ul;
 	size_t len = 0;
 	FILE *f = NULL;
+	int main_vap_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 
 	res = _syscmd_secure(buf, sizeof(buf), "iw %s scan | grep signal | awk '{print $2}' | sort -n | tail -n1", interface_name);
@@ -3302,7 +3332,7 @@ INT wifi_getRadioNumberOfEntries(ULONG *output) //Tr181
 {
 	if (NULL == output)
 		return RETURN_ERR;
-	*output = MAX_NUM_RADIOS;
+	*output = RUNTIME_MAX_RADIO;
 
 	return RETURN_OK;
 }
@@ -3322,22 +3352,20 @@ INT wifi_getRadioEnable(INT radioIndex, BOOL *output_bool)	  //RDKB
 {
 	char interface_name[16] = {0};
 	char buf[128] = {0};
-	int apIndex;
-	int max_radio_num = 0;
+	int apIndex, bss_idx;
 
 	if (NULL == output_bool)
 		return RETURN_ERR;
 
 	*output_bool = FALSE;
 
-	wifi_getMaxRadioNumber(&max_radio_num);
-
-	if (radioIndex >= max_radio_num)
-		return RETURN_ERR;
-
 	/* loop all interface in radio, if any is enable, reture true, else return false */
-	for(apIndex = radioIndex; apIndex < MAX_APS; apIndex += max_radio_num)
+	for (bss_idx = 0; bss_idx < LOGAN_MAX_NUM_VAP_PER_RADIO; bss_idx++)
 	{
+		if (array_index_to_vap_index(radioIndex, bss_idx, &apIndex) != RETURN_OK) {
+			wifi_debug(DEBUG_ERROR, "invalid radioIndex %d, bss_idx %d\n", radioIndex, bss_idx);
+			continue;
+		}
 		if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
 			continue;
 
@@ -3503,19 +3531,21 @@ INT wifi_setRadioEnable(INT radioIndex, BOOL enable)
 {
 	char interface_name[16] = {0};
 	char buf[MAX_BUF_SIZE] = {0};
-	int apIndex;
-	int max_radio_num = 0;
+	int apIndex, bss_idx;
 	int phyId = 0, res;
+	int main_vap_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
 	phyId = radio_index_to_phy(radioIndex);
 
-	wifi_getMaxRadioNumber(&max_radio_num);
-
 	if(enable == FALSE) {
 
-		if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+		if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+			wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		}
+
+		if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
 			return RETURN_ERR;
 
 
@@ -3533,9 +3563,15 @@ INT wifi_setRadioEnable(INT radioIndex, BOOL enable)
 		if(strncmp(buf, "OK", 2))
 			wifi_debug(DEBUG_ERROR, "Could not detach %s from hostapd daemon", interface_name);
 	} else {
-		for (apIndex = radioIndex; apIndex < MAX_APS; apIndex += max_radio_num) {
-			if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+		for (bss_idx = 0; bss_idx < LOGAN_MAX_NUM_VAP_PER_RADIO; bss_idx++) {
+			if (array_index_to_vap_index(radioIndex, bss_idx, &apIndex) != RETURN_OK) {
+				wifi_debug(DEBUG_ERROR, "invalid radioIndex %d, bss_idx %d\n", radioIndex, bss_idx);
+				continue;
+			}
+			if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK) {
+				wifi_debug(DEBUG_ERROR, "!!!Fail to get name of apIndex[%d]\n", apIndex);
 				return RETURN_ERR;
+			}
 
 			memset(buf, 0, MAX_BUF_SIZE);
 
@@ -3581,9 +3617,15 @@ INT wifi_getRadioStatus(INT radioIndex, BOOL *output_bool)	//RDKB
 //Get the Radio Interface name from platform, eg "wlan0"
 INT wifi_getRadioIfName(INT radioIndex, CHAR *output_string) //Tr181
 {
-	if (NULL == output_string || radioIndex>=MAX_NUM_RADIOS || radioIndex<0)
+	int main_vap_idx;
+
+	if (NULL == output_string || radioIndex>=RUNTIME_MAX_RADIO || radioIndex<0)
 		return RETURN_ERR;
-	return wifi_GetInterfaceName(radioIndex, output_string);
+
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+	}
+	return wifi_GetInterfaceName(main_vap_idx, output_string);
 }
 
 int mtk_get_vow_info_callback(struct nl_msg *msg, void *data)
@@ -3684,7 +3726,6 @@ INT wifi_getATMCapable(BOOL *output_bool)
 
 INT wifi_setATMEnable(BOOL enable)
 {
-	int max_radio_num = 0;
 	int radio_idx = 0;
 	int bss_idx;
 	char dat_file[MAX_BUF_SIZE] = {0};
@@ -3692,8 +3733,7 @@ INT wifi_setATMEnable(BOOL enable)
 	struct params params[2];
 	struct vow_group_en_param atc_en_param;
 
-	wifi_getMaxRadioNumber(&max_radio_num);
-	for (radio_idx = 0; radio_idx < max_radio_num; radio_idx++) {
+	for (radio_idx = 0; radio_idx < RUNTIME_MAX_RADIO; radio_idx++) {
 		if (mtk_wifi_set_air_time_management
 			(radio_idx, MTK_NL80211_VENDOR_ATTR_AP_VOW_ATF_EN_INFO,
 			NULL, (char *)&enable, 1, NULL)!= RETURN_OK) {
@@ -3738,7 +3778,6 @@ INT wifi_setATMEnable(BOOL enable)
 
 INT wifi_getATMEnable(BOOL *output_enable)
 {
-	int max_radio_num = 0;
 	int radio_idx = 0;
 	struct vow_info vow_info;
 	struct vow_info get_vow_info;
@@ -3747,7 +3786,6 @@ INT wifi_getATMEnable(BOOL *output_enable)
 	if (output_enable == NULL)
 		return RETURN_ERR;
 
-	wifi_getMaxRadioNumber(&max_radio_num);
 
 	*output_enable = FALSE;
 
@@ -3756,7 +3794,7 @@ INT wifi_getATMEnable(BOOL *output_enable)
 	cb_data.out_buf = (char *)&vow_info;
 	cb_data.out_len = sizeof(struct vow_info);
 
-	for (radio_idx = 0; radio_idx < max_radio_num; radio_idx++) {
+	for (radio_idx = 0; radio_idx < RUNTIME_MAX_RADIO; radio_idx++) {
 		if (mtk_wifi_set_air_time_management
 			(radio_idx, MTK_NL80211_VENDOR_ATTR_AP_VOW_GET_INFO,
 			mtk_get_vow_info_callback, (char *)&get_vow_info, sizeof(struct vow_info), &cb_data)!= RETURN_OK) {
@@ -4424,12 +4462,18 @@ INT wifi_getRadioMode(INT radioIndex, CHAR *output_string, UINT *pureMode)
 	struct nlattr * msg_data = NULL;
 	struct mtk_nl80211_param param;
 	struct mtk_nl80211_cb_data cb_data;
+	int main_vap_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	if (NULL == output_string || NULL == pureMode)
 		return RETURN_ERR;
 
-	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 
 	if_idx = if_nametoindex(interface_name);
@@ -4632,6 +4676,7 @@ INT wifi_setRadioMode(INT radioIndex, CHAR *channelMode, UINT pureMode)
 	char dat_file[MAX_BUF_SIZE] = {0};
 	struct params params={0};
 	int res;
+	int main_vap_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s_%s:%d_%d\n", __func__, channelMode, pureMode, __LINE__);
 
@@ -4642,7 +4687,12 @@ INT wifi_setRadioMode(INT radioIndex, CHAR *channelMode, UINT pureMode)
 		return RETURN_ERR;
 	}
 
-	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 
 	if_idx = if_nametoindex(interface_name);
@@ -5049,10 +5099,16 @@ UCHAR wifi_getExtCh_netlink(INT radioIndex)
 	struct nlattr * msg_data = NULL;
 	struct mtk_nl80211_param param;
 	UCHAR ext_ch = EXT_NONE;
+	int main_vap_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 
 	if_idx = if_nametoindex(interface_name);
@@ -5496,7 +5552,7 @@ INT wifi_setRadioCenterChannel(INT radioIndex, ULONG channel)
 	struct params list[2];
 	char str_idx[16];
 	char config_file[64];
-	int max_num_radios = 0, res;
+	int res, bss_idx, vap_idx;
 	wifi_band band = band_invalid;
 
 	band = wifi_index_to_band(radioIndex);
@@ -5514,13 +5570,13 @@ INT wifi_setRadioCenterChannel(INT radioIndex, ULONG channel)
 	list[1].name = "he_oper_centr_freq_seg0_idx";
 	list[1].value = str_idx;
 
-	wifi_getMaxRadioNumber(&max_num_radios);
-	if(max_num_radios== 0){
-		return RETURN_ERR;
-	}
-	for(int i=0; i<=MAX_APS/max_num_radios; i++)
+	for (bss_idx = 0; bss_idx < LOGAN_MAX_NUM_VAP_PER_RADIO; bss_idx++)
 	{
-		res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex+(max_num_radios*i));
+		if (array_index_to_vap_index(radioIndex, bss_idx, &vap_idx) != RETURN_OK) {
+			wifi_debug(DEBUG_ERROR, "invalid radioIndex[%d], bss_idx[%d]\n", radioIndex, bss_idx);
+			return RETURN_ERR;
+		}
+		res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, vap_idx);
 		if (os_snprintf_error(sizeof(config_file), res)) {
 			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 			return RETURN_ERR;
@@ -5644,7 +5700,7 @@ INT wifi_factoryResetAP(int apIndex)
 
 	memset(ret_buf, 0, sizeof(ret_buf));
 
-	vap_index_to_array_index(apIndex, &radio_idx, &bss_idx);
+	vap_index_to_radio_array_index(apIndex, &radio_idx, &bss_idx);
 
 	/*prepare new config file*/
 
@@ -6067,12 +6123,18 @@ INT wifi_getRadioAutoChannelRefreshPeriod(INT radioIndex, ULONG *output_ulong) /
 	struct nlattr * msg_data = NULL;
 	struct mtk_nl80211_param param;
 	unsigned long checktime = 0;
+	int main_vap_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	if (NULL == output_ulong)
 		return RETURN_ERR;
 
-	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 
 	if_idx = if_nametoindex(interface_name);
@@ -6129,10 +6191,16 @@ INT wifi_setRadioDfsRefreshPeriod(INT radioIndex, ULONG seconds) //Tr181
 	struct nl_msg *msg  = NULL;
 	struct nlattr * msg_data = NULL;
 	struct mtk_nl80211_param param;
+	int main_vap_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 
 	if_idx = if_nametoindex(interface_name);
@@ -6503,6 +6571,7 @@ INT wifi_getRadioExtChannel(INT radioIndex, CHAR *output_string) //Tr181
 	int centr_channel = 0;
 	UINT mode_map = 0;
 	int freq=0, res;
+	int main_vap_idx;
 
 	if (output_string == NULL)
 		return RETURN_ERR;
@@ -6514,10 +6583,16 @@ INT wifi_getRadioExtChannel(INT radioIndex, CHAR *output_string) //Tr181
 	band = wifi_index_to_band(radioIndex);
 	if (band == band_invalid)
 		return RETURN_ERR;
-	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 
-	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
+	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, main_vap_idx);
 	if (os_snprintf_error(sizeof(config_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
@@ -6591,7 +6666,7 @@ INT wifi_setRadioExtChannel(INT radioIndex, CHAR *string) //Tr181	//AP only
 	char ext_channel[64] = {0};
 	unsigned char ext_ch;
 	char buf[128] = {0};
-	int max_radio_num =0, ret = 0;
+	int ret = 0, bss_idx, vap_idx;
 	long int bandwidth = 0;
 	unsigned long channel = 0;
 	bool stbcEnable = FALSE;
@@ -6662,18 +6737,17 @@ INT wifi_setRadioExtChannel(INT radioIndex, CHAR *string) //Tr181	//AP only
 	}
 	wifi_datfileWrite(config_dat_file, &params, 1);
 
-	wifi_getMaxRadioNumber(&max_radio_num);
-	if(max_radio_num== 0){
-		return RETURN_ERR;
-	}
-	for(int i=0; i<=MAX_APS/max_radio_num; i++)
-	{
-		res = snprintf(config_file, sizeof(config_file), "%s%d.conf",CONFIG_PREFIX,radioIndex+(max_radio_num*i));
+	for (bss_idx = 0; bss_idx < LOGAN_MAX_NUM_VAP_PER_RADIO; bss_idx++) {
+		if (array_index_to_vap_index(radioIndex, bss_idx, &vap_idx) != RETURN_OK) {
+			wifi_debug(DEBUG_ERROR, "invalid radioIndex[%d], bss_idx[%d]\n", radioIndex, bss_idx);
+			return RETURN_ERR;
+		}
+		res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, vap_idx);
 		if (os_snprintf_error(sizeof(config_file), res)) {
 			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 			return RETURN_ERR;
 		}
-		wifi_setRadioSTBCEnable(radioIndex+(max_radio_num*i), stbcEnable);
+		wifi_setRadioSTBCEnable(vap_idx, stbcEnable);
 	}
 
 	/*do ext_ch quicking setting*/
@@ -6899,17 +6973,22 @@ INT wifi_getRadioTransmitPowerSupported(INT radioIndex, CHAR *output_list) //Tr1
 INT wifi_getRadioTransmitPower(INT radioIndex, ULONG *output_ulong)	//RDKB
 {
 	char interface_name[16] = {0};
-
 	char buf[16]={0};
 	char pwr_file[128]={0};
 	int res;
+	int main_vap_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
 	if(output_ulong == NULL)
 		return RETURN_ERR;
 
-	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 	res = snprintf(pwr_file, sizeof(pwr_file), "%s%d.txt", POWER_PERCENTAGE, radio_index_to_band(radioIndex));
 	if (os_snprintf_error(sizeof(pwr_file), res)) {
@@ -6948,10 +7027,16 @@ INT wifi_setRadioTransmitPower(INT radioIndex, ULONG TransmitPower)	//RDKB
 	struct mtk_nl80211_param param;
 	struct unl unl_ins;
 	int res;
+	int main_vap_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 	// Get the Tx power supported list and check that is the input in the list
 	res = snprintf(txpower_str, sizeof(txpower_str), "%lu", TransmitPower);
@@ -7137,15 +7222,20 @@ INT wifi_setRadioCarrierSenseThresholdInUse(INT radioIndex, INT threshold)	//P3
 INT wifi_getRadioBeaconPeriod(INT radioIndex, UINT *output)
 {
 	char interface_name[16] = {0};
-
 	char buf[MAX_CMD_SIZE]={'\0'};
 	int res;
+	int main_vap_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	if(output == NULL)
 		return RETURN_ERR;
 
-	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 
 	res = _syscmd_secure(buf, sizeof(buf), "hostapd_cli -i %s status | grep beacon_int | cut -d '=' -f2 | tr -d '\n'", interface_name);
@@ -7529,15 +7619,21 @@ INT wifi_getRadioTrafficStats2(INT radioIndex, wifi_radioTrafficStats2_t *output
 	CHAR interface_name[64] = {0};
 	BOOL iface_status = FALSE;
 	wifi_radioTrafficStats2_t radioTrafficStats = {0};
+	int main_vap_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
 	if (NULL == output_struct)
 		return RETURN_ERR;
 
-	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 
-	wifi_getApEnable(radioIndex, &iface_status);
+	wifi_getApEnable(main_vap_idx, &iface_status);
 
 	if (iface_status == TRUE)
 		wifi_halGetIfStats(interface_name, &radioTrafficStats);
@@ -7583,8 +7679,14 @@ INT wifi_setRadioTrafficStatsMeasure(INT radioIndex, wifi_radioTrafficStatsMeasu
 	struct nl_msg *msg	= NULL;
 	struct nlattr * msg_data = NULL;
 	struct mtk_nl80211_param param;
+	int main_vap_idx;
 
-	if (wifi_GetInterfaceName(radioIndex, inf_name) != RETURN_OK)
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, inf_name) != RETURN_OK)
 		return RETURN_ERR;
 	if_idx = if_nametoindex(inf_name);
 	if (!if_idx) {
@@ -7635,8 +7737,14 @@ INT wifi_setRadioTrafficStatsRadioStatisticsEnable(INT radioIndex, BOOL enable)
 	struct nl_msg *msg	= NULL;
 	struct nlattr * msg_data = NULL;
 	struct mtk_nl80211_param param;
+	int main_vap_idx;
 
-	if (wifi_GetInterfaceName(radioIndex, inf_name) != RETURN_OK)
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, inf_name) != RETURN_OK)
 		return RETURN_ERR;
 	if_idx = if_nametoindex(inf_name);
 	if (!if_idx) {
@@ -7696,14 +7804,16 @@ INT wifi_applyRadioSettings(INT radioIndex)
 //Get the radio index assocated with this SSID entry
 INT wifi_getSSIDRadioIndex(INT ssidIndex, INT *radioIndex)
 {
+	int bss_idx;
+
 	if(NULL == radioIndex)
 		return RETURN_ERR;
-	int max_radio_num = 0;
-	wifi_getMaxRadioNumber(&max_radio_num);
-	if(max_radio_num == 0){
+
+	if (vap_index_to_radio_array_index(ssidIndex, radioIndex, &bss_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid ssidIndex[%d]\n", ssidIndex);
 		return RETURN_ERR;
 	}
-	*radioIndex = ssidIndex%max_radio_num;
+
 	return RETURN_OK;
 }
 
@@ -7845,15 +7955,8 @@ INT wifi_applySSIDSettings(INT ssidIndex)
 	BOOL status = false;
 	char buf[MAX_CMD_SIZE] = {0};
 	int apIndex, ret;
-	int max_radio_num = 0;
-	int radioIndex = 0;
+	int radioIndex = 0, bss_idx;
 	int res;
-
-	wifi_getMaxRadioNumber(&max_radio_num);
-	if(max_radio_num == 0){
-		return RETURN_ERR;
-	}
-	radioIndex = ssidIndex % max_radio_num;
 
 	wifi_getApEnable(ssidIndex,&status);
 	// Do not apply when ssid index is disabled
@@ -7873,8 +7976,16 @@ INT wifi_applySSIDSettings(INT ssidIndex)
 	 * when first created interface will be removed
 	 * then all vaps other vaps on same phy are removed
 	 * after calling setApEnable to false readd all enabled vaps */
-	for(int i=0; i < MAX_APS/max_radio_num; i++) {
-		apIndex = max_radio_num*i+radioIndex;
+	if (vap_index_to_radio_array_index(ssidIndex, &radioIndex, &bss_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid ssidIndex[%d]\n", ssidIndex);
+		return RETURN_ERR;
+	}
+
+	for (bss_idx=0; bss_idx < LOGAN_MAX_NUM_VAP_PER_RADIO; bss_idx++) {
+		if (array_index_to_vap_index(radioIndex, bss_idx, &apIndex) != RETURN_OK) {
+			wifi_debug(DEBUG_ERROR, "invalid radioIndex[%d] bss_idx[%d]\n", radioIndex, bss_idx);
+			continue;
+		}
 		if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
 			return RETURN_ERR;
 
@@ -7902,8 +8013,14 @@ int get_noise(int radioIndex, struct channels_noise *channels_noise_arr, int cha
 	char cmd[128] = {0};
 	char line[256] = {0};
 	int tmp = 0, arr_index = -1, res;
+	int main_vap_idx;
 
-	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 
 	res = snprintf(cmd, sizeof(cmd), "iw dev %s survey dump | grep 'frequency\\|noise' | awk '{print $2}'", interface_name);
@@ -7958,13 +8075,19 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
 	int phyId = 0, res;
 	unsigned long len, tmp;
 	unsigned int DTIM_count;
+	int main_vap_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s: %d\n", __func__, __LINE__);
 
-	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 
-	res = snprintf(file_name, sizeof(file_name), "%s%d.txt", ESSID_FILE, radioIndex);
+	res = snprintf(file_name, sizeof(file_name), "%s%d.txt", ESSID_FILE, main_vap_idx);
 	if (os_snprintf_error(sizeof(file_name), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
@@ -8895,8 +9018,14 @@ INT wifi_getRadioAMSDUEnable(INT radioIndex, BOOL *output_bool)
 	struct nl_msg *msg	= NULL;
 	struct nlattr * msg_data = NULL;
 	struct mtk_nl80211_param param;
+	int main_vap_idx;
 
-	if (wifi_GetInterfaceName(radioIndex, inf_name) != RETURN_OK)
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, inf_name) != RETURN_OK)
 		return RETURN_ERR;
 	if_idx = if_nametoindex(inf_name);
 	/*init mtk nl80211 vendor cmd*/
@@ -8942,8 +9071,14 @@ INT wifi_setRadioAMSDUEnable(INT radioIndex, BOOL amsduEnable)
 	struct nlattr * msg_data = NULL;
 	struct mtk_nl80211_param param;
 	int ret = -1;
+	int main_vap_idx;
 
-	if (wifi_GetInterfaceName(radioIndex, inf_name) != RETURN_OK)
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, inf_name) != RETURN_OK)
 		return RETURN_ERR;
 	if_idx = if_nametoindex(inf_name);
 	/*init mtk nl80211 vendor cmd*/
@@ -9580,13 +9715,20 @@ INT wifi_setRadio11nGreenfieldEnable(INT radioIndex, BOOL enable)
 	struct nlattr * msg_data = NULL;
 	struct mtk_nl80211_param param;
 	struct unl unl_ins;
+	int main_vap_idx;
 
 	if (radioIndex > MAX_APS) {
 		wifi_debug(DEBUG_ERROR, "Invalid apIndex %d\n", radioIndex);
 		return RETURN_ERR;
 	}
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 
 	if_idx = if_nametoindex(interface_name);
@@ -9800,7 +9942,7 @@ INT wifi_getApName(INT apIndex, CHAR *output_string)
 		return RETURN_ERR;
 
 	if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK) {
-		vap_index_to_array_index(apIndex, &radio_idx, &bss_idx);
+		vap_index_to_radio_array_index(apIndex, &radio_idx, &bss_idx);
 
 		res = snprintf(output_string, IF_NAME_SIZE, "%s%d", ext_prefix[radio_idx], bss_idx);	// For wifiagent generating data model.
 	} else
@@ -9818,7 +9960,7 @@ INT wifi_getApName(INT apIndex, CHAR *output_string)
 INT wifi_getIndexFromName(CHAR *inputSsidString, INT *output_int)
 {
 	char buf[32] = {0};
-	char ap_idx = 0;
+	int ap_idx = 0;
 	char *apIndex_str = NULL;
 	char radio_idx = 0;
 	char bss_idx = 0;
@@ -9860,7 +10002,10 @@ INT wifi_getIndexFromName(CHAR *inputSsidString, INT *output_int)
 		return RETURN_ERR;
 	}
 
-	ap_idx = array_index_to_vap_index(radio_idx, bss_idx);
+	if(array_index_to_vap_index(radio_idx, bss_idx, &ap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_idx %d, bss_idx %d\n", radio_idx, bss_idx);
+		return RETURN_ERR;
+	}
 
 	if (ap_idx >= 0 && ap_idx < MAX_APS) {
 		printf("%s: hostapd conf not find, inf(%s), use inf idx(%d).\n",
@@ -10379,16 +10524,17 @@ INT wifi_kickApAssociatedDevice(INT apIndex, CHAR *client_mac)
 // outputs the radio index for the specified ap. similar as wifi_getSsidRadioIndex
 INT wifi_getApRadioIndex(INT apIndex, INT *output_int)
 {
-	int max_radio_num = 0;
+	int radioIndex, bss_idx;
 
 	if(NULL == output_int)
 		return RETURN_ERR;
 
-	wifi_getMaxRadioNumber(&max_radio_num);
-	if(max_radio_num == 0){
+	if (vap_index_to_radio_array_index(apIndex, &radioIndex, &bss_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid apIndex[%d]\n", apIndex);
 		return RETURN_ERR;
 	}
-	*output_int = apIndex % max_radio_num;
+
+	*output_int = radioIndex;
 
 	return RETURN_OK;
 }
@@ -11366,13 +11512,12 @@ INT wifi_setApEnable(INT apIndex, BOOL enable)
 
 	char buf[MAX_BUF_SIZE] = {0};
 	BOOL status = FALSE;
-	int  max_radio_num = 0;
+	int radioIndex, bss_idx;
 	int phyId = 0;
 	int res;
 
 	wifi_getApEnable(apIndex, &status);
 
-	wifi_getMaxRadioNumber(&max_radio_num);
 	if (enable == status)
 		return RETURN_OK;
 
@@ -11380,7 +11525,10 @@ INT wifi_setApEnable(INT apIndex, BOOL enable)
 		return RETURN_ERR;
 
 	if (enable == TRUE) {
-		int radioIndex = apIndex % max_radio_num;
+		if (vap_index_to_radio_array_index(apIndex, &radioIndex, &bss_idx) != RETURN_OK) {
+			wifi_debug(DEBUG_ERROR, "invalid apIndex[%d]\n", apIndex);
+			return RETURN_ERR;
+		}
 		phyId = radio_index_to_phy(radioIndex);
 
 		res = _syscmd_secure(buf, sizeof(buf), "ifconfig %s up", interface_name);
@@ -11398,7 +11546,7 @@ INT wifi_setApEnable(INT apIndex, BOOL enable)
 			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 		}
 	} else {
-		if (apIndex >= MAX_NUM_RADIOS) {
+		if (apIndex >= RUNTIME_MAX_RADIO) {
 			res = _syscmd_secure(buf, sizeof(buf), "hostapd_cli -i global raw REMOVE %s", interface_name);
 		    if (res) {
 				wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
@@ -11666,17 +11814,16 @@ INT wifi_getApUAPSDCapability(INT apIndex, BOOL *output)
 {
 	//get the running status from driver
 	char buf[128] = {0};
-	int max_radio_num = 0, radioIndex = 0;
+	int radioIndex = 0, bss_idx;
 	int phyId = 0;
 	int res;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-	wifi_getMaxRadioNumber(&max_radio_num);
-	if(max_radio_num == 0){
+	if (vap_index_to_radio_array_index(apIndex, &radioIndex, &bss_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid apIndex[%d]\n", apIndex);
 		return RETURN_ERR;
 	}
-	radioIndex = apIndex % max_radio_num;
 	phyId = radio_index_to_phy(radioIndex);
 
 	res = _syscmd_secure(buf, sizeof(buf), "iw phy phy%d info | grep u-APSD", phyId);
@@ -14073,8 +14220,14 @@ INT wifi_pushChannel(INT radioIndex, UINT channel)
 	char interface_name[16] = {0};
 	char buf[1024];
 	int res;
+	int main_vap_idx;
 
-	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 	res = _syscmd_secure(buf, sizeof(buf), "iwconfig %s freq %d",interface_name,channel);
 	if (res) {
@@ -14816,6 +14969,7 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
 	int center_chan = 0;
 	int center_freq1 = 0;
 	int res;
+	int main_vap_idx;
 
 	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
 	if (os_snprintf_error(sizeof(config_file), res)) {
@@ -14823,12 +14977,17 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
 		return RETURN_ERR;
 	}
 
-	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-	band = wifi_index_to_band(radioIndex);
+	band = wifi_index_to_band(main_vap_idx);
 
 	width = channel_width_MHz > 20 ? channel_width_MHz : 20;
 
@@ -14951,6 +15110,7 @@ INT wifi_getNeighboringWiFiStatus(INT radio_index, wifi_neighbor_ap2_t **neighbo
 	int res;
 	unsigned long len;
 	struct channels_noise *channels_noise_arr = NULL;
+	int main_vap_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s: %d\n", __func__, __LINE__);
 
@@ -14976,7 +15136,12 @@ INT wifi_getNeighboringWiFiStatus(INT radio_index, wifi_neighbor_ap2_t **neighbo
 		}
 	}
 
-	if (wifi_GetInterfaceName(radio_index, interface_name) != RETURN_OK)
+	if (array_index_to_vap_index(radio_index, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radio_index);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 
 	phyId = radio_index_to_phy(radio_index);
@@ -16056,14 +16221,12 @@ INT wifi_setApScanFilter(INT apIndex, INT mode, CHAR *essid)
 {
 	char file_name[128] = {0};
 	FILE *f = NULL;
-	int max_num_radios = 0;
 	int res, ret;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-	wifi_getMaxRadioNumber(&max_num_radios);
 	if (essid == NULL || strlen(essid) == 0 || apIndex == -1) {
-		for (int index = 0; index < max_num_radios; index++) {
+		for (int index = 0; index < RUNTIME_MAX_RADIO; index++) {
 			res = snprintf(file_name, sizeof(file_name), "%s%d.txt", ESSID_FILE, index);
 			if (os_snprintf_error(sizeof(file_name), res)) {
 				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
@@ -16192,8 +16355,14 @@ INT wifi_getApAssociatedDeviceTidStatsResult(INT radioIndex,  mac_address_t *cli
 	char  if_name[IF_NAME_SIZE];
 	char interface_name[IF_NAME_SIZE] = {0};
 	int res;
+	int main_vap_idx;
 
-	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 
 	res = snprintf(if_name, sizeof(if_name), "%s", interface_name);
@@ -16452,7 +16621,14 @@ INT wifi_getApAssociatedDeviceRxStatsResult(INT radioIndex, mac_address_t *clien
 {
 	Netlink nl;
 	char if_name[32];
-	if (wifi_GetInterfaceName(radioIndex, if_name) != RETURN_OK)
+	int main_vap_idx;
+
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, if_name) != RETURN_OK)
 		return RETURN_ERR;
 
 	*output_array_size = sizeof(wifi_associated_dev_rate_info_rx_stats_t);
@@ -16596,8 +16772,14 @@ INT wifi_getApAssociatedDeviceTxStatsResult(INT radioIndex, mac_address_t *clien
 	char if_name[IF_NAME_SIZE];
 	char interface_name[IF_NAME_SIZE] = {0};
 	int res;
+	int main_vap_idx;
 
-	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 
 	*output_array_size = sizeof(wifi_associated_dev_rate_info_tx_stats_t);
@@ -16812,6 +16994,7 @@ static int get_survey_dump_buf(INT radioIndex, int channel, char *buf, size_t bu
 	char cmd[MAX_CMD_SIZE] = {'\0'};
 	char interface_name[16] = {0};
 	int res;
+	int main_vap_idx;
 
 	ieee80211_channel_to_frequency(channel, &freqMHz);
 	if (freqMHz == -1) {
@@ -16819,7 +17002,12 @@ static int get_survey_dump_buf(INT radioIndex, int channel, char *buf, size_t bu
 		return -1;
 	}
 
-	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK) {
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK) {
 		wifi_debug(DEBUG_ERROR, "wifi_GetInterfaceName fail\n");
 	}
 	res = snprintf(cmd, sizeof(cmd), "iw dev %s survey dump | grep -A5 %d | tr -d '\\t'", interface_name, freqMHz);
@@ -16892,10 +17080,16 @@ INT wifi_getRadioChannelStats(INT radioIndex,wifi_channelStats_t *input_output_c
 	Netlink nl;
 	wifi_channelStats_t_loc local[array_size];
 	char  if_name[32];
+	int main_vap_idx;
 
 	local[0].array_size = array_size;
 
-	if (wifi_GetInterfaceName(radioIndex, if_name) != RETURN_OK)
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, if_name) != RETURN_OK)
 		return RETURN_ERR;
 
 	nl.id = initSock80211(&nl);
@@ -17466,10 +17660,16 @@ INT wifi_getRadioBandUtilization (INT radioIndex, INT *output_percentage)
 	struct mtk_nl80211_param param;
 	struct mtk_nl80211_cb_data cb_data;
 	wdev_ap_metric ap_metric;
+	int main_vap_idx;
 
 	/*init mtk nl80211 vendor cmd*/
 
-	if (wifi_GetInterfaceName(radioIndex, inf_name) != RETURN_OK)
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, inf_name) != RETURN_OK)
 		return RETURN_ERR;
 	if_idx = if_nametoindex(inf_name);
 	if (!if_idx) {
@@ -18483,7 +18683,7 @@ int main(int argc,char **argv)
 	int index;
 	INT ret=0;
 	char buf[1024]="";
-
+	wifi_ParseProfile();
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	if(argc<3)
 	{
@@ -19840,7 +20040,10 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 	
 	if (current_param.dtimPeriod != operationParam->dtimPeriod) {
 		for (i = 0; i < bss_num; i++) {
-			ApIndex = array_index_to_vap_index(index, i);
+			if (array_index_to_vap_index(index, i, &ApIndex) != RETURN_OK) {
+				wifi_debug(DEBUG_ERROR, "invalid index %d, i %d\n", index, i);
+				continue;
+			}
 			if (wifi_setApDTIMInterval(ApIndex, operationParam->dtimPeriod) != RETURN_OK) {
 				wifi_debug(DEBUG_ERROR, "wifi_setApDTIMInterval return error.\n");
 				goto err;
@@ -19850,7 +20053,11 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 	}
 	if (current_param.beaconInterval != operationParam->beaconInterval) {
 		for (i = 0; i < bss_num; i++) {
-			ApIndex = array_index_to_vap_index(index, i);
+			if (array_index_to_vap_index(index, i, &ApIndex) != RETURN_OK) {
+				wifi_debug(DEBUG_ERROR, "invalid index %d, i %d\n", index, i);
+				continue;
+			}
+
 			if (wifi_setRadioBeaconPeriod(ApIndex, operationParam->beaconInterval) != RETURN_OK) {
 				wifi_debug(DEBUG_ERROR, "wifi_setRadioBeaconPeriod return error.\n");
 				goto err;
@@ -19861,7 +20068,10 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 	if (current_param.operationalDataTransmitRates != operationParam->operationalDataTransmitRates) {
 		BitMapToTransmitRates(operationParam->operationalDataTransmitRates, buf, sizeof(buf));
 		for (i = 0; i < bss_num; i++) {
-			ApIndex = array_index_to_vap_index(index, i);
+			if (array_index_to_vap_index(index, i, &ApIndex) != RETURN_OK) {
+				wifi_debug(DEBUG_ERROR, "invalid index %d, i %d\n", index, i);
+				continue;
+			}
 			if (wifi_setRadioBasicDataTransmitRates(ApIndex, buf) != RETURN_OK) {
 				wifi_debug(DEBUG_ERROR, "wifi_setRadioBasicDataTransmitRates return error.\n");
 				goto err;
@@ -19871,7 +20081,10 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 	}
 	if (current_param.fragmentationThreshold != operationParam->fragmentationThreshold) {
 		for (i = 0; i < bss_num; i++) {
-			ApIndex = array_index_to_vap_index(index, i);
+			if (array_index_to_vap_index(index, i, &ApIndex) != RETURN_OK) {
+				wifi_debug(DEBUG_ERROR, "invalid index %d, i %d\n", index, i);
+				continue;
+			}
 			if (wifi_setRadioFragmentationThreshold(ApIndex, operationParam->fragmentationThreshold) != RETURN_OK) {
 				wifi_debug(DEBUG_ERROR, "wifi_setRadioFragmentationThreshold return error.\n");
 				goto err;
@@ -19882,7 +20095,10 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 
 	if (current_param.rtsThreshold != operationParam->rtsThreshold) {
 		for (i = 0; i < bss_num; i++) {
-			ApIndex = array_index_to_vap_index(index, i);
+			if (array_index_to_vap_index(index, i, &ApIndex) != RETURN_OK) {
+				wifi_debug(DEBUG_ERROR, "invalid index %d, i %d\n", index, i);
+				continue;
+			}
 			if (wifi_setApRtsThreshold(ApIndex, operationParam->rtsThreshold) != RETURN_OK) {
 				wifi_debug(DEBUG_ERROR, "wifi_setApRtsThreshold return error.\n");
 				goto err;
@@ -19949,7 +20165,10 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 		}
 	} else if (hapd_conf_change == TRUE) {
 		for (i = 0; i < bss_num; i++) {
-			ApIndex = array_index_to_vap_index(index, i);
+			if (array_index_to_vap_index(index, i, &ApIndex) != RETURN_OK) {
+				wifi_debug(DEBUG_ERROR, "invalid index %d, i %d\n", index, i);
+				continue;
+			}
 			wifi_quick_reload_ap(ApIndex);
 		}
 	}
@@ -20169,34 +20388,40 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 	return RETURN_OK;
 }
 
-static int array_index_to_vap_index(UINT radioIndex, int arrayIndex)
+static int array_index_to_vap_index(UINT radioIndex, int arrayIndex, int *vap_index)
 {
-	int max_radio_num = 0;
-
-	wifi_getMaxRadioNumber(&max_radio_num);
-	if (radioIndex >= max_radio_num) {
-		wifi_debug(DEBUG_ERROR, "Wrong radio index (%d)\n", radioIndex);
+	if (radioIndex > 2 || arrayIndex < 0 || arrayIndex >= LOGAN_MAX_NUM_VAP_PER_RADIO)
 		return RETURN_ERR;
-	}
 
-	return (arrayIndex * max_radio_num) + radioIndex;
+	if (radioIndex < 2)
+		*vap_index = arrayIndex * 2 + radioIndex;
+	else if (radioIndex == 2)
+		*vap_index = (2 * LOGAN_MAX_NUM_VAP_PER_RADIO) + arrayIndex;
+
+	return RETURN_OK;
 }
 
-static int vap_index_to_array_index(int vapIndex, int *radioIndex, int *arrayIndex)
+/*
+ * 2.4G vap index: 0 2 4 6 8 10 12 14 ... (2*bss_idx)
+ * 5G vap index:   1 3 5 7 9 11 13 15 ... (2*bss_idx + 1)
+ * 6G vap index:   16 17 18 19 20 21 22 23 ... (2*LOGAN_MAX_NUM_VAP_PER_RADIO + bss_idx)
+ */
+
+//static int vap_index_to_array_index(int vapIndex, int *radioIndex, int *arrayIndex)
+static int vap_index_to_radio_array_index(int vapIndex, int *radioIndex, int *arrayIndex)
 {
-	int max_radio_num = 0;
-
-	if ((vapIndex < 0) || (vapIndex >  MAX_NUM_VAP_PER_RADIO*MAX_NUM_RADIOS))
-	return -1;
-
-	wifi_getMaxRadioNumber(&max_radio_num);
-	if(max_radio_num == 0){
+	if (vapIndex >= MAX_APS || vapIndex < 0)
 		return RETURN_ERR;
-	}
-	(*radioIndex) = vapIndex % max_radio_num;
-	(*arrayIndex) = vapIndex / max_radio_num;
 
-	return 0;
+	if (vapIndex >= 0 && vapIndex < (2 * LOGAN_MAX_NUM_VAP_PER_RADIO)) {
+		*radioIndex = vapIndex % 2;
+		*arrayIndex = vapIndex / 2;
+	} else if (vapIndex >= (2 * LOGAN_MAX_NUM_VAP_PER_RADIO) && vapIndex < (3 * LOGAN_MAX_NUM_VAP_PER_RADIO)) {
+		*radioIndex = 2;
+		*arrayIndex = vapIndex - (2 * LOGAN_MAX_NUM_VAP_PER_RADIO);
+	}
+
+	return RETURN_OK;
 }
 
 
@@ -20305,9 +20530,8 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 	{
 		map->vap_array[i].radio_index = index;
 
-		vap_index = array_index_to_vap_index(index, i);
-		if (vap_index < 0) {
-			res = RETURN_ERR;
+		if (array_index_to_vap_index(index, i, &vap_index) != RETURN_OK) {
+			wifi_debug(DEBUG_ERROR, "invalid index %d, i %d\n", index, i);
 			continue;
 		}
 
@@ -20507,13 +20731,12 @@ int hostapd_manage_bss(INT apIndex, BOOL enable)
 
 	char buf[MAX_BUF_SIZE] = {0};
 	BOOL status = FALSE;
-	int  max_radio_num = 0;
 	int phyId = 0;
+	int radioIndex, bss_idx;
 	int res;
 
 	wifi_getApEnable(apIndex, &status);
 
-	wifi_getMaxRadioNumber(&max_radio_num);
 	if (enable == status)
 		return RETURN_OK;
 
@@ -20521,7 +20744,10 @@ int hostapd_manage_bss(INT apIndex, BOOL enable)
 		return RETURN_ERR;
 
 	if (enable == TRUE) {
-		int radioIndex = apIndex % max_radio_num;
+		if (vap_index_to_radio_array_index(apIndex, &radioIndex, &bss_idx) != RETURN_OK) {
+			wifi_debug(DEBUG_ERROR, "invalid apIndex[%d]\n", apIndex);
+			return RETURN_ERR;
+		}
 		phyId = radio_index_to_phy(radioIndex);
 		res = snprintf(config_file, MAX_BUF_SIZE, "%s%d.conf", CONFIG_PREFIX, apIndex);
 		if (os_snprintf_error(MAX_CMD_SIZE, res)) {
@@ -20926,6 +21152,7 @@ static int getRadioCapabilities(int radioIndex, wifi_radio_capabilities_t *rcap)
 	CHAR interface_name[16] = {0};
 	wifi_band band;
 	int res;
+	int main_vap_idx;
 
 	if(rcap == NULL)
 	{
@@ -20989,7 +21216,12 @@ static int getRadioCapabilities(int radioIndex, wifi_radio_capabilities_t *rcap)
 	rcap->csi.maxDevices = 8;
 	rcap->csi.soudingFrameSupported = TRUE;
 
-	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK) {
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK) {
 		wifi_debug(DEBUG_ERROR, "wifi_GetInterfaceName fail\n");
 	}
 	res = snprintf(rcap->ifaceName, sizeof(interface_name), "%s",interface_name);
@@ -21054,11 +21286,9 @@ static int getRadioCapabilities(int radioIndex, wifi_radio_capabilities_t *rcap)
 }
 
 
-wifi_hal_capability_t g_hal_cap;
-
 INT wifi_getHalCapability(wifi_hal_capability_t *cap)
 {
-	INT status = 0, radioIndex = 0;
+	INT status = 0, radioIndex = 0, vap_idx;
 	char output[MAX_BUF_SIZE] = {0};
 	int iter = 0;
 	unsigned int j = 0;
@@ -21087,7 +21317,7 @@ INT wifi_getHalCapability(wifi_hal_capability_t *cap)
 
 		for (j = 0; j < cap->wifi_prop.radiocap[radioIndex].maxNumberVAPs; j++)
 		{
-			if (iter >= MAX_NUM_RADIOS * MAX_NUM_VAP_PER_RADIO)
+			if (iter >= RUNTIME_MAX_RADIO * MAX_NUM_VAP_PER_RADIO)
 			{
 				 printf("%s: to many vaps for index map (%d)\n", __func__, iter);
 				 return RETURN_ERR;
@@ -21096,7 +21326,12 @@ INT wifi_getHalCapability(wifi_hal_capability_t *cap)
 			iface_info->phy_index = radioIndex; // XXX: parse phyX index instead
 			iface_info->rdk_radio_index = radioIndex;
 
-			iface_info->index = array_index_to_vap_index(radioIndex, j);
+			if (array_index_to_vap_index(radioIndex, j, &vap_idx) != RETURN_OK) {
+				wifi_debug(DEBUG_ERROR, "invalid radioIndex %d, j %d\n", radioIndex, j);
+				continue;
+			}
+
+			iface_info->index = vap_idx;
 
 			if (wifi_GetInterfaceName(iface_info->index, output))
 				strncpy(iface_info->interface_name, output, sizeof(iface_info->interface_name) - 1);
@@ -21680,7 +21915,7 @@ INT wifi_getProxyArp(INT apIndex, BOOL *enable)
 
 INT wifi_getRadioStatsEnable(INT radioIndex, BOOL *output_enable)
 {
-	if (NULL == output_enable || radioIndex >=MAX_NUM_RADIOS)
+	if (NULL == output_enable || radioIndex >=RUNTIME_MAX_RADIO)
 		return RETURN_ERR;
 	*output_enable=TRUE;
 	return RETURN_OK;
@@ -21692,12 +21927,11 @@ INT wifi_getTWTsessions(INT ap_index, UINT maxNumberSessions, wifi_twt_sessions_
 	char buf[128] = {0};
 	char line[128] = {0};
 	FILE *f = NULL;
-	int index = 0;
+	int index = 0, bss_idx;
 	int exp = 0;
 	int mantissa = 0;
 	int duration = 0;
 	int radio_index = 0;
-	int max_radio_num = 0;
 	uint twt_wake_interval = 0;
 	int phyId = 0;
 	int res;
@@ -21705,12 +21939,10 @@ INT wifi_getTWTsessions(INT ap_index, UINT maxNumberSessions, wifi_twt_sessions_
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-	wifi_getMaxRadioNumber(&max_radio_num);
-	if(max_radio_num == 0){
+	if (vap_index_to_radio_array_index(ap_index, &radio_index, &bss_idx)!= RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid ap_index[%d]\n", ap_index);
 		return RETURN_ERR;
 	}
-	radio_index = ap_index % max_radio_num;
-
 	phyId = radio_index_to_phy(radio_index);
 
 	res = _syscmd_secure(buf, sizeof(buf),"cat /sys/kernel/debug/ieee80211/phy%d/mt76/twt_stats | wc -l", phyId);
