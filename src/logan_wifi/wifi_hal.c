@@ -20642,7 +20642,8 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
 	wifi_setDisable_EAPOL_retries(ap_index, disable_EAPOL_retries);
 
 	if (security->mode != wifi_security_mode_none && security->mode != wifi_security_mode_enhanced_open) {
-		if (security->u.key.type == wifi_security_key_type_psk || security->u.key.type == wifi_security_key_type_pass || security->u.key.type == wifi_security_key_type_psk_sae) {
+		if (security->u.key.type == wifi_security_key_type_psk || security->u.key.type == wifi_security_key_type_pass
+		|| security->u.key.type == wifi_security_key_type_sae || security->u.key.type == wifi_security_key_type_psk_sae) {
 			int key_len = strlen(security->u.key.key);
 			// wpa_psk and wpa_passphrase cann;t use at the same time, the command replace one with the other.
 			if (key_len == 64) {	// set wpa_psk
@@ -20690,6 +20691,11 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
 			params.value = "CCMP";
 		else if (security->encr == wifi_encryption_aes_tkip)
 			params.value = "TKIP CCMP";
+		wifi_hostapdWrite(config_file, &params, 1);
+		wifi_hostapdProcessUpdate(ap_index, &params, 1);
+
+		/* rsn_pairwise need to be updated too */
+		params.name = "rsn_pairwise";
 		wifi_hostapdWrite(config_file, &params, 1);
 		wifi_hostapdProcessUpdate(ap_index, &params, 1);
 	}
