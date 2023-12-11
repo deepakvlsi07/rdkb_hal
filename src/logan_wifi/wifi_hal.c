@@ -160,6 +160,13 @@ int wifi_debug_level = DEBUG_NOTICE;
 	} \
 }
 
+#define wifi_assert(cond) \
+{\
+	if (!(cond)) {\
+		printf("!!!wifi hal assert!!!m %s %d\n", __func__, __LINE__);\
+	}\
+}
+
 #ifdef WIFI_DEBUG
 #define wifi_dbg_printf printf
 #define WIFI_ENTRY_EXIT_DEBUG printf
@@ -309,8 +316,25 @@ struct mld_configuration mld_config;
 
 wifi_hal_capability_t g_hal_cap;
 
-#define RUNTIME_MAX_RADIO g_phy_count
+static char l1profile[32] = "/etc/wireless/l1profile.dat";
+char main_prefix[MAX_NUM_RADIOS][IFNAMSIZ];
+char ext_prefix[MAX_NUM_RADIOS][IFNAMSIZ];
+int g_phy_count = 0;
+#define MAX_SSID_LEN  64
+char default_ssid[MAX_NUM_RADIOS][MAX_SSID_LEN];;
+int radio_band[MAX_NUM_RADIOS];
 
+static void wifi_ParseProfile(void);
+
+static inline int get_runtime_max_radio(void)
+{
+	/*if rumtime maximun radio number is 0, reinit it.*/
+	wifi_assert(g_phy_count);
+	if(g_phy_count== 0)
+		wifi_ParseProfile();
+
+	return g_phy_count;
+}
 static int util_unii_5g_centerfreq(const char *ht_mode, int channel);
 static int util_unii_6g_centerfreq(const char *ht_mode, int channel);
 wifi_secur_list *	   wifi_get_item_by_key(wifi_secur_list *list, int list_sz, int key);
@@ -582,15 +606,6 @@ wifi_secur_list * wifi_get_item_by_str(wifi_secur_list *list, int list_sz, const
 		cmd_ret;	\
 	})
 
-
-static char l1profile[32] = "/etc/wireless/l1profile.dat";
-char main_prefix[MAX_NUM_RADIOS][IFNAMSIZ];
-char ext_prefix[MAX_NUM_RADIOS][IFNAMSIZ];
-int g_phy_count = 0;
-#define MAX_SSID_LEN  64
-char default_ssid[MAX_NUM_RADIOS][MAX_SSID_LEN];;
-int radio_band[MAX_NUM_RADIOS];
-
 typedef enum _RT_802_11_PHY_MODE {
 	PHY_11BG_MIXED = 0,
 	PHY_11B = 1,
@@ -848,7 +863,7 @@ static int eht_mld_config_init(void)
 	wifi_debug(DEBUG_ERROR, "==========>\n");
 
 	memset(&mld_config, 0, sizeof(mld_config));
-	for (band = 0; band < RUNTIME_MAX_RADIO; band++) {
+	for (band = 0; band < get_runtime_max_radio(); band++) {
 		res = snprintf(config_file, sizeof(config_file), "%s%d.dat", LOGAN_DAT_FILE, band);
 		if (os_snprintf_error(sizeof(config_file), res)) {
 			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
@@ -1304,7 +1319,7 @@ INT wifi_eht_config_sync2_dat_by_radio(unsigned char band)
 	int res, vap_index, len = 0, bssidnum;
 	struct params MldGroup;
 
-	if (band >= RUNTIME_MAX_RADIO) {
+	if (band >= get_runtime_max_radio()) {
 		wifi_debug(DEBUG_ERROR, "invalid band %u\n", band);
 		return RETURN_ERR;
 	}
@@ -1357,7 +1372,7 @@ void wifi_eht_config_sync2_dat(void)
 {
 	unsigned char band;
 
-	for (band = 0; band < RUNTIME_MAX_RADIO; band++) {
+	for (band = 0; band < get_runtime_max_radio(); band++) {
 		wifi_eht_config_sync2_dat_by_radio(band);
 	}
 }
@@ -2720,7 +2735,8 @@ wifi_BringUpInterfaces(void)
     int band_idx;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    for (radio_idx = 0; radio_idx < RUNTIME_MAX_RADIO; radio_idx++) {
+
+    for (radio_idx = 0; radio_idx < get_runtime_max_radio(); radio_idx++) {
         band_idx = radio_index_to_band(radio_idx);
         if (band_idx < 0) {
             break;
@@ -2755,7 +2771,7 @@ wifi_BringDownInterfaces(void)
 	int band_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-	for (radio_idx = 0; radio_idx < RUNTIME_MAX_RADIO; radio_idx++) {
+	for (radio_idx = 0; radio_idx < get_runtime_max_radio(); radio_idx++) {
 		band_idx = radio_index_to_band(radio_idx);
 		if (band_idx < 0) {
 			break;
@@ -2880,7 +2896,7 @@ static void wifi_guard_interval_file_check()
 	char file[MAX_SUB_CMD_SIZE] = {0};
 	FILE *f = NULL;
 
-	for (i = 0; i < RUNTIME_MAX_RADIO; i++) {
+	for (i = 0; i < get_runtime_max_radio(); i++) {
 		res = snprintf(file, sizeof(file), "%s%d.txt", GUARD_INTERVAL_FILE, i);
 		if (os_snprintf_error(sizeof(file), res)) {
 			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
@@ -2938,7 +2954,7 @@ static void wifi_mcs_file_check()
 	char file[MAX_SUB_CMD_SIZE] = {0};
 	FILE *f = NULL;
 
-	for (i = 0; i < RUNTIME_MAX_RADIO; i++) {
+	for (i = 0; i < get_runtime_max_radio(); i++) {
 		res = snprintf(file, sizeof(file), "%s%d.txt", MCS_FILE, i);
 		if (os_snprintf_error(sizeof(file), res)) {
 			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
@@ -3072,7 +3088,8 @@ INT wifi_reset()
 INT wifi_down()
 {
 	//TODO: turns off transmit power for the entire Wifi subsystem, for all radios
-	for (int radioIndex = 0; radioIndex < RUNTIME_MAX_RADIO; radioIndex++)
+
+	for (int radioIndex = 0; radioIndex < get_runtime_max_radio(); radioIndex++)
 		wifi_setRadioEnable(radioIndex, FALSE);
 
 	return RETURN_OK;
@@ -3332,7 +3349,8 @@ INT wifi_getRadioNumberOfEntries(ULONG *output) //Tr181
 {
 	if (NULL == output)
 		return RETURN_ERR;
-	*output = RUNTIME_MAX_RADIO;
+
+	*output = get_runtime_max_radio();
 
 	return RETURN_OK;
 }
@@ -3619,7 +3637,7 @@ INT wifi_getRadioIfName(INT radioIndex, CHAR *output_string) //Tr181
 {
 	int main_vap_idx;
 
-	if (NULL == output_string || radioIndex>=RUNTIME_MAX_RADIO || radioIndex<0)
+	if (NULL == output_string || radioIndex>=get_runtime_max_radio() || radioIndex<0)
 		return RETURN_ERR;
 
 	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
@@ -3733,7 +3751,7 @@ INT wifi_setATMEnable(BOOL enable)
 	struct params params[2];
 	struct vow_group_en_param atc_en_param;
 
-	for (radio_idx = 0; radio_idx < RUNTIME_MAX_RADIO; radio_idx++) {
+	for (radio_idx = 0; radio_idx < get_runtime_max_radio(); radio_idx++) {
 		if (mtk_wifi_set_air_time_management
 			(radio_idx, MTK_NL80211_VENDOR_ATTR_AP_VOW_ATF_EN_INFO,
 			NULL, (char *)&enable, 1, NULL)!= RETURN_OK) {
@@ -3794,7 +3812,7 @@ INT wifi_getATMEnable(BOOL *output_enable)
 	cb_data.out_buf = (char *)&vow_info;
 	cb_data.out_len = sizeof(struct vow_info);
 
-	for (radio_idx = 0; radio_idx < RUNTIME_MAX_RADIO; radio_idx++) {
+	for (radio_idx = 0; radio_idx < get_runtime_max_radio(); radio_idx++) {
 		if (mtk_wifi_set_air_time_management
 			(radio_idx, MTK_NL80211_VENDOR_ATTR_AP_VOW_GET_INFO,
 			mtk_get_vow_info_callback, (char *)&get_vow_info, sizeof(struct vow_info), &cb_data)!= RETURN_OK) {
@@ -11546,7 +11564,7 @@ INT wifi_setApEnable(INT apIndex, BOOL enable)
 			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 		}
 	} else {
-		if (apIndex >= RUNTIME_MAX_RADIO) {
+		if (apIndex >= get_runtime_max_radio()) {
 			res = _syscmd_secure(buf, sizeof(buf), "hostapd_cli -i global raw REMOVE %s", interface_name);
 		    if (res) {
 				wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
@@ -16226,7 +16244,7 @@ INT wifi_setApScanFilter(INT apIndex, INT mode, CHAR *essid)
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
 	if (essid == NULL || strlen(essid) == 0 || apIndex == -1) {
-		for (int index = 0; index < RUNTIME_MAX_RADIO; index++) {
+		for (int index = 0; index < get_runtime_max_radio(); index++) {
 			res = snprintf(file_name, sizeof(file_name), "%s%d.txt", ESSID_FILE, index);
 			if (os_snprintf_error(sizeof(file_name), res)) {
 				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
@@ -21317,7 +21335,7 @@ INT wifi_getHalCapability(wifi_hal_capability_t *cap)
 
 		for (j = 0; j < cap->wifi_prop.radiocap[radioIndex].maxNumberVAPs; j++)
 		{
-			if (iter >= RUNTIME_MAX_RADIO * MAX_NUM_VAP_PER_RADIO)
+			if (iter >= (get_runtime_max_radio() * MAX_NUM_VAP_PER_RADIO))
 			{
 				 printf("%s: to many vaps for index map (%d)\n", __func__, iter);
 				 return RETURN_ERR;
@@ -21915,7 +21933,7 @@ INT wifi_getProxyArp(INT apIndex, BOOL *enable)
 
 INT wifi_getRadioStatsEnable(INT radioIndex, BOOL *output_enable)
 {
-	if (NULL == output_enable || radioIndex >=RUNTIME_MAX_RADIO)
+	if (NULL == output_enable || radioIndex >= get_runtime_max_radio())
 		return RETURN_ERR;
 	*output_enable=TRUE;
 	return RETURN_OK;
