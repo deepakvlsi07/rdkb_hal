@@ -1698,6 +1698,36 @@ INT wifi_getMaxRadioNumber(INT *max_radio_num)
 
 wifi_band radio_index_to_band(int radioIndex)
 {
+	char buf[64] = {0};
+	long int nl80211_band = 0;
+	wifi_band band = band_invalid;
+	int res;
+	int phyIndex = 0;
+	int zero_array[MAX_NUM_RADIOS] = {0};
+
+	if (memcmp(radio_band, zero_array, sizeof(radio_band)) == 0) {
+		phyIndex = radio_index_to_phy(radioIndex);
+
+		res = _syscmd_secure(buf, sizeof(buf),
+			"iw phy%d info | grep 'Band .:' | tail -n 1 | tr -d ':\\n' | awk '{print $2}'", phyIndex);
+
+		if (res) {
+			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+		}
+
+		if (hal_strtol(buf, 16, &nl80211_band) < 0) {
+			wifi_debug(DEBUG_ERROR, "strtol fail\n");
+		}
+		if (nl80211_band == 1)
+			band = band_2_4;
+		else if (nl80211_band == 2)
+			band = band_5;
+		else if (nl80211_band == 4)	 // band == 3 is 60GHz
+			band = band_6;
+
+		radio_band[radioIndex] = band;
+	}
+
 	return radio_band[radioIndex];
 }
 
@@ -3750,17 +3780,23 @@ INT wifi_setATMEnable(BOOL enable)
 	int res;
 	struct params params[3];
 	struct vow_group_en_param atc_en_param;
+	int main_vap_idx;
 
 	for (radio_idx = 0; radio_idx < get_runtime_max_radio(); radio_idx++) {
+		if (array_index_to_vap_index(radio_idx, 0, &main_vap_idx) != RETURN_OK) {
+			wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radio_idx);
+			return RETURN_ERR;
+		}
+
 		if (mtk_wifi_set_air_time_management
-			(radio_idx, MTK_NL80211_VENDOR_ATTR_AP_VOW_ATF_EN_INFO,
+			(main_vap_idx, MTK_NL80211_VENDOR_ATTR_AP_VOW_ATF_EN_INFO,
 			NULL, (char *)&enable, 1, NULL)!= RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "send MTK_NL80211_VENDOR_ATTR_AP_VOW_ATF_EN_INFO cmd fails\n");
 			return RETURN_ERR;
 		}
 
 		if (mtk_wifi_set_air_time_management
-			(radio_idx, MTK_NL80211_VENDOR_ATTR_AP_VOW_BW_EN_INFO,
+			(main_vap_idx, MTK_NL80211_VENDOR_ATTR_AP_VOW_BW_EN_INFO,
 			NULL, (char *)&enable, 1, NULL)!= RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "send MTK_NL80211_VENDOR_ATTR_AP_VOW_ATF_EN_INFO cmd fails\n");
 			return RETURN_ERR;
@@ -3771,7 +3807,7 @@ INT wifi_setATMEnable(BOOL enable)
 			atc_en_param.group = bss_idx;
 			atc_en_param.en = enable;
 			if (mtk_wifi_set_air_time_management
-				(radio_idx, MTK_NL80211_VENDOR_ATTR_AP_VOW_ATC_EN_INFO,
+				(main_vap_idx, MTK_NL80211_VENDOR_ATTR_AP_VOW_ATC_EN_INFO,
 				NULL, (char *)&atc_en_param, sizeof(struct vow_group_en_param), NULL)!= RETURN_OK) {
 				wifi_debug(DEBUG_ERROR, "send MTK_NL80211_VENDOR_ATTR_AP_VOW_ATC_EN_INFO cmd fails\n");
 				return RETURN_ERR;
@@ -3802,6 +3838,7 @@ INT wifi_getATMEnable(BOOL *output_enable)
 	struct vow_info vow_info;
 	struct vow_info get_vow_info;
 	struct mtk_nl80211_cb_data cb_data;
+	int main_vap_idx;
 
 	if (output_enable == NULL)
 		return RETURN_ERR;
@@ -3815,8 +3852,12 @@ INT wifi_getATMEnable(BOOL *output_enable)
 	cb_data.out_len = sizeof(struct vow_info);
 
 	for (radio_idx = 0; radio_idx < get_runtime_max_radio(); radio_idx++) {
+		if (array_index_to_vap_index(radio_idx, 0, &main_vap_idx) != RETURN_OK) {
+			wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radio_idx);
+			return RETURN_ERR;
+		}
 		if (mtk_wifi_set_air_time_management
-			(radio_idx, MTK_NL80211_VENDOR_ATTR_AP_VOW_GET_INFO,
+			(main_vap_idx, MTK_NL80211_VENDOR_ATTR_AP_VOW_GET_INFO,
 			mtk_get_vow_info_callback, (char *)&get_vow_info, sizeof(struct vow_info), &cb_data)!= RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "send MTK_NL80211_VENDOR_ATTR_AP_VOW_GET_INFO cmd fails\n");
 			return RETURN_ERR;
@@ -4135,7 +4176,7 @@ INT wifi_getRadioSupportedFrequencyBands(INT radioIndex, CHAR *output_string)	//
 	if (NULL == output_string)
 		return RETURN_ERR;
 
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 
 	memset(output_string, 0, 10);
 	if (band == band_2_4)
@@ -4161,7 +4202,7 @@ INT wifi_getRadioOperatingFrequencyBand(INT radioIndex, CHAR *output_string) //T
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	if (NULL == output_string)
 		return RETURN_ERR;
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 
 	if (band == band_2_4)
 		res = snprintf(output_string, 64, "2.4GHz");
@@ -4192,7 +4233,7 @@ INT wifi_getRadioSupportedStandards(INT radioIndex, CHAR *output_string) //Tr181
 	if (NULL == output_string)
 		return RETURN_ERR;
 
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 	if (band == band_2_4) {
 		strncat(temp_output, "b,g,", sizeof(temp_output) - strlen(temp_output) - 1);
 	} else if (band == band_5) {
@@ -4339,7 +4380,7 @@ void phymode_to_puremode(INT radioIndex, CHAR *output_string, UINT *pureMode, UI
 	unsigned char radio_mode_tem_len;
 	int res;
 
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 	// puremode is a bit map
 	*pureMode = 0;
 	memset(output_string, 0, RADIO_MODE_LEN);
@@ -4783,7 +4824,7 @@ INT wifi_setRadioHwMode(INT radioIndex, CHAR *hw_mode) {
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
 
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 
 	if (strncmp(hw_mode, "a", 1) == 0 && (band != band_5 && band != band_6))
 		return RETURN_ERR;
@@ -4848,7 +4889,7 @@ INT wifi_setNoscan(INT radioIndex, CHAR *noscan)
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
 
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 	if (band != band_2_4)
 		return RETURN_OK;
 
@@ -5196,7 +5237,7 @@ INT wifi_getRadioChannelsInUse(INT radioIndex, CHAR *output_string)	//RDKB
 		return RETURN_ERR;
 	}
 
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 	if (band == band_invalid) {
 		wifi_debug(DEBUG_ERROR, "invalid band, return\n");
 		return RETURN_ERR;
@@ -5405,7 +5446,7 @@ INT wifi_getRadioChannel(INT radioIndex, ULONG *output_ulong)	//RDKB
 
 	if (output_ulong == NULL)
 		return RETURN_ERR;
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 	res = snprintf(config_file, sizeof(config_file), "%s%d.dat", LOGAN_DAT_FILE, band);
 	if (os_snprintf_error(sizeof(config_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
@@ -5462,7 +5503,7 @@ INT wifi_storeprevchanval(INT radioIndex)
 	wifi_band band = band_invalid;
 	int res;
 
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 	if (band == band_invalid) {
 		return RETURN_ERR;
 		wifi_dbg_printf("[%s]: Invalid radio index", __func__);
@@ -5539,7 +5580,7 @@ INT wifi_setRadioChannel(INT radioIndex, ULONG channel)	//RDKB	//AP only
 	*/
 	dat.name = "Channel";
 	dat.value = str_channel;
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 	res = snprintf(config_file_dat, sizeof(config_file_dat), "%s%d.dat", LOGAN_DAT_FILE, band);
 	if (os_snprintf_error(sizeof(config_file_dat), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
@@ -5575,7 +5616,7 @@ INT wifi_setRadioCenterChannel(INT radioIndex, ULONG channel)
 	int res, bss_idx, vap_idx;
 	wifi_band band = band_invalid;
 
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 	if (band == band_2_4)
 		return RETURN_OK;
 
@@ -5626,7 +5667,7 @@ INT wifi_setRadioAutoChannelEnable(INT radioIndex, BOOL enable) //RDKB
 	} else {
 		acs.name = "AutoChannelSelect";
 		acs.value = "0";
-		band = wifi_index_to_band(radioIndex);
+		band = radio_index_to_band(radioIndex);
 		res = snprintf(config_file_dat, sizeof(config_file_dat), "%s%d.dat", LOGAN_DAT_FILE, band);
 		if (os_snprintf_error(sizeof(config_file_dat), res)) {
 			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
@@ -5894,7 +5935,7 @@ INT wifi_getRadioDfsSupport(INT radioIndex, BOOL *output_bool) //Tr181
 		return RETURN_ERR;
 	*output_bool=FALSE;
 
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 	if (band == band_5)
 		*output_bool = TRUE;
 	return RETURN_OK;
@@ -5922,7 +5963,7 @@ INT wifi_getRadioDCSChannelPool(INT radioIndex, CHAR *output_pool)			//RDKB
 		return RETURN_ERR;
 	// get skiplist, possible_channels list
 	wifi_getRadioPossibleChannels(radioIndex, possible_channels);
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 	res = snprintf(config_file, sizeof(config_file), "%s%d.dat", LOGAN_DAT_FILE, band);
 	if (os_snprintf_error(sizeof(config_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
@@ -5984,7 +6025,7 @@ INT wifi_setRadioDCSChannelPool(INT radioIndex, CHAR *pool)			//RDKB
 
 	dat.name = "AutoChannelSkipList";
 	dat.value = new_pool;
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 	res = snprintf(config_file_dat, sizeof(config_file_dat), "%s%d.dat", LOGAN_DAT_FILE, band);
 	if (os_snprintf_error(sizeof(config_file_dat), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
@@ -6041,7 +6082,7 @@ INT wifi_getRadioDfsEnable(INT radioIndex, BOOL *output_bool)	//Tr181
 	if (output_bool == NULL)
 		return RETURN_ERR;
 	*output_bool = TRUE;		// default
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 	res = snprintf(config_file_dat, sizeof(config_file_dat), "%s%d.dat", LOGAN_DAT_FILE, band);
 	if (os_snprintf_error(sizeof(config_file_dat), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
@@ -6082,7 +6123,7 @@ INT wifi_setRadioDfsEnable(INT radioIndex, BOOL enable)	//Tr181
 
 	dat.name = "DfsEnable";
 	dat.value = enable?"1":"0";
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 	res = snprintf(config_dat_file, sizeof(config_dat_file), "%s%d.dat", LOGAN_DAT_FILE, band);
 	if (os_snprintf_error(sizeof(config_dat_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
@@ -6391,7 +6432,7 @@ INT wifi_getRadioConfiguredChannelBandwidth(INT radioIndex, CHAR *output_string)
 		return RETURN_ERR;
 	}
 
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 	res = snprintf(config_file, sizeof(config_file), "%s%d.dat", LOGAN_DAT_FILE, band);
 	if (os_snprintf_error(sizeof(config_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
@@ -6514,7 +6555,7 @@ INT wifi_setRadioOperatingChannelBandwidth(INT radioIndex, CHAR *bandwidth) //Tr
 
 	if(NULL == bandwidth)
 		return RETURN_ERR;
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 
 	if(strstr(bandwidth,"320") != NULL) {
 		res1 = snprintf(ht_value, sizeof(ht_value), "%d", HT_BW_40);
@@ -6604,7 +6645,7 @@ INT wifi_getRadioExtChannel(INT radioIndex, CHAR *output_string) //Tr181
 		wifi_debug(DEBUG_ERROR, "wifi_getRadioMode fail\n");
 	}
 
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 	if (band == band_invalid)
 		return RETURN_ERR;
 
@@ -6721,7 +6762,7 @@ INT wifi_setRadioExtChannel(INT radioIndex, CHAR *string) //Tr181	//AP only
 	if (bandwidth == 20 || strstr(buf, "80+80") != NULL)
 		return RETURN_ERR;
 
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 	if (band == band_invalid)
 		return RETURN_ERR;
 
@@ -7197,7 +7238,7 @@ INT wifi_setRadioIEEE80211hEnabled(INT radioIndex, BOOL enable)  //Tr181
 	dat.name = "IEEE80211H";
 	dat.value = params.value;
 
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 
 	res = snprintf(config_dat_file, sizeof(config_dat_file), "%s%d.dat", LOGAN_DAT_FILE, band);
 	if (os_snprintf_error(sizeof(config_dat_file), res)) {
@@ -7369,7 +7410,7 @@ INT wifi_setRadioBasicDataTransmitRates(INT radioIndex, CHAR *TransmitRates)
 	int flag=0, i=0;
 	struct params params={'\0'};
 	char config_file[MAX_BUF_SIZE] = {0};
-	wifi_band band = wifi_index_to_band(radioIndex);
+	wifi_band band = radio_index_to_band(radioIndex);
 	int res;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
@@ -8914,7 +8955,7 @@ INT wifi_setRadioSTBCEnable(INT radioIndex, BOOL STBC_Enable)
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 	if (band == band_invalid)
 		return RETURN_ERR;
 
@@ -9173,7 +9214,7 @@ INT fitChainMask(INT radioIndex, int antcount)
 	struct params list[2] = {0};
 	int res;
 
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 	if (band == band_invalid)
 		return RETURN_ERR;
 
@@ -9329,7 +9370,7 @@ INT wifi_setRadioTxChainMask(INT radioIndex, INT numStreams)
 		wifi_debug(DEBUG_ERROR, "cmd %s error, output: %s\n", cmd, buf);
 		return RETURN_ERR;
 	}
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 	if (band == band_invalid) {
 		printf("%s:Band Error\n", __func__);
 		return RETURN_ERR;
@@ -14440,7 +14481,7 @@ INT wifi_getRadioAutoChannelEnable(INT radioIndex, BOOL *output_bool)
 	int res;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 	res = snprintf(config_file, sizeof(config_file), "%s%d.dat", LOGAN_DAT_FILE, band);
 	if (os_snprintf_error(sizeof(config_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
@@ -17787,7 +17828,7 @@ INT wifi_setZeroDFSState(UINT radioIndex, BOOL enable, BOOL precac)
 	int res;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 	wifi_getRadioDfsEnable(radioIndex, &dfs_enable);
 
 	if (dfs_enable == false) {
@@ -17822,7 +17863,7 @@ INT wifi_getZeroDFSState(UINT radioIndex, BOOL *enable, BOOL *precac)
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	if (NULL == enable || NULL == precac)
 		return RETURN_ERR;
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 	res = snprintf(config_file, sizeof(config_file), "%s%d.dat", LOGAN_DAT_FILE, band);
 	if (os_snprintf_error(sizeof(config_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
@@ -17868,7 +17909,7 @@ INT wifi_setDownlinkMuType(INT radio_index, wifi_dl_mu_type_t mu_type)
 		printf("%s:mu_type input Error", __func__);
 		return RETURN_ERR;
 	}
-	band = wifi_index_to_band(radio_index);
+	band = radio_index_to_band(radio_index);
 	if (band == band_invalid) {
 		printf("%s:Band Error\n", __func__);
 		return RETURN_ERR;
@@ -17939,7 +17980,7 @@ INT wifi_getDownlinkMuType(INT radio_index, wifi_dl_mu_type_t *mu_type)
 
 	if (mu_type == NULL)
 		return RETURN_ERR;
-	band = wifi_index_to_band(radio_index);
+	band = radio_index_to_band(radio_index);
 	if (band == band_invalid) {
 		printf("%s:Band Error\n", __func__);
 		return RETURN_ERR;
@@ -18002,7 +18043,7 @@ INT wifi_setUplinkMuType(INT radio_index, wifi_ul_mu_type_t mu_type)
 	int res;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-	band = wifi_index_to_band(radio_index);
+	band = radio_index_to_band(radio_index);
 	if (band == band_invalid) {
 		printf("%s:Band Error\n", __func__);
 		return RETURN_ERR;
@@ -18072,7 +18113,7 @@ INT wifi_getUplinkMuType(INT radio_index, wifi_ul_mu_type_t *mu_type)
 
 	if (mu_type == NULL)
 	return RETURN_ERR;
-	band = wifi_index_to_band(radio_index);
+	band = radio_index_to_band(radio_index);
 	if (band == band_invalid) {
 		printf("%s:Band Error", __func__);
 		return RETURN_ERR;
@@ -18148,7 +18189,7 @@ INT wifi_setGuardInterval(INT radio_index, wifi_guard_interval_t guard_interval)
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
 	}
-	band = wifi_index_to_band(radio_index);
+	band = radio_index_to_band(radio_index);
 
 	// Hostapd are not supported HE mode GI 1600, 3200 ns.
 	if (guard_interval == wifi_guard_interval_800) {	// remove all capab about short GI
@@ -21190,7 +21231,7 @@ static int getRadioCapabilities(int radioIndex, wifi_radio_capabilities_t *rcap)
 	}
 
 	rcap->numSupportedFreqBand = 1;
-	band = wifi_index_to_band(radioIndex);
+	band = radio_index_to_band(radioIndex);
 
 	if (band == band_2_4)
 		rcap->band[0] = WIFI_FREQUENCY_2_4_BAND;
