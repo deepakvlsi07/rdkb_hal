@@ -3875,18 +3875,18 @@ INT wifi_getATMEnable(BOOL *output_enable)
 INT wifi_setApATMAirTimePercent(INT apIndex, UINT ap_AirTimePercent)
 {
 	struct vow_ratio_param radio_param;
-	unsigned int group = 0;
-	int max_radio_num = 0;
+	int group = 0;
+	int radio_index = 0;
 
 	if (ap_AirTimePercent < 0 || ap_AirTimePercent > 100) {
 		wifi_debug(DEBUG_ERROR, "invalid air time percent!\n");
 		return RETURN_ERR;
 	}
 
-	if (wifi_getMaxRadioNumber(&max_radio_num))
+	if (vap_index_to_radio_array_index(apIndex, &radio_index, &group) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid vap index %d\n", apIndex);
 		return RETURN_ERR;
-	/*support per band 5 group now*/
-	group = apIndex / max_radio_num;
+	}
 
 	if (group > 5) {
 		wifi_debug(DEBUG_ERROR, "invalid group!\n");
@@ -3914,18 +3914,18 @@ INT wifi_setApATMAirTimePercent(INT apIndex, UINT ap_AirTimePercent)
 
 INT wifi_getApATMAirTimePercent(INT apIndex, UINT *output_ap_AirTimePercent)
 {
-	unsigned int group = 0;
+	int group = 0;
 	struct vow_info get_vow_info, vow_info;
 	struct mtk_nl80211_cb_data cb_data;
-	int max_radio_num = 0;
+	int radio_index = 0;
 
 	if (output_ap_AirTimePercent == NULL)
 		return RETURN_ERR;
 
-	if (wifi_getMaxRadioNumber(&max_radio_num))
+	if (vap_index_to_radio_array_index(apIndex, &radio_index, &group) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid vap index %d\n", apIndex);
 		return RETURN_ERR;
-
-	group = apIndex / max_radio_num;
+	}
 	if (group > 5) {
 		wifi_debug(DEBUG_ERROR, "invalid group!\n");
 		return RETURN_ERR;
