@@ -22217,12 +22217,7 @@ INT wifi_getApWpsLastConnectionStatus(INT apIndex, CHAR *output_string)
     if (strstr(buf, "PBC Status: Active")) {
 		res = snprintf(output_string, 32, "%s", "Requested");
     } else if(strstr(buf, "PBC Status: Disabled")) {
-		if (strstr(buf, "Last WPS result: Success"))
-			res = snprintf(output_string, 32, "%s", "Success");
-		else if (strstr(buf, "Last WPS result: None"))
-			res = snprintf(output_string, 32, "%s", "Disabled");
-		else
-			res = snprintf(output_string, 32, "%s", "Failed");
+		res = snprintf(output_string, 32, "%s", "Success");
     } else
 		res = snprintf(output_string, 32, "%s", "Failed");
 
