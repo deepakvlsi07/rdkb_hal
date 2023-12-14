@@ -17784,14 +17784,20 @@ err:
 
 INT wifi_getApAssociatedClientDiagnosticResult(INT apIndex, char *mac_addr, wifi_associated_dev3_t *dev_conn)
 {
+	unsigned char mac[ETH_ALEN] = {0};
 
-	if (fill_dev3_statistics_by_mac(apIndex, dev_conn, (unsigned char *)mac_addr)) {
-		wifi_debug(DEBUG_ERROR, "fail to get dev3(%02x:%02x:%02x:%02x:%02x:%02x)"
-			" statistic information from logan driver\n", mac_addr[0],
-			mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+	if (hwaddr_aton2(mac_addr, mac) < 0) {
+		wifi_debug(DEBUG_ERROR, "invalid device mac address %s\n", mac_addr);
 		return RETURN_ERR;
 	}
 
+	if (fill_dev3_statistics_by_mac(apIndex, dev_conn, (unsigned char *)mac)) {
+		wifi_debug(DEBUG_ERROR, "fail to get dev3(%02x:%02x:%02x:%02x:%02x:%02x)"
+			" statistic information from logan driver\n", mac[0],
+			mac[1], mac[2], mac[3], mac[4], mac[5]);
+		return RETURN_ERR;
+	}
+	memcpy(dev_conn->cli_MACAddress, mac, ETH_ALEN);
 	dev_conn->cli_Active = 1;
 	dev_conn->cli_AuthenticationState = 1;
 	
