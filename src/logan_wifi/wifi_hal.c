@@ -2611,9 +2611,10 @@ wifi_PrepareDefaultHostapdConfigs(bool reset)
 	char config_file[MAX_SUB_CMD_SIZE] = {0};
 	char ssid[MAX_BUF_SIZE] = {0};
 	char interface[32] = {0};
+	char bridge[32] = {0};
 	char ret_buf[MAX_BUF_SIZE] = {0};
 	char psk_file[64] = {0};
-	struct params params[3];
+	struct params params[4];
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	for (radio_idx = 0; radio_idx < MAX_NUM_RADIOS; radio_idx++) {
@@ -2638,6 +2639,12 @@ wifi_PrepareDefaultHostapdConfigs(bool reset)
 
 			res = snprintf(ssid, sizeof(ssid), "%s_%d", PREFIX_SSID_MLD, bss_idx);
 			if (os_snprintf_error(sizeof(ssid), res)) {
+				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+				return;
+			}
+
+			res = snprintf(bridge, sizeof(bridge), "brlan%d", bss_idx);
+			if (os_snprintf_error(sizeof(bridge), res)) {
 				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 				return;
 			}
@@ -2675,8 +2682,10 @@ wifi_PrepareDefaultHostapdConfigs(bool reset)
 			params[1].value = interface;
 			params[2].name = "wpa_psk_file";
 			params[2].value = psk_file;
+			params[3].name = "bridge";
+			params[3].value = bridge;
 
-			wifi_hostapdWrite(config_file, params, 3);
+			wifi_hostapdWrite(config_file, params, sizeof(params) / sizeof(params[0]));
 		}
 	}
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
@@ -20612,15 +20621,12 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 			continue;
 		}
 
-		strncpy(map->vap_array[i].bridge_name, BRIDGE_NAME,sizeof(map->vap_array[i].bridge_name) - 1);
-		map->vap_array[i].bridge_name[sizeof(map->vap_array[i].bridge_name) - 1] = '\0';
-
 		map->vap_array[i].vap_index = vap_index;
 
 		memset(buf, 0, sizeof(buf));
 		ret = wifi_getApName(vap_index, buf);
 		if (ret != RETURN_OK) {
-			printf("%s: wifi_getApName return error\n", __func__);
+			wifi_debug(DEBUG_ERROR,"wifi_getApName return error\n");
 			res = RETURN_ERR;
 			continue;
 		}
@@ -20634,7 +20640,7 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 		memset(buf, 0, sizeof(buf));
 		ret = wifi_getSSIDName(vap_index, buf);
 		if (ret != RETURN_OK) {
-			printf("%s: wifi_getSSIDName return error\n", __func__);
+			wifi_debug(DEBUG_ERROR, "wifi_getSSIDName return error\n");
 			res = RETURN_ERR;
 			continue;
 		}
@@ -20649,7 +20655,7 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 
 		ret = wifi_getApSsidAdvertisementEnable(vap_index, &enabled);
 		if (ret != RETURN_OK) {
-			printf("%s: wifi_getApSsidAdvertisementEnable return error\n", __func__);
+			wifi_debug(DEBUG_ERROR,"wifi_getApSsidAdvertisementEnable return error\n");
 			res = RETURN_ERR;
 			continue;
 		}
@@ -20657,7 +20663,7 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 
 		ret = wifi_getApMaxAssociatedDevices(vap_index, &output);
 		if (ret != RETURN_OK) {
-			printf("%s: wifi_getApMaxAssociatedDevices return error\n", __func__);
+			wifi_debug(DEBUG_ERROR, "wifi_getApMaxAssociatedDevices return error\n");
 			res = RETURN_ERR;
 			continue;
 		}
@@ -20665,7 +20671,7 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 
 		ret = wifi_getBSSTransitionActivation(vap_index, &enabled);
 		if (ret != RETURN_OK) {
-			printf("%s: wifi_getBSSTransitionActivation return error\n", __func__);
+			wifi_debug(DEBUG_ERROR, "wifi_getBSSTransitionActivation return error\n");
 			res = RETURN_ERR;
 			continue;
 		}
@@ -20673,7 +20679,7 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 
 		ret = wifi_getNeighborReportActivation(vap_index, &enabled);
 		if (ret != RETURN_OK) {
-			printf("%s: wifi_getNeighborReportActivation return error\n", __func__);
+			wifi_debug(DEBUG_ERROR, "wifi_getNeighborReportActivation return error\n");
 			res = RETURN_ERR;
 			continue;
 		}
@@ -20681,10 +20687,11 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 
 		ret = wifi_getApSecurity(vap_index, &security);
 		if (ret != RETURN_OK) {
-			printf("%s: wifi_getApSecurity return error\n", __func__);
+			wifi_debug(DEBUG_ERROR, "wifi_getApSecurity return error\n");
 			res = RETURN_ERR;
 			continue;
 		}
+		
 		map->vap_array[i].u.bss_info.security = security;
 
 		ret = wifi_getApMacAddressControlMode(vap_index, &mode);
@@ -20946,7 +20953,7 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 	unsigned char hostapd_if_restart;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-	printf("Entering %s index = %d, map->num_vaps = %d\n", __func__, (int)index, map->num_vaps);
+	printf("Entering %s radio[%d], map->num_vaps = %d\n", __func__, (int)index, map->num_vaps);
 	for (i = 0; i < map->num_vaps; i++) {
 		hostapd_if_restart = 0;
 		multiple_set = TRUE;
@@ -20967,7 +20974,7 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 				wifi_setApEnable(vap_info->vap_index, TRUE);
 		}
 
-		wifi_debug(DEBUG_ERROR, "\nCreate VAP for ssid_index=%d (vap_num=%d)\n", vap_info->vap_index, i);
+		wifi_debug(DEBUG_ERROR, "\nCreate VAP for vap_info->vap_index=%d\n", vap_info->vap_index);
 
 		band_idx = radio_index_to_band(index);
 		res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, vap_info->vap_index);
@@ -21063,9 +21070,9 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 		}
 
 		if (getVapBridge(vap_info->vap_index, bridge_name, sizeof(bridge_name)) == RETURN_OK) {
-			if (strlen(bridge_name) != strlen(vap_info->bridge_name) ||
+			if ((strlen(vap_info->bridge_name) > 0) && (strlen(bridge_name) != strlen(vap_info->bridge_name) ||
 				(strlen(bridge_name) == strlen(vap_info->bridge_name) &&
-				strncmp(bridge_name, vap_info->bridge_name, strlen(bridge_name)))) {
+				strncmp(bridge_name, vap_info->bridge_name, strlen(bridge_name))))) {
 				hostapd_if_restart = 1;
 				setVapBridge(vap_info->vap_index, vap_info->bridge_name);
 			}
@@ -21754,6 +21761,7 @@ INT wifi_getApSecurity(INT ap_index, wifi_vap_security_t *security)
 	long int tmp;
 	bool set_sae = FALSE;
 	int res;
+	wifi_encryption_method_t wpa_pairwise = 0, rsn_pairwise = 0;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, ap_index);
@@ -21786,16 +21794,30 @@ INT wifi_getApSecurity(INT ap_index, wifi_vap_security_t *security)
 			security->mode = wifi_security_mode_enhanced_open;
 	}
 
-	wifi_hostapdRead(config_file,"wpa_pairwise",buf,sizeof(buf));
 	if (security->mode == wifi_security_mode_none)
 		security->encr = wifi_encryption_none;
 	else {
-		if (strcmp(buf, "TKIP") == 0)
-			security->encr = wifi_encryption_tkip;
-		else if (strcmp(buf, "CCMP") == 0)
-			security->encr = wifi_encryption_aes;
-		else
-			security->encr = wifi_encryption_aes_tkip;
+		wifi_hostapdRead(config_file,"wpa_pairwise",buf,sizeof(buf));
+		if (strlen(buf) > 0) {
+			if (strcmp(buf, "TKIP") == 0)
+				wpa_pairwise = wifi_encryption_tkip;
+			else if (strcmp(buf, "CCMP") == 0)
+				wpa_pairwise = wifi_encryption_aes;
+			else
+				wpa_pairwise = wifi_encryption_aes_tkip;
+		}
+
+		wifi_hostapdRead(config_file,"rsn_pairwise",buf,sizeof(buf));
+		if (strlen(buf) > 0) {
+			if (strcmp(buf, "TKIP") == 0)
+				rsn_pairwise = wifi_encryption_tkip;
+			else if (strcmp(buf, "CCMP") == 0)
+				rsn_pairwise = wifi_encryption_aes;
+			else
+				rsn_pairwise = wifi_encryption_aes_tkip;
+		}
+
+		security->encr = wpa_pairwise | rsn_pairwise;
 	}
 
 	if (security->mode != wifi_security_mode_none) {
