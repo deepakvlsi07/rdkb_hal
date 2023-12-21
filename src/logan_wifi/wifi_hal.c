@@ -4237,6 +4237,9 @@ INT wifi_getRadioSupportedStandards(INT radioIndex, CHAR *output_string) //Tr181
 	char temp_output[128] = {0};
 	wifi_band band;
 	int phyId = 0, res;
+	char dat_file[MAX_BUF_SIZE] = {0};
+	char str_radio_mode[16] = {0};
+	unsigned long radio_mode;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	if (NULL == output_string)
@@ -4288,12 +4291,29 @@ INT wifi_getRadioSupportedStandards(INT radioIndex, CHAR *output_string) //Tr181
 	}
 
 	// eht capabilities
-	res = _syscmd_secure(buf, sizeof(buf), "iw phy%d info | grep 'EHT MAC Capabilities' | head -n 2 | tail -n 1 | cut -d '(' -f2 | cut -c1-6 | tr -d '\\n'", phyId);
+	/*res = _syscmd_secure(buf, sizeof(buf), "iw phy%d info | grep 'EHT MAC Capabilities' | head -n 2 | tail -n 1 | cut -d '(' -f2 | cut -c1-6 | tr -d '\\n'", phyId);
 	if (res) {
 		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 	}
 
 	if (strlen(buf) >= 6 && strncmp (buf, "0x0000", 6) != 0) {
+		if (strlen(temp_output) >= sizeof(temp_output) - 3)
+			return RETURN_ERR;
+		strncat(temp_output, "be,", sizeof(temp_output) - strlen(temp_output) - 1);
+	}*/
+	/* iw phy info cannot get EHT MAC Capabilities due to the backport version*/
+	res = snprintf(dat_file, sizeof(dat_file), "%s%d.dat", LOGAN_DAT_FILE, radioIndex);
+	if (os_snprintf_error(sizeof(dat_file), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
+
+	wifi_datfileRead(dat_file, "WirelessMode", str_radio_mode, sizeof(str_radio_mode));
+	if (hal_strtoul(str_radio_mode, 10, &radio_mode) < 0) {
+		wifi_debug(DEBUG_ERROR, "strtol fail\n");
+	}
+
+	if (radio_mode >= PHY_11BE_24G) {
 		if (strlen(temp_output) >= sizeof(temp_output) - 3)
 			return RETURN_ERR;
 		strncat(temp_output, "be,", sizeof(temp_output) - strlen(temp_output) - 1);
@@ -20069,6 +20089,7 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 		}
 		drv_dat_change = TRUE;
 	}
+
 	if (current_param.channelWidth != operationParam->channelWidth ||
 		current_param.channel != operationParam->channel ||
 		current_param.autoChannelEnabled != operationParam->autoChannelEnabled) {
