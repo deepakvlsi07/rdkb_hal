@@ -5295,7 +5295,10 @@ INT wifi_getRadioChannelsInUse(INT radioIndex, CHAR *output_string)	//RDKB
 		return RETURN_ERR;
 	}
 
-	ext_ch = wifi_getExtCh_netlink(radioIndex);
+	/*get ext_ch for 2G 40M and 6G 320M*/
+	if ((band == band_2_4 && bw == BAND_WIDTH_40) ||
+		(band == band_6 && bw == BAND_WIDTH_320))
+		ext_ch = wifi_getExtCh_netlink(radioIndex);
 
 	/*2G 40M ext_ch sainity check, if check fail, only return primary ch*/
 	if (band == band_2_4 && bw == BAND_WIDTH_40) {
@@ -6528,6 +6531,7 @@ INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) 
 	BOOL radio_enable = FALSE;
 	//unsigned char bw;
 	char interface_name[64] = {0};
+	int main_vap_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -6544,7 +6548,12 @@ INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) 
 		return RETURN_OK;
 	}
 
-	if (wifi_GetInterfaceName(radioIndex, interface_name) != RETURN_OK)
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 
 	ret = _syscmd_secure(buf, sizeof(buf), "iw dev %s info | grep 'width' | cut -d  ' ' -f6 | tr -d '\\n'", interface_name);
@@ -20302,6 +20311,8 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 	UINT transmitPower;
 	int res;
 	unsigned long tmp;
+	unsigned long channel = 0;
+	BOOL auto_ch_en = FALSE;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	printf("Entering %s index = %d\n", __func__, (int)index);
@@ -20342,18 +20353,18 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 		wifi_debug(DEBUG_ERROR, "cannot decode band for radio index %d ('%s')\n", index, band);
 	}
 
-	wifi_hostapdRead(config_file, "channel", buf, sizeof(buf));
-	if (strcmp(buf, "0") == 0 || strcmp(buf, "acs_survey") == 0) {
-		operationParam->channel = 0;
-		operationParam->autoChannelEnabled = TRUE;
-	} else {
-		if (hal_strtoul(buf, 10, &tmp) < 0) {
-			wifi_debug(DEBUG_ERROR, "Unexpected strtoul fail\n");
-		}
-		operationParam->channel = tmp;
+	if (wifi_getRadioChannel(index, &channel) != RETURN_OK)
+		wifi_debug(DEBUG_ERROR, "wifi_getRadioChannel return error.\n");
+	operationParam->channel = channel;
+	if (operationParam->channel == 0)
+		wifi_debug(DEBUG_ERROR, "operationParam->channel is 0\n");
 
+	if (wifi_getRadioAutoChannelEnable(index, &auto_ch_en) != RETURN_OK)
+		wifi_debug(DEBUG_ERROR, "wifi_getRadioAutoChannelEnable return error.\n");
+	if (auto_ch_en)
+		operationParam->autoChannelEnabled = TRUE;
+	else
 		operationParam->autoChannelEnabled = FALSE;
-	}
 
 	memset(buf, 0, sizeof(buf));
 	if (wifi_getRadioOperatingChannelBandwidth(index, buf) != RETURN_OK) {
