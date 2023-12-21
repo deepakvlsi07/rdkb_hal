@@ -2166,6 +2166,7 @@ INT wifi_setApBeaconRate(INT radioIndex,CHAR *beaconRate)
 	char config_file[MAX_BUF_SIZE] = {0};
 	char buf[MAX_BUF_SIZE] = {'\0'};
 	int res;
+	int main_vap_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	// Copy the numeric value
@@ -2196,7 +2197,12 @@ INT wifi_setApBeaconRate(INT radioIndex,CHAR *beaconRate)
 		params.value = buf;
 	}
 
-	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, main_vap_idx);
 	if (os_snprintf_error(sizeof(config_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
@@ -2214,6 +2220,7 @@ INT wifi_getApBeaconRate(INT radioIndex, CHAR *beaconRate)
 	char config_file[128] = {'\0'};
 	char temp_output[MAX_BUF_SIZE] = {'\0'};
 	char buf[128] = {'\0'};
+	int main_vap_idx;
 
 	long int rate = 0;
 	int phyId = 0, res;
@@ -2222,7 +2229,12 @@ INT wifi_getApBeaconRate(INT radioIndex, CHAR *beaconRate)
 	if (NULL == beaconRate)
 		return RETURN_ERR;
 
-	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, main_vap_idx);
 	if (os_snprintf_error(sizeof(config_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
@@ -3186,6 +3198,7 @@ INT wifi_setRadioCountryCode(INT radioIndex, CHAR *CountryCode)
 	struct params params;
 	char config_file[MAX_BUF_SIZE] = {0};
 	int ret = 0, res;
+	int main_vap_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
 
@@ -3202,7 +3215,11 @@ INT wifi_setRadioCountryCode(INT radioIndex, CHAR *CountryCode)
 	params.name = "country_code";
 	params.value = CountryCode;
 
-	res = snprintf(config_file, MAX_BUF_SIZE, "%s%d.conf", CONFIG_PREFIX, radioIndex);
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+	res = snprintf(config_file, MAX_BUF_SIZE, "%s%d.conf", CONFIG_PREFIX, main_vap_idx);
 	if (os_snprintf_error(MAX_BUF_SIZE, res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
@@ -4849,7 +4866,7 @@ INT wifi_setRadioHwMode(INT radioIndex, CHAR *hw_mode) {
 	char buf[64] = {0};
 	struct params params = {0};
 	wifi_band band = band_invalid;
-	int res;
+	int res, main_vap_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
 
@@ -4862,7 +4879,12 @@ INT wifi_setRadioHwMode(INT radioIndex, CHAR *hw_mode) {
 	else if ((strncmp(hw_mode, "a", 1) && strncmp(hw_mode, "b", 1) && strncmp(hw_mode, "g", 1)) || band == band_invalid)
 		return RETURN_ERR;
 
-	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, main_vap_idx);
 	if (os_snprintf_error(sizeof(config_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
@@ -4914,7 +4936,7 @@ INT wifi_setNoscan(INT radioIndex, CHAR *noscan)
 	char config_file[64] = {0};
 	struct params params = {0};
 	wifi_band band = band_invalid;
-	int res;
+	int res, main_vap_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
 
@@ -4922,7 +4944,12 @@ INT wifi_setNoscan(INT radioIndex, CHAR *noscan)
 	if (band != band_2_4)
 		return RETURN_OK;
 
-	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, main_vap_idx);
 	if (os_snprintf_error(sizeof(config_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
@@ -6775,9 +6802,13 @@ INT wifi_setRadioExtChannel(INT radioIndex, CHAR *string) //Tr181	//AP only
 	bool stbcEnable = FALSE;
 	params.name = "ht_capab";
 	wifi_band band;
-	int res;
+	int res, main_vap_idx;
 
-	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, main_vap_idx);
 	if (os_snprintf_error(sizeof(config_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
@@ -6989,11 +7020,14 @@ INT wifi_setRadioMCS(INT radioIndex, INT MCS) //Tr181
 	int ant_bitmap = 0;
 	unsigned short cal_value = 0;
 	UCHAR tval = 0, i = 0;
-	int res;
+	int res, main_vap_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-
-	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, main_vap_idx);
 	if (os_snprintf_error(sizeof(config_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
@@ -7358,7 +7392,7 @@ INT wifi_setRadioBeaconPeriod(INT radioIndex, UINT BeaconPeriod)
 	struct params params={'\0'};
 	char buf[MAX_BUF_SIZE] = {'\0'};
 	char config_file[MAX_BUF_SIZE] = {'\0'};
-	int res;
+	int res, main_vap_idx;
 
 	if (BeaconPeriod < 15 || BeaconPeriod > 65535)
 		return RETURN_ERR;
@@ -7371,8 +7405,11 @@ INT wifi_setRadioBeaconPeriod(INT radioIndex, UINT BeaconPeriod)
 	}
 
 	params.value = buf;
-
-	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, main_vap_idx);
 	if (os_snprintf_error(sizeof(config_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
@@ -7392,13 +7429,17 @@ INT wifi_getRadioBasicDataTransmitRates(INT radioIndex, CHAR *output)
 	char temp_output[128] = {0};
 	char temp_TransmitRates[64] = {0};
 	char config_file[64] = {0};
-	int res;
+	int res, main_vap_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	if (NULL == output)
 		return RETURN_ERR;
 
-	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, main_vap_idx);
 	if (os_snprintf_error(sizeof(config_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
@@ -7449,7 +7490,7 @@ INT wifi_setRadioBasicDataTransmitRates(INT radioIndex, CHAR *TransmitRates)
 	struct params params={'\0'};
 	char config_file[MAX_BUF_SIZE] = {0};
 	wifi_band band = radio_index_to_band(radioIndex);
-	int res;
+	int res, main_vap_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -7551,7 +7592,11 @@ INT wifi_setRadioBasicDataTransmitRates(INT radioIndex, CHAR *TransmitRates)
 	wifi_dbg_printf("\n%s:",__func__);
 	wifi_dbg_printf("\nparams.value=%s\n",params.value);
 	wifi_dbg_printf("\n******************Transmit rates=%s\n",TransmitRates);
-	res = snprintf(config_file, sizeof(config_file), "%s%d.conf",CONFIG_PREFIX,radioIndex);
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+	res = snprintf(config_file, sizeof(config_file), "%s%d.conf",CONFIG_PREFIX,main_vap_idx);
 	if (os_snprintf_error(sizeof(config_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
@@ -8989,7 +9034,7 @@ INT wifi_setRadioSTBCEnable(INT radioIndex, BOOL STBC_Enable)
 	int ant_bitmap = 0;
 	struct params list;
 	char dat_file[64] = {'\0'};
-	int res;
+	int res, main_vap_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -9013,7 +9058,11 @@ INT wifi_setRadioSTBCEnable(INT radioIndex, BOOL STBC_Enable)
 		return RETURN_OK;
 	}
 
-	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, main_vap_idx);
 	if (os_snprintf_error(sizeof(config_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
@@ -9250,7 +9299,7 @@ INT fitChainMask(INT radioIndex, int antcount)
 	char config_file[64] = {0};
 	wifi_band band;
 	struct params list[2] = {0};
-	int res;
+	int res, main_vap_idx;
 
 	band = radio_index_to_band(radioIndex);
 	if (band == band_invalid)
@@ -9259,7 +9308,11 @@ INT fitChainMask(INT radioIndex, int antcount)
 	list[0].name = "he_mu_beamformer";
 	list[1].name = "he_su_beamformer";
 
-	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, main_vap_idx);
 	if (os_snprintf_error(sizeof(config_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
@@ -15074,14 +15127,13 @@ INT wifi_pushRadioChannel2(INT radioIndex, UINT channel, UINT channel_width_MHz,
 	int res;
 	int main_vap_idx;
 
-	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, radioIndex);
-	if (os_snprintf_error(sizeof(config_file), res)) {
-		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-		return RETURN_ERR;
-	}
-
 	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
 		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, main_vap_idx);
+	if (os_snprintf_error(sizeof(config_file), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
 	}
 
@@ -20298,7 +20350,6 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 {
 	char band[64] = {0};
 	char buf[256] = {0};
-	char config_file[64] = {0};
 	char dat_file[128] = {0};
 
 	UINT mode = 0;
@@ -20313,16 +20364,12 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 	unsigned long tmp;
 	unsigned long channel = 0;
 	BOOL auto_ch_en = FALSE;
+	wifi_band band_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	printf("Entering %s index = %d\n", __func__, (int)index);
 
 	memset(operationParam, 0, sizeof(wifi_radio_operationParam_t));
-	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, index);
-	if (os_snprintf_error(sizeof(config_file), res)) {
-		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-		return RETURN_ERR;
-	}
 	res = snprintf(dat_file, sizeof(dat_file), "%s%d.dat", LOGAN_DAT_FILE, index);
 	if (os_snprintf_error(sizeof(dat_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
@@ -20472,13 +20519,14 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 	else
 		operationParam->obssCoex = TRUE;
 
-	res = _syscmd_secure(buf, sizeof(buf), "cat %s | grep STBC", config_file);
-	if (res) {
-		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+	band_idx = radio_index_to_band(index);
+	memset(buf, 0, sizeof(buf));
+	if (band_idx == band_2_4)
+		wifi_datfileRead(dat_file, "HT_STBC", buf, sizeof(buf));
+	else
+		wifi_datfileRead(dat_file, "VHT_STBC", buf, sizeof(buf));
 
-	}
-
-	if (strlen(buf) != 0)
+	if (strncmp(buf, "1", 1) == 0)
 		operationParam->stbcEnable = TRUE;
 	else
 		operationParam->stbcEnable = FALSE;
