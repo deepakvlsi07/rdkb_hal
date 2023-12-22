@@ -5278,7 +5278,8 @@ INT wifi_getRadioChannelsInUse(INT radioIndex, CHAR *output_string)	//RDKB
 {
 	wifi_band band;
 	ULONG pri_ch = 0;
-	UCHAR bw = 0xff;
+	UCHAR bw = BAND_WIDTH_20;
+	CHAR bw_str[64] = {0};
 	UCHAR ext_ch = EXT_NONE;
 	UCHAR sub_ch_list[16] = {0};
 	UCHAR sub_ch_num = 0;
@@ -5311,21 +5312,33 @@ INT wifi_getRadioChannelsInUse(INT radioIndex, CHAR *output_string)	//RDKB
 	}
 
 	/*get bw*/
-	if (mtk_wifi_get_radio_info(radioIndex, MTK_NL80211_VENDOR_ATTR_GET_BAND_INFO_BANDWIDTH,
-		get_bandwidth_handler, &bw)!= RETURN_OK) {
-		wifi_debug(DEBUG_ERROR, "Fail to get bw, return\n");
+	if (wifi_getRadioOperatingChannelBandwidth(radioIndex, bw_str) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "wifi_getRadioOperatingChannelBandwidth return error.\n");
 		return RETURN_ERR;
 	}
 
-	if (bw == 0xff) {
-		wifi_debug(DEBUG_ERROR, "invalid bw, return\n");
-		return RETURN_ERR;
+	if (!strcmp(bw_str, "20MHz")) bw = BAND_WIDTH_20;
+	else if (!strcmp(bw_str, "40MHz")) bw = BAND_WIDTH_40;
+	else if (!strcmp(bw_str, "80MHz")) bw = BAND_WIDTH_80;
+	else if (!strcmp(bw_str, "160MHz")) bw = BAND_WIDTH_160;
+	else if (!strcmp(bw_str, "320MHz")) bw = BAND_WIDTH_320;
+	else {
+		wifi_debug(DEBUG_ERROR, "Unknown channel bandwidth: %s\n", bw_str);
+		bw = BAND_WIDTH_20;
 	}
 
 	/*get ext_ch for 2G 40M and 6G 320M*/
 	if ((band == band_2_4 && bw == BAND_WIDTH_40) ||
-		(band == band_6 && bw == BAND_WIDTH_320))
-		ext_ch = wifi_getExtCh_netlink(radioIndex);
+		(band == band_6 && bw == BAND_WIDTH_320)) {
+		char ext_ch_str[64]= {0};
+		wifi_getRadioExtChannel(radioIndex, ext_ch_str);
+		if (!strcmp(ext_ch_str, "AboveControlChannel"))
+			ext_ch = EXT_ABOVE;
+		else if (!strcmp(ext_ch_str, "BelowControlChannel"))
+			ext_ch = EXT_BELOW;
+		else
+			ext_ch = EXT_NONE;
+	}
 
 	/*2G 40M ext_ch sainity check, if check fail, only return primary ch*/
 	if (band == band_2_4 && bw == BAND_WIDTH_40) {
@@ -5410,7 +5423,7 @@ INT wifi_getRadioChannelsInUse(INT radioIndex, CHAR *output_string)	//RDKB
 	}
 
 output:
-	for (count = 0; (count < sub_ch_num) && (sub_ch_num < 16); count++) {
+	for (count = 0; (count < sub_ch_num) && (sub_ch_num <= 16); count++) {
 		if (count == (sub_ch_num - 1))
 			res = snprintf(output_string + strlen(output_string), 256 - strlen(output_string), "%d", sub_ch_list[count]);
 		else
@@ -6689,30 +6702,24 @@ INT wifi_setRadioOperatingChannelBandwidth(INT radioIndex, CHAR *bandwidth) //Tr
 //The output_string is a max length 64 octet string that is allocated by the RDKB code.  Implementations must ensure that strings are not longer than this.
 INT wifi_getRadioExtChannel(INT radioIndex, CHAR *output_string) //Tr181
 {
-	char config_file[64] = {0};
-	char config_dat_file[64] = {0};
-	char mode_str[16] = {0};
 	char buf[64] = {0};
 	char cmd[MAX_CMD_SIZE] = {0};
 	char interface_name[64] = {0};
-	int ret = 0, len=0;
-	wifi_band band;
+	int ret = 0, len = 0;
 	ULONG channel = 0;
 	int centr_channel = 0;
-	UINT mode_map = 0;
-	int freq=0, res;
+	int freq = 0, res;
 	int main_vap_idx;
 
 	if (output_string == NULL)
 		return RETURN_ERR;
 
-	if (wifi_getRadioMode(radioIndex, mode_str, &mode_map) != RETURN_OK) {
-		wifi_debug(DEBUG_ERROR, "wifi_getRadioMode fail\n");
-	}
-
-	band = radio_index_to_band(radioIndex);
-	if (band == band_invalid)
+	/*default output_string is "Auto"*/
+	res = snprintf(output_string, 64, "Auto");
+	if (os_snprintf_error(64, res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
+	}
 
 	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
 		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
@@ -6722,65 +6729,42 @@ INT wifi_getRadioExtChannel(INT radioIndex, CHAR *output_string) //Tr181
 	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 
-	res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, main_vap_idx);
-	if (os_snprintf_error(sizeof(config_file), res)) {
+	/*get primary ch*/
+	wifi_getRadioChannel(radioIndex, &channel);
+	if (channel == 0) {
+		wifi_debug(DEBUG_ERROR, "RadioChannel is 0, return\n");
+		return RETURN_ERR;
+	}
+
+	res = snprintf(cmd, sizeof(cmd),"iw dev %s info | grep 'center1' | cut -d  ' ' -f9 | tr -d '\\n'", interface_name);
+	if (os_snprintf_error(sizeof(cmd), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
 	}
 
-	res = snprintf(output_string, 64, "Auto");
+	/*get center ch freq*/
+	ret = _syscmd_secure(buf, sizeof(buf), "iw dev %s info | grep 'center1' | cut -d  ' ' -f9 | tr -d '\\n'", interface_name);
+	if(ret)
+		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+	len = strlen(buf);
+	if((ret != 0) || (len == 0))
+	{
+		wifi_debug(DEBUG_ERROR, "failed with Command %s %s:%d\n", cmd, __func__, __LINE__);
+		return RETURN_ERR;
+	}
+
+	sscanf(buf, "%d", &freq);
+	centr_channel = ieee80211_frequency_to_channel(freq);
+
+	/*compare centr_channel and primary ch*/
+	if (centr_channel > (int)channel)
+		res = snprintf(output_string, 64, "AboveControlChannel");
+	else
+		res = snprintf(output_string, 64, "BelowControlChannel");
+
 	if (os_snprintf_error(64, res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
-	}
-
-	if (band == band_2_4 || (!(mode_map&WIFI_MODE_AC) && !(mode_map&WIFI_MODE_AX))) {
-		// 2G band or ac and ax mode is disable, we will check HT_EXTCHA
-		res = snprintf(config_dat_file, sizeof(config_dat_file), "%s%d.dat", LOGAN_DAT_FILE, band);
-		if (os_snprintf_error(sizeof(config_dat_file), res)) {
-			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-			return RETURN_ERR;
-		}
-
-		wifi_halgetRadioExtChannel(config_dat_file, output_string);
-		if (!(mode_map&WIFI_MODE_N)) {
-			res = snprintf(output_string, 64, "Auto");
-			if (os_snprintf_error(64, res)) {
-				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-				return RETURN_ERR;
-			}
-		}
-	} else {
-		// 5G and 6G band with ac or ax mode.
-		wifi_getRadioChannel(radioIndex, &channel);
-		res = snprintf(cmd, sizeof(cmd),"iw dev %s info | grep 'center1' | cut -d  ' ' -f9 | tr -d '\\n'", interface_name);
-		if (os_snprintf_error(sizeof(cmd), res)) {
-			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-			return RETURN_ERR;
-		}
-
-		ret = _syscmd_secure(buf, sizeof(buf), "iw dev %s info | grep 'center1' | cut -d  ' ' -f9 | tr -d '\\n'", interface_name);
-		if(ret) {
-			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-		}
-
-		len = strlen(buf);
-		if((ret != 0) || (len == 0))
-		{
-			WIFI_ENTRY_EXIT_DEBUG("failed with Command %s %s:%d\n",cmd,__func__, __LINE__);
-			return RETURN_ERR;
-		}
-		sscanf(buf, "%d", &freq);
-		centr_channel = ieee80211_frequency_to_channel(freq);
-		if (centr_channel > (int)channel)
-			res = snprintf(output_string, 64, "AboveControlChannel");
-		else
-			res = snprintf(output_string, 64, "BelowControlChannel");
-
-		if (os_snprintf_error(64, res)) {
-			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-			return RETURN_ERR;
-		}
 	}
 
 	return RETURN_OK;
