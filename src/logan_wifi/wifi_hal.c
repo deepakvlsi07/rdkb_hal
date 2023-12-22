@@ -6780,10 +6780,9 @@ INT wifi_setRadioExtChannel(INT radioIndex, CHAR *string) //Tr181	//AP only
 	char ext_channel[64] = {0};
 	unsigned char ext_ch;
 	char buf[128] = {0};
-	int ret = 0, bss_idx, vap_idx;
+	int ret = 0;
 	long int bandwidth = 0;
 	unsigned long channel = 0;
-	bool stbcEnable = FALSE;
 	params.name = "ht_capab";
 	wifi_band band;
 	int res, main_vap_idx;
@@ -6798,13 +6797,6 @@ INT wifi_setRadioExtChannel(INT radioIndex, CHAR *string) //Tr181	//AP only
 		return RETURN_ERR;
 	}
 
-	res = _syscmd_secure(buf, sizeof(buf), "cat %s | grep STBC", config_file);
-	if(res) {
-		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-	}
-
-	if (strlen(buf) != 0)
-		stbcEnable = TRUE;
 	if (wifi_getRadioOperatingChannelBandwidth(radioIndex, buf) != RETURN_OK)
 		return RETURN_ERR;
 	if (hal_strtol(buf, 10, &bandwidth) < 0) {
@@ -6854,19 +6846,6 @@ INT wifi_setRadioExtChannel(INT radioIndex, CHAR *string) //Tr181	//AP only
 		return RETURN_ERR;
 	}
 	wifi_datfileWrite(config_dat_file, &params, 1);
-
-	for (bss_idx = 0; bss_idx < LOGAN_MAX_NUM_VAP_PER_RADIO; bss_idx++) {
-		if (array_index_to_vap_index(radioIndex, bss_idx, &vap_idx) != RETURN_OK) {
-			wifi_debug(DEBUG_ERROR, "invalid radioIndex[%d], bss_idx[%d]\n", radioIndex, bss_idx);
-			return RETURN_ERR;
-		}
-		res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, vap_idx);
-		if (os_snprintf_error(sizeof(config_file), res)) {
-			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-			return RETURN_ERR;
-		}
-		wifi_setRadioSTBCEnable(vap_idx, stbcEnable);
-	}
 
 	/*do ext_ch quicking setting*/
 	if (ext_ch != -1) {
@@ -21385,7 +21364,7 @@ static int getRadioCapabilities(int radioIndex, wifi_radio_capabilities_t *rcap)
 		rcap->channelWidth[i] |= (WIFI_CHANNELBANDWIDTH_20MHZ |
 								WIFI_CHANNELBANDWIDTH_40MHZ);
 
-	} else if (rcap->band[i] & (WIFI_FREQUENCY_5_BAND ) || rcap->band[i] & (WIFI_FREQUENCY_6_BAND)) {
+	} else if (rcap->band[i] & (WIFI_FREQUENCY_5_BAND )) {
 		rcap->channelWidth[i] |= (WIFI_CHANNELBANDWIDTH_20MHZ |
 								WIFI_CHANNELBANDWIDTH_40MHZ |
 								WIFI_CHANNELBANDWIDTH_80MHZ | WIFI_CHANNELBANDWIDTH_160MHZ);
