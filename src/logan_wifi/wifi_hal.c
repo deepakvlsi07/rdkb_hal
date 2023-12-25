@@ -106,6 +106,8 @@ Licensed under the ISC license
 #define ROM_LOGAN_DAT_FILE "/rom/etc/wireless/mediatek/mt7990.b"
 #endif
 
+#define SSID_ENABLE_CONFIG "/nvram/enable_ssid"
+
 #define NOACK_MAP_FILE "/tmp/NoAckMap"
 #define RADIO_RESET_FILE "/nvram/radio_reset"
 
@@ -710,6 +712,7 @@ static unsigned int CFG_WMODE_MAP[] = {
 #define WMODE_CAP_2G(_x) \
 (((_x) & (WMODE_B | WMODE_G | WMODE_GN | WMODE_AX_24G | WMODE_BE_24G)) != 0)
 
+static BOOL is_main_vap_index(int vap_index);
 static int array_index_to_vap_index(UINT radioIndex, int arrayIndex, int *vap_index);
 static int vap_index_to_radio_array_index(int vapIndex, int *radioIndex, int *arrayIndex);
 static int wifi_datfileRead(char *conf_file, char *param, char *output, int output_size);
@@ -2306,6 +2309,60 @@ INT wifi_getHalVersion(CHAR *output_string)   //RDKB
 	return RETURN_OK;
 }
 
+static void
+wifi_PrepareEnableSSIDConfig(bool reset)
+{
+	int res;
+	char ret_buf[MAX_BUF_SIZE] = {0};
+
+	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+	if (access(SSID_ENABLE_CONFIG, F_OK) == 0 && reset == FALSE)
+		return;
+	res = _syscmd_secure(ret_buf, sizeof(ret_buf), "cp /etc/enable_ssid %s", SSID_ENABLE_CONFIG);
+	if (res) {
+		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+	}
+	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+}
+
+static BOOL getVapEnableConfig(int vap_index)
+{
+	int res = 0;
+	int len;
+	char output[8] = {0};
+
+	res = _syscmd_secure(output, sizeof(output), "datconf -f %s get enable_ssid%d",
+		SSID_ENABLE_CONFIG, vap_index);
+
+	if (res) {
+		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+	}
+
+	len = strlen(output);
+	if ((len > 0) && (output[len - 1] == '\n')) {
+		output[len - 1] = '\0';
+	}
+
+	return output[0] == '0' ? FALSE : TRUE;
+}
+
+static BOOL setVapEnableConfig(int vap_index, BOOL enable)
+{
+	int res;
+	char buf[8] = {0};
+
+	res = _syscmd_secure(buf, sizeof(buf), "datconf -f %s set enable_ssid%d \"%s\"",
+		SSID_ENABLE_CONFIG, vap_index, enable ? "1" : "0");
+
+	if (res) {
+		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+	}
+
+	wifi_debug(DEBUG_ERROR, "vap_index[%d] %s\n", vap_index, enable ? "enabled" : "disabled");
+	return 0;
+}
+
 
 /* wifi_factoryReset() function */
 /**
@@ -2339,6 +2396,7 @@ INT wifi_factoryReset()
 	}
 
 	wifi_PrepareDefaultHostapdConfigs(TRUE);
+	wifi_PrepareEnableSSIDConfig(TRUE);
 	wifi_psk_file_reset();
 
 
@@ -2743,6 +2801,14 @@ wifiBringUpInterfacesForRadio(int radio_idx)
 			continue;
 		}
 
+		/* For main interface, always bring it up firstly.
+		 * The purpose is that the non-main interfaces could be added successfully.
+		 */
+		if (getVapEnableConfig(ap_idx) == FALSE && !is_main_vap_index(ap_idx))
+			continue;
+
+		wifi_debug(DEBUG_NOTICE, "bring up vap[%d]\n", ap_idx);
+
 		res = _syscmd_secure(ret_buf, sizeof(ret_buf), "touch %s%d.psk", PSK_FILE, ap_idx);
 		if (res) {
 			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
@@ -2761,6 +2827,10 @@ wifiBringUpInterfacesForRadio(int radio_idx)
 		if (res) {
 			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 		}
+
+		/* For main interface, bring it down if it is disabled, by using 'ifconfig rax0 down'.*/
+		if (getVapEnableConfig(ap_idx) == FALSE && is_main_vap_index(ap_idx))
+			wifi_setApEnable(ap_idx, FALSE);
 
 		wifi_GetInterfaceName(ap_idx, inf_name);
 		wifi_debug(DEBUG_ERROR, "bring up %s\n", inf_name);
@@ -3051,6 +3121,7 @@ INT wifi_init()							//RDKB
 	if (CallOnce) {
 		wifi_ParseProfile();
 		wifi_PrepareDefaultHostapdConfigs(FALSE);
+		wifi_PrepareEnableSSIDConfig(FALSE);
 		wifi_psk_file_reset();
 		//v_secure_system("/usr/sbin/iw reg set US");
 		v_secure_system("systemctl start hostapd.service");
@@ -3106,6 +3177,7 @@ INT wifi_reset()
 	sleep(5);
 
 	wifi_PrepareDefaultHostapdConfigs(TRUE);
+	wifi_PrepareEnableSSIDConfig(TRUE);
 	wifi_psk_file_reset();
 	wifi_BringUpInterfaces();
 	sleep(2);
@@ -11665,7 +11737,8 @@ INT wifi_setApEnable(INT apIndex, BOOL enable)
 			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 		}
 	} else {
-		if (apIndex >= get_runtime_max_radio()) {
+		/*Do not REMOVE main interfaces in hostapd*/
+		if (!is_main_vap_index(apIndex)) {
 			res = _syscmd_secure(buf, sizeof(buf), "hostapd_cli -i global raw REMOVE %s", interface_name);
 		    if (res) {
 				wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
@@ -19044,6 +19117,46 @@ int main(int argc,char **argv)
 		if (wifi_createVAP(2, &vap[2]) != RETURN_OK)
 			printf("wifi_createVAP[2] fail\n");
 	}
+
+	if (strstr(argv[1], "dynamic_vap_test")) {
+		wifi_vap_info_map_t vap[3];
+		int i;
+		radio_band[0] = band_2_4;
+		radio_band[1] = band_5;
+		radio_band[2] = band_6;
+
+		if (eht_mld_config_init() != RETURN_OK)
+			printf("eht_mld_config_init() fail!\n");
+
+		memset(vap, 0, sizeof(vap));
+		for (i = 0; i < 3; i++) {
+			if (wifi_getRadioVapInfoMap(i, &vap[i]) != RETURN_OK)
+				printf("wifi_getRadioVapInfoMap fail[%d]", i);
+		}
+
+		/*case 1-enable vap[4/6/8/10/12/14] ra2/ra3/ra4/ra5/ra6/ra7*/
+		for (i = 2; i < 8; i++)
+			vap[0].vap_array[i].u.bss_info.enabled = 1;
+		if (wifi_createVAP(0, &vap[0]) != RETURN_OK)
+			printf("wifi_createVAP[0] fail\n");
+
+		/*case 2-disable vap[1/3] rai0/rai1*/
+		for (i = 0; i < 2; i++)
+			vap[1].vap_array[i].u.bss_info.enabled = 0;
+		if (wifi_createVAP(1, &vap[1]) != RETURN_OK)
+			printf("wifi_createVAP[0] fail\n");
+	
+		/*case 3-disable vap[16/17] rax0/rax1, enable vap[18/19/20/21/22/23] rax2,rax3,rax4,rax5,rax6,rax7*/
+		for (i = 0; i < 2; i++)
+			vap[2].vap_array[i].u.bss_info.enabled = 0;
+		if (wifi_createVAP(2, &vap[2]) != RETURN_OK)
+			printf("wifi_createVAP[0] fail\n");		
+
+		for (i = 2; i < 8; i++)
+			vap[2].vap_array[i].u.bss_info.enabled = 1;
+		if (wifi_createVAP(2, &vap[2]) != RETURN_OK)
+			printf("wifi_createVAP[0] fail\n");
+	}
 #endif
 
 	if(strstr(argv[1], "wifi_getApAssociatedDeviceDiagnosticResult3")!=NULL)
@@ -20517,6 +20630,20 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 	return RETURN_OK;
 }
 
+static BOOL is_main_vap_index(int vap_index)
+{
+	int radio, main_vap_index;
+	
+	for (radio = 0; radio < get_runtime_max_radio(); radio++) {
+		if (array_index_to_vap_index(radio, 0, &main_vap_index) == RETURN_OK) {
+			if (vap_index == main_vap_index)
+				return TRUE;
+		}
+	}
+
+	return FALSE;
+}
+
 static int array_index_to_vap_index(UINT radioIndex, int arrayIndex, int *vap_index)
 {
 	if (radioIndex > 2 || arrayIndex < 0 || arrayIndex >= LOGAN_MAX_NUM_VAP_PER_RADIO)
@@ -20665,146 +20792,113 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 		}
 
 		map->vap_array[i].vap_index = vap_index;
-
+		map->vap_array[i].u.bss_info.enabled = getVapEnableConfig(vap_index);
+		
 		memset(buf, 0, sizeof(buf));
 		ret = wifi_getApName(vap_index, buf);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR,"wifi_getApName return error\n");
-			res = RETURN_ERR;
-			continue;
-		}
-		ret = snprintf(map->vap_array[i].vap_name, sizeof(map->vap_array[i].vap_name), "%s", buf);
-		if (os_snprintf_error(sizeof(map->vap_array[i].vap_name), ret)) {
-			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-			res = RETURN_ERR;
-			continue;
+		} else {
+			ret = snprintf(map->vap_array[i].vap_name, sizeof(map->vap_array[i].vap_name), "%s", buf);
+			if (os_snprintf_error(sizeof(map->vap_array[i].vap_name), ret)) {
+				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			}
 		}
 
 		memset(buf, 0, sizeof(buf));
 		ret = wifi_getSSIDName(vap_index, buf);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_getSSIDName return error\n");
-			res = RETURN_ERR;
-			continue;
+		} else {
+			ret = snprintf(map->vap_array[i].u.bss_info.ssid, sizeof(map->vap_array[i].u.bss_info.ssid), "%s", buf);
+			if (os_snprintf_error(sizeof(map->vap_array[i].u.bss_info.ssid), ret)) {
+				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			}
 		}
-		ret = snprintf(map->vap_array[i].u.bss_info.ssid, sizeof(map->vap_array[i].u.bss_info.ssid), "%s", buf);
-		if (os_snprintf_error(sizeof(map->vap_array[i].u.bss_info.ssid), ret)) {
-			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-			res = RETURN_ERR;
-			continue;
-		}
-
-		map->vap_array[i].u.bss_info.enabled = true;
 
 		ret = wifi_getApSsidAdvertisementEnable(vap_index, &enabled);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR,"wifi_getApSsidAdvertisementEnable return error\n");
-			res = RETURN_ERR;
-			continue;
-		}
-		map->vap_array[i].u.bss_info.showSsid = enabled;
+		} else
+			map->vap_array[i].u.bss_info.showSsid = enabled;
 
 		ret = wifi_getApMaxAssociatedDevices(vap_index, &output);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_getApMaxAssociatedDevices return error\n");
-			res = RETURN_ERR;
-			continue;
-		}
-		map->vap_array[i].u.bss_info.bssMaxSta = output;
+		} else
+			map->vap_array[i].u.bss_info.bssMaxSta = output;
 
 		ret = wifi_getBSSTransitionActivation(vap_index, &enabled);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_getBSSTransitionActivation return error\n");
-			res = RETURN_ERR;
-			continue;
-		}
-		map->vap_array[i].u.bss_info.bssTransitionActivated = enabled;
+		} else 
+			map->vap_array[i].u.bss_info.bssTransitionActivated = enabled;
 
 		ret = wifi_getNeighborReportActivation(vap_index, &enabled);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_getNeighborReportActivation return error\n");
-			res = RETURN_ERR;
-			continue;
-		}
-		map->vap_array[i].u.bss_info.nbrReportActivated = enabled;
+		} else 
+			map->vap_array[i].u.bss_info.nbrReportActivated = enabled;
 
 		ret = wifi_getApSecurity(vap_index, &security);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_getApSecurity return error\n");
-			res = RETURN_ERR;
-			continue;
-		}
-		
-		map->vap_array[i].u.bss_info.security = security;
+		} else
+			map->vap_array[i].u.bss_info.security = security;
 
 		ret = wifi_getApMacAddressControlMode(vap_index, &mode);
 		if (ret != RETURN_OK) {
-			printf("%s: wifi_getApMacAddressControlMode return error\n", __func__);
-			res = RETURN_ERR;
-			continue;
+			wifi_debug(DEBUG_ERROR, "wifi_getApMacAddressControlMode return error\n");
+		} else {
+			if (mode == 0)
+				map->vap_array[i].u.bss_info.mac_filter_enable = FALSE;
+			else
+				map->vap_array[i].u.bss_info.mac_filter_enable = TRUE;
+			if (mode == 1)
+				map->vap_array[i].u.bss_info.mac_filter_mode = wifi_mac_filter_mode_white_list;
+			else if (mode == 2)
+				map->vap_array[i].u.bss_info.mac_filter_mode = wifi_mac_filter_mode_black_list;
 		}
-		if (mode == 0)
-			map->vap_array[i].u.bss_info.mac_filter_enable = FALSE;
-		else
-			map->vap_array[i].u.bss_info.mac_filter_enable = TRUE;
-		if (mode == 1)
-			map->vap_array[i].u.bss_info.mac_filter_mode = wifi_mac_filter_mode_white_list;
-		else if (mode == 2)
-			map->vap_array[i].u.bss_info.mac_filter_mode = wifi_mac_filter_mode_black_list;
-
+		
 		ret = wifi_getApWmmEnable(vap_index, &enabled);
 		if (ret != RETURN_OK) {
-			printf("%s: wifi_getApWmmEnable return error\n", __func__);
-			res = RETURN_ERR;
-			continue;
-		}
-		map->vap_array[i].u.bss_info.wmm_enabled = enabled;
+			wifi_debug(DEBUG_ERROR, "wifi_getApWmmEnable return error\n");
+		} else
+			map->vap_array[i].u.bss_info.wmm_enabled = enabled;
 
 		ret = wifi_getApUAPSDCapability(vap_index, &enabled);
 		if (ret != RETURN_OK) {
-			printf("%s: wifi_getApUAPSDCapability return error\n", __func__);
-			res = RETURN_ERR;
-			continue;
-		}
-		map->vap_array[i].u.bss_info.UAPSDEnabled = enabled;
+			wifi_debug(DEBUG_ERROR, "wifi_getApUAPSDCapability return error\n");
+		} else 
+			map->vap_array[i].u.bss_info.UAPSDEnabled = enabled;
 
 		memset(buf, 0, sizeof(buf));
 		ret = wifi_getApBeaconRate(map->vap_array[i].radio_index, buf);
 		if (ret != RETURN_OK) {
-			printf("%s: wifi_getApBeaconRate return error\n", __func__);
-			res = RETURN_ERR;
-			continue;
-		}
-		map->vap_array[i].u.bss_info.beaconRate = beaconRate_string_to_enum(buf);
+			wifi_debug(DEBUG_ERROR, "wifi_getApBeaconRate return error\n");
+		} else 
+			map->vap_array[i].u.bss_info.beaconRate = beaconRate_string_to_enum(buf);
 
 		memset(buf, 0, sizeof(buf));
 		ret = wifi_getBaseBSSID(vap_index, buf);
 		if (ret != RETURN_OK) {
-			printf("%s: wifi_getBaseBSSID return error\n", __func__);
-			res = RETURN_ERR;
-			continue;
+			wifi_debug(DEBUG_ERROR, "wifi_getBaseBSSID return error\n");
+		} else {
+			if (hwaddr_aton2(buf, map->vap_array[i].u.bss_info.bssid) < 0) {
+				wifi_debug(DEBUG_ERROR, "hwaddr_aton2 fail\n");
+			}
 		}
-		if (hwaddr_aton2(buf, map->vap_array[i].u.bss_info.bssid) < 0) {
-			printf("%s: hwaddr_aton2 fail\n", __func__);
-			res = RETURN_ERR;
-			continue;
-		}
-
 		ret = wifi_getRadioIGMPSnoopingEnable(map->vap_array[i].radio_index, &enabled);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "%s: wifi_getRadioIGMPSnoopingEnable\n", __func__);
-			res = RETURN_ERR;
-			continue;
-		}
-		map->vap_array[i].u.bss_info.mcast2ucast = enabled;
+		} else
+			map->vap_array[i].u.bss_info.mcast2ucast = enabled;
 
 		ret = wifi_getApIsolationEnable(vap_index, &enabled);
 		if (ret != RETURN_OK) {
-			printf("%s: wifi_getApIsolationEnable return error\n", __func__);
-//			res = RETURN_ERR;
-			continue;
-		}
-		map->vap_array[i].u.bss_info.isolation = enabled;
+			wifi_debug(DEBUG_ERROR, "wifi_getApIsolationEnable return error\n");
+		} else
+			map->vap_array[i].u.bss_info.isolation = enabled;
 	}
 
 	for (i = 0; i < map->num_vaps; i++)
@@ -21003,6 +21097,8 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 
 		vap_info = &map->vap_array[i];
 
+		setVapEnableConfig(vap_info->vap_index, vap_info->u.bss_info.enabled);
+
 		if (vap_info->u.bss_info.enabled == FALSE) {
 			wifi_getApEnable(vap_info->vap_index, &apEnable);
             if (apEnable) {
@@ -21045,31 +21141,26 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 		ret = wifi_setSSIDName(vap_info->vap_index, vap_info->u.bss_info.ssid);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR,"wifi_setSSIDName return error\n");
-			goto err;
 		}
 
 		ret = wifi_setApSsidAdvertisementEnable(vap_info->vap_index, vap_info->u.bss_info.showSsid);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApSsidAdvertisementEnable return error\n");
-			goto err;
 		}
 
 		ret = wifi_setApMaxAssociatedDevices(vap_info->vap_index, vap_info->u.bss_info.bssMaxSta);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApMaxAssociatedDevices return error\n");
-			goto err;
 		}
 
 		ret = wifi_setBSSTransitionActivation(vap_info->vap_index, vap_info->u.bss_info.bssTransitionActivated);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setBSSTransitionActivation return error\n");
-			goto err;
 		}
 
 		ret = wifi_setNeighborReportActivation(vap_info->vap_index, vap_info->u.bss_info.nbrReportActivated);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setNeighborReportActivation return error\n");
-			goto err;
 		}
 
 		if (vap_info->u.bss_info.mac_filter_enable == false){
@@ -21089,7 +21180,6 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 		ret = wifi_setApWmmUapsdEnable(vap_info->vap_index, vap_info->u.bss_info.UAPSDEnabled);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApWmmUapsdEnable return error\n");
-			goto err;
 		}
 
 		memset(buf, 0, sizeof(buf));
@@ -21097,19 +21187,16 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 		ret = wifi_setApBeaconRate(vap_info->radio_index, buf);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApBeaconRate return error\n");
-			goto err;
 		}
 
 		ret = wifi_setRadioIGMPSnoopingEnable(vap_info->radio_index, vap_info->u.bss_info.mcast2ucast);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setRadioIGMPSnoopingEnable\n");
-			goto err;
 		}
 
 		ret = wifi_setApSecurity(vap_info->vap_index, &vap_info->u.bss_info.security);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApSecurity return error\n");
-			goto err;
 		}
 
 		if (getVapBridge(vap_info->vap_index, bridge_name, sizeof(bridge_name)) == RETURN_OK) {
@@ -21130,19 +21217,16 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 		ret = wifi_setApMacAddressControlMode(vap_info->vap_index, acl_mode);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApMacAddressControlMode return error\n");
-			goto err;
 		}
 
 		ret = wifi_setApWmmEnable(vap_info->vap_index, vap_info->u.bss_info.wmm_enabled);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApWmmEnable return error\n");
-			goto err;
 		}
 
 		ret = wifi_setApIsolationEnable(vap_info->vap_index, vap_info->u.bss_info.isolation);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApIsolationEnable return error\n");
-			goto err;
 		}
 
 		// TODO mgmtPowerControl, interworking, wps
