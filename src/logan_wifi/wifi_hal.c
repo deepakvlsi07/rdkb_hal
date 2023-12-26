@@ -2703,6 +2703,9 @@ wifi_PrepareDefaultHostapdConfigs(bool reset)
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 }
 
+typedef long time_t;
+static time_t radio_up_time[MAX_NUM_RADIOS];
+
 static void
 wifiBringUpInterfacesForRadio(int radio_idx)
 {
@@ -2784,6 +2787,7 @@ wifi_BringUpInterfaces(void)
 {
     int radio_idx;
     int band_idx;
+	struct timeval tv_now;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -2793,6 +2797,9 @@ wifi_BringUpInterfaces(void)
             break;
         }
         wifiBringUpInterfacesForRadio(radio_idx);
+
+		gettimeofday(&tv_now, NULL);
+		radio_up_time[radio_idx] = tv_now.tv_sec;
     }
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 }
@@ -3452,9 +3459,6 @@ INT wifi_getRadioEnable(INT radioIndex, BOOL *output_bool)	  //RDKB
 	return RETURN_OK;
 }
 
-typedef long time_t;
-static time_t radio_up_time[MAX_NUM_RADIOS];
-
 enum mwctl_chan_width {
 	MWCTL_CHAN_WIDTH_20,
 	MWCTL_CHAN_WIDTH_40,
@@ -3668,10 +3672,6 @@ INT wifi_setRadioEnable(INT radioIndex, BOOL enable)
 					wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 				}
 			}
-		}
-		if (time(&radio_up_time[radioIndex]) < 0) {
-			wifi_debug(DEBUG_ERROR, "GET time fail\n");
-			return RETURN_ERR;
 		}
 	}
 
@@ -14405,19 +14405,18 @@ INT wifi_pushSsidAdvertisementEnable(INT apIndex, BOOL enable)
 
 INT wifi_getRadioUpTime(INT radioIndex, ULONG *output)
 {
-	time_t now;
+	ULONG currentTime;
+	struct timeval tv_now;
 
-	now = time(NULL);
-	if (now < 0) {
-		wifi_debug(DEBUG_ERROR, "GET time fail\n");
-		return RETURN_ERR;
+	gettimeofday(&tv_now, NULL);
+	currentTime = tv_now.tv_sec;
+
+	if (currentTime >= radio_up_time[radioIndex]) {
+		*output = currentTime - radio_up_time[radioIndex];
 	}
-	if (now > radio_up_time[radioIndex])
-		*output = now - radio_up_time[radioIndex];
-	else {
-		*output = 0;
-		return RETURN_ERR;
-	}
+    else {
+		*output = 0xFFFFFFFFUL - radio_up_time[radioIndex] + currentTime;
+    }
 
 	return RETURN_OK;
 }
@@ -20082,6 +20081,8 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 	int ApIndex;
 	int ret, bss_num, i;
 	char ret_buf[MAX_BUF_SIZE] = {0};
+	BOOL enabled = FALSE;
+	struct timeval tv_now;
 
 	ret = wifi_BandProfileRead(0, index, "BssidNum", ret_buf, sizeof(ret_buf), "1");
 	if (ret != 0) {
@@ -20102,6 +20103,19 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
 	multiple_set = TRUE;
+	if (wifi_getRadioEnable(index, &enabled) != RETURN_OK)
+	{
+		wifi_debug(DEBUG_ERROR, "wifi_getRadioEnable return error.\n");
+		return RETURN_ERR;
+	}
+	if (enabled == FALSE && operationParam->enable == TRUE) {
+		wifi_setRadioEnable(index, TRUE);
+		gettimeofday(&tv_now, NULL);
+		radio_up_time[index] = tv_now.tv_sec;
+	} else if (enabled == TRUE && operationParam->enable == FALSE) {
+		wifi_setRadioEnable(index, FALSE);
+		return RETURN_OK;
+	}
 	if (wifi_getRadioOperatingParameters(index, &current_param) != RETURN_OK) {
 		wifi_debug(DEBUG_ERROR, "wifi_getRadioOperatingParameters return error.\n");
 		goto err;
@@ -20299,7 +20313,6 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 			wifi_quick_reload_ap(ApIndex);
 		}
 	}
-	
 
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
