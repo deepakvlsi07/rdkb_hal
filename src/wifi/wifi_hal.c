@@ -12855,11 +12855,13 @@ int wifi_Syncthread(void *arg)
 {
     int radio_idx = 0, i = 0;
     int vap_index = 0;
+    int max_radio = 0;
 
+    wifi_getMaxRadioNumber(&max_radio);
     while (1)
     {
         sleep(5);
-        for (radio_idx = 0; radio_idx < MAX_NUM_RADIOS; radio_idx++)
+        for (radio_idx = 0; radio_idx < max_radio; radio_idx++)
         {
             for (i = 0; i < MAX_NUM_VAP_PER_RADIO; i++)
             {
