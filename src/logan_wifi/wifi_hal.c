@@ -106,12 +106,13 @@ Licensed under the ISC license
 #define ROM_LOGAN_DAT_FILE "/rom/etc/wireless/mediatek/mt7990.b"
 #endif
 
-#define SSID_ENABLE_CONFIG "/nvram/enable_ssid"
+#define SSID_ENABLE_CONFIG "/etc/wireless/hal/wifi_config"
+#define WIFI_BRLAN_CONFIG "/etc/wireless/hal/wifi_config"
 
 #define NOACK_MAP_FILE "/tmp/NoAckMap"
 #define RADIO_RESET_FILE "/nvram/radio_reset"
 
-#define BRIDGE_NAME "brlan0"
+#define DEFAULT_BRIDGE_NAME "brlan0"
 #define BASE_PHY_INDEX 1
 #define BASE_RADIO_INDEX 0
 
@@ -1831,7 +1832,7 @@ static int wifi_datfileRead(char *conf_file, char *param, char *output, int outp
 	res = _syscmd_secure(output, output_size, "datconf -f %s get %s", conf_file, param);
 
 	if (res) {
-		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail %s %s\n", conf_file, param);
 	}
 
 
@@ -2319,7 +2320,24 @@ wifi_PrepareEnableSSIDConfig(bool reset)
 
 	if (access(SSID_ENABLE_CONFIG, F_OK) == 0 && reset == FALSE)
 		return;
-	res = _syscmd_secure(ret_buf, sizeof(ret_buf), "cp /etc/enable_ssid %s", SSID_ENABLE_CONFIG);
+	res = _syscmd_secure(ret_buf, sizeof(ret_buf), "cp /rom%s %s", SSID_ENABLE_CONFIG, SSID_ENABLE_CONFIG);
+	if (res) {
+		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+	}
+	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+}
+
+static void
+wifi_PrepareWifiBrlanConfig(bool reset)
+{
+	int res;
+	char ret_buf[MAX_BUF_SIZE] = {0};
+
+	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+	if (access(WIFI_BRLAN_CONFIG, F_OK) == 0 && reset == FALSE)
+		return;
+	res = _syscmd_secure(ret_buf, sizeof(ret_buf), "cp /rom%s %s", WIFI_BRLAN_CONFIG, WIFI_BRLAN_CONFIG);
 	if (res) {
 		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 	}
@@ -2344,7 +2362,7 @@ static BOOL getVapEnableConfig(int vap_index)
 		output[len - 1] = '\0';
 	}
 
-	return output[0] == '0' ? FALSE : TRUE;
+	return output[0] == '1' ? TRUE : FALSE;
 }
 
 static BOOL setVapEnableConfig(int vap_index, BOOL enable)
@@ -2394,6 +2412,7 @@ INT wifi_factoryReset()
 	if (res) {
 		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 	}
+	wifi_PrepareWifiBrlanConfig(TRUE);
 
 	wifi_PrepareDefaultHostapdConfigs(TRUE);
 	wifi_PrepareEnableSSIDConfig(TRUE);
@@ -2671,6 +2690,8 @@ wifi_ParseProfile(void)
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 }
 
+static int wifi_get_bridge_name(char *vap_name, char *bridge_name, unsigned int bridge_buf_size);
+
 static void
 wifi_PrepareDefaultHostapdConfigs(bool reset)
 {
@@ -2712,13 +2733,7 @@ wifi_PrepareDefaultHostapdConfigs(bool reset)
 				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 				return;
 			}
-
-			res = snprintf(bridge, sizeof(bridge), "brlan%d", bss_idx);
-			if (os_snprintf_error(sizeof(bridge), res)) {
-				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-				return;
-			}
-
+			
 			if (radio_idx == band_2_4) {
 				res = snprintf(interface, sizeof(interface), "%s%d", PREFIX_WIFI2G, bss_idx);
 				if (os_snprintf_error(sizeof(interface), res)) {
@@ -2745,7 +2760,6 @@ wifi_PrepareDefaultHostapdConfigs(bool reset)
 				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 				return;
 			}
-
 			params[0].name = "ssid";
 			params[0].value = ssid;
 			params[1].name = "interface";
@@ -2753,7 +2767,15 @@ wifi_PrepareDefaultHostapdConfigs(bool reset)
 			params[2].name = "wpa_psk_file";
 			params[2].value = psk_file;
 			params[3].name = "bridge";
-			params[3].value = bridge;
+			/*by referring to customer's patch*/
+			params[3].value = DEFAULT_BRIDGE_NAME;
+
+			memset(bridge, 0, sizeof(bridge));
+			/*find bridge for a specific wifi interface in /etc/wireless/hal/wifi_config*/
+			if (wifi_get_bridge_name(interface, bridge, sizeof(bridge)) == RETURN_OK) {
+				if (strlen(bridge) > 0)
+					params[3].value = bridge;
+			}
 
 			wifi_hostapdWrite(config_file, params, sizeof(params) / sizeof(params[0]));
 		}
@@ -2761,8 +2783,29 @@ wifi_PrepareDefaultHostapdConfigs(bool reset)
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 }
 
-typedef long time_t;
-static time_t radio_up_time[MAX_NUM_RADIOS];
+static unsigned long radio_start_uptime[MAX_NUM_RADIOS];
+/* Get the system uptime in secs.
+ * cat /proc/uptime outputs 17884.70 58636.68
+ *   - the uptime of the system (17884.70 seconds), and
+ *   - the amount of time spent in idle process (58636.68 seconds)
+ * we only use to the granularity of secs (17884) now - ignoring the rest
+ */
+static unsigned long wifi_getSystemUpSecs(void)
+{
+	char buf[MAX_BUF_SIZE] = {0};
+	unsigned long sysUpSeconds = 0;
+	int ret;
+	// consider upto decimal number of seconds
+	ret = _syscmd_secure(buf, sizeof(buf), "cat /proc/uptime | cut -d '.' -f1");
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+	}
+	if (hal_strtoul(buf, 10, &sysUpSeconds) < 0) {
+		wifi_debug(DEBUG_ERROR, "strtol fail\n");
+	}
+
+	return sysUpSeconds;
+}
 
 static void
 wifiBringUpInterfacesForRadio(int radio_idx)
@@ -2865,8 +2908,6 @@ wifi_BringUpInterfaces(void)
 {
     int radio_idx;
     int band_idx;
-	struct timeval tv_now;
-
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
     for (radio_idx = 0; radio_idx < get_runtime_max_radio(); radio_idx++) {
@@ -2876,8 +2917,7 @@ wifi_BringUpInterfaces(void)
         }
         wifiBringUpInterfacesForRadio(radio_idx);
 
-		gettimeofday(&tv_now, NULL);
-		radio_up_time[radio_idx] = tv_now.tv_sec;
+		radio_start_uptime[radio_idx] = wifi_getSystemUpSecs();
     }
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 }
@@ -3134,6 +3174,7 @@ INT wifi_init()							//RDKB
 	//Not intitializing macfilter for Turris-Omnia Platform for now
 	//macfilter_init();
 	if (CallOnce) {
+		wifi_PrepareWifiBrlanConfig(FALSE);
 		wifi_ParseProfile();
 		wifi_PrepareDefaultHostapdConfigs(FALSE);
 		wifi_PrepareEnableSSIDConfig(FALSE);
@@ -3193,6 +3234,7 @@ INT wifi_reset()
 
 	wifi_PrepareDefaultHostapdConfigs(TRUE);
 	wifi_PrepareEnableSSIDConfig(TRUE);
+	wifi_PrepareWifiBrlanConfig(TRUE);
 	wifi_psk_file_reset();
 	wifi_BringUpInterfaces();
 	sleep(2);
@@ -3732,27 +3774,34 @@ INT wifi_setRadioEnable(INT radioIndex, BOOL enable)
 			}
 
 			memset(buf, 0, MAX_BUF_SIZE);
-
+			/* For disabled main interface, always bring it up firstly.
+			 * In order that the non-main interfaces could be added successfully.
+			 */
+			if (getVapEnableConfig(apIndex) == FALSE && !is_main_vap_index(apIndex))
+				continue;
 
 			res = _syscmd_secure(buf, sizeof(buf), "cat %s | grep %s | cut -d'=' -f2", VAP_STATUS_FILE, interface_name);
 			if (res) {
 				wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 			}
 
-			if(*buf == '1') {
-				res = _syscmd_secure(buf, sizeof(buf), "ifconfig %s up", interface_name);
-				if (res) {
-					wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-				}
-
-				memset(buf, 0, MAX_BUF_SIZE);
-
-				res = _syscmd_secure(buf, sizeof(buf), "hostapd_cli -i global raw ADD bss_config=phy%d:/nvram/hostapd%d.conf",phyId,apIndex);
-				if (res) {
-					wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-				}
+			res = _syscmd_secure(buf, sizeof(buf), "ifconfig %s up", interface_name);
+			if (res) {
+				wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 			}
+
+			memset(buf, 0, MAX_BUF_SIZE);
+
+			res = _syscmd_secure(buf, sizeof(buf), "hostapd_cli -i global raw ADD bss_config=phy%d:/nvram/hostapd%d.conf",phyId,apIndex);
+			if (res) {
+				wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			}
+
+			/* For disabled main interface, bring it down if it is disabled by using 'ifconfig rax0 down'.*/
+			if (getVapEnableConfig(apIndex) == FALSE && is_main_vap_index(apIndex))
+				wifi_setApEnable(apIndex, FALSE);
 		}
+		radio_start_uptime[radioIndex] = wifi_getSystemUpSecs();
 	}
 
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
@@ -14484,22 +14533,20 @@ INT wifi_pushSsidAdvertisementEnable(INT apIndex, BOOL enable)
 	return ret;
 }
 
-INT wifi_getRadioUpTime(INT radioIndex, ULONG *output)
+INT wifi_getRadioUpTime(INT radioIndex, ULONG *UpTime)
 {
-	ULONG currentTime;
-	struct timeval tv_now;
+	unsigned long SysUpSecs = 0 ;
+	int ret = RETURN_ERR;
+	*UpTime = 0;
+	if ( radioIndex < MAX_NUM_RADIOS ) {
+		SysUpSecs = wifi_getSystemUpSecs();
 
-	gettimeofday(&tv_now, NULL);
-	currentTime = tv_now.tv_sec;
-
-	if (currentTime >= radio_up_time[radioIndex]) {
-		*output = currentTime - radio_up_time[radioIndex];
+		if (SysUpSecs > radio_start_uptime[radioIndex]) {
+			*UpTime = SysUpSecs - radio_start_uptime[radioIndex];
+			ret = RETURN_OK;
+		}
 	}
-    else {
-		*output = 0xFFFFFFFFUL - radio_up_time[radioIndex] + currentTime;
-    }
-
-	return RETURN_OK;
+	return ret;
 }
 
 INT wifi_getApEnableOnLine(INT wlanIndex, BOOL *enabled)
@@ -19093,38 +19140,6 @@ int main(int argc,char **argv)
 		mld_info_display();
 	}
 
-	if (strstr(argv[1], "change_bridge_test")) {
-		wifi_vap_info_map_t vap[3];
-		int i;
-		radio_band[0] = band_2_4;
-		radio_band[1] = band_5;
-		radio_band[2] = band_6;
-
-		if (eht_mld_config_init() != RETURN_OK)
-			printf("eht_mld_config_init() fail!\n");
-
-		memset(vap, 0, sizeof(vap));
-		for (i = 0; i < 3; i++) {
-			if (wifi_getRadioVapInfoMap(i, &vap[i]) != RETURN_OK)
-				printf("wifi_getRadioVapInfoMap fail[%d]", i);
-		}
-
-		/*case 1-change bridge name of ra0*/
-		strncpy(vap[0].vap_array[0].bridge_name, "brlan1", sizeof(vap[0].vap_array[0].bridge_name));
-		if (wifi_createVAP(0, &vap[0]) != RETURN_OK)
-			printf("wifi_createVAP[0] fail\n");
-
-		/*case 2-change bridge name of rai1*/
-		strncpy(vap[1].vap_array[1].bridge_name, "brlan2", sizeof(vap[1].vap_array[1].bridge_name));
-		if (wifi_createVAP(1, &vap[1]) != RETURN_OK)
-			printf("wifi_createVAP[1] fail\n");
-
-		/*case 2-change bridge name of rax0*/
-		strncpy(vap[2].vap_array[0].bridge_name, "brlan3", sizeof(vap[2].vap_array[2].bridge_name));
-		if (wifi_createVAP(2, &vap[2]) != RETURN_OK)
-			printf("wifi_createVAP[2] fail\n");
-	}
-
 	if (strstr(argv[1], "dynamic_vap_test")) {
 		wifi_vap_info_map_t vap[3];
 		int i;
@@ -20232,7 +20247,7 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 	if (enabled == FALSE && operationParam->enable == TRUE) {
 		wifi_setRadioEnable(index, TRUE);
 		gettimeofday(&tv_now, NULL);
-		radio_up_time[index] = tv_now.tv_sec;
+		radio_start_uptime[index] = wifi_getSystemUpSecs();
 	} else if (enabled == TRUE && operationParam->enable == FALSE) {
 		wifi_setRadioEnable(index, FALSE);
 		return RETURN_OK;
@@ -20839,27 +20854,31 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 
 		ret = wifi_getApSsidAdvertisementEnable(vap_index, &enabled);
 		if (ret != RETURN_OK) {
+			enabled = FALSE;
 			wifi_debug(DEBUG_ERROR,"wifi_getApSsidAdvertisementEnable return error\n");
-		} else
-			map->vap_array[i].u.bss_info.showSsid = enabled;
+		}
+		map->vap_array[i].u.bss_info.showSsid = enabled;
 
 		ret = wifi_getApMaxAssociatedDevices(vap_index, &output);
 		if (ret != RETURN_OK) {
+			output = 30;
 			wifi_debug(DEBUG_ERROR, "wifi_getApMaxAssociatedDevices return error\n");
-		} else
-			map->vap_array[i].u.bss_info.bssMaxSta = output;
+		}
+		map->vap_array[i].u.bss_info.bssMaxSta = output;
 
 		ret = wifi_getBSSTransitionActivation(vap_index, &enabled);
 		if (ret != RETURN_OK) {
+			enabled = FALSE;
 			wifi_debug(DEBUG_ERROR, "wifi_getBSSTransitionActivation return error\n");
-		} else 
-			map->vap_array[i].u.bss_info.bssTransitionActivated = enabled;
+		}
+		map->vap_array[i].u.bss_info.bssTransitionActivated = enabled;
 
 		ret = wifi_getNeighborReportActivation(vap_index, &enabled);
 		if (ret != RETURN_OK) {
+			enabled = FALSE;
 			wifi_debug(DEBUG_ERROR, "wifi_getNeighborReportActivation return error\n");
-		} else 
-			map->vap_array[i].u.bss_info.nbrReportActivated = enabled;
+		}
+		map->vap_array[i].u.bss_info.nbrReportActivated = enabled;
 
 		ret = wifi_getApSecurity(vap_index, &security);
 		if (ret != RETURN_OK) {
@@ -20869,33 +20888,37 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 
 		ret = wifi_getApMacAddressControlMode(vap_index, &mode);
 		if (ret != RETURN_OK) {
+			mode = 0;
 			wifi_debug(DEBUG_ERROR, "wifi_getApMacAddressControlMode return error\n");
-		} else {
-			if (mode == 0)
-				map->vap_array[i].u.bss_info.mac_filter_enable = FALSE;
-			else
-				map->vap_array[i].u.bss_info.mac_filter_enable = TRUE;
-			if (mode == 1)
-				map->vap_array[i].u.bss_info.mac_filter_mode = wifi_mac_filter_mode_white_list;
-			else if (mode == 2)
-				map->vap_array[i].u.bss_info.mac_filter_mode = wifi_mac_filter_mode_black_list;
 		}
+
+		if (mode == 0)
+			map->vap_array[i].u.bss_info.mac_filter_enable = FALSE;
+		else
+			map->vap_array[i].u.bss_info.mac_filter_enable = TRUE;
+		if (mode == 1)
+			map->vap_array[i].u.bss_info.mac_filter_mode = wifi_mac_filter_mode_white_list;
+		else if (mode == 2)
+			map->vap_array[i].u.bss_info.mac_filter_mode = wifi_mac_filter_mode_black_list;
 		
 		ret = wifi_getApWmmEnable(vap_index, &enabled);
 		if (ret != RETURN_OK) {
+			enabled = FALSE;
 			wifi_debug(DEBUG_ERROR, "wifi_getApWmmEnable return error\n");
-		} else
-			map->vap_array[i].u.bss_info.wmm_enabled = enabled;
+		}
+		map->vap_array[i].u.bss_info.wmm_enabled = enabled;
 
 		ret = wifi_getApUAPSDCapability(vap_index, &enabled);
 		if (ret != RETURN_OK) {
+			enabled = FALSE;
 			wifi_debug(DEBUG_ERROR, "wifi_getApUAPSDCapability return error\n");
-		} else 
-			map->vap_array[i].u.bss_info.UAPSDEnabled = enabled;
+		} 
+		map->vap_array[i].u.bss_info.UAPSDEnabled = enabled;
 
 		memset(buf, 0, sizeof(buf));
 		ret = wifi_getApBeaconRate(map->vap_array[i].radio_index, buf);
 		if (ret != RETURN_OK) {
+			map->vap_array[i].u.bss_info.beaconRate = WIFI_BITRATE_1MBPS;
 			wifi_debug(DEBUG_ERROR, "wifi_getApBeaconRate return error\n");
 		} else 
 			map->vap_array[i].u.bss_info.beaconRate = beaconRate_string_to_enum(buf);
@@ -20911,15 +20934,18 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 		}
 		ret = wifi_getRadioIGMPSnoopingEnable(map->vap_array[i].radio_index, &enabled);
 		if (ret != RETURN_OK) {
+			enabled = FALSE;
 			wifi_debug(DEBUG_ERROR, "%s: wifi_getRadioIGMPSnoopingEnable\n", __func__);
-		} else
-			map->vap_array[i].u.bss_info.mcast2ucast = enabled;
+		}
+		map->vap_array[i].u.bss_info.mcast2ucast = enabled;
 
 		ret = wifi_getApIsolationEnable(vap_index, &enabled);
 		if (ret != RETURN_OK) {
+			enabled = FALSE;
 			wifi_debug(DEBUG_ERROR, "wifi_getApIsolationEnable return error\n");
-		} else
-			map->vap_array[i].u.bss_info.isolation = enabled;
+		}
+
+		map->vap_array[i].u.bss_info.isolation = enabled;
 	}
 
 	for (i = 0; i < map->num_vaps; i++)
@@ -21091,6 +21117,71 @@ static INT setVapBridge(int ap_index, char *bridge_name)
 	return RETURN_OK;
 }
 
+static int wifi_get_bridge_name(char *vap_name, char *bridge_name, unsigned int bridge_buf_size)
+{
+	int ret = RETURN_ERR;
+	char brname[64] = {0}, brifnames[64] = {0};
+	char brname_str[64] = {0}, brifnames_str[64] = {0};
+	int res, len;
+
+	for (int i = 0; i <= MAX_NUM_VAP_PER_RADIO; i++) {
+		memset(brname_str, 0, sizeof(brname_str));
+		memset(brifnames_str, 0, sizeof(brifnames_str));		
+       /**  Read bridge interface names
+        * Ex:
+        * Lan_ifname=brlan0 Lan_ifnames=ra0;rai0;rax0
+        * Lan1_ifname=brlan1 Lan1_ifnames=ra1;rai1;rax1
+        */
+		res = snprintf(brname, sizeof(brname), "Lan%d_ifname", i);
+		if (os_snprintf_error(sizeof(brname), res)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			return RETURN_ERR;
+		}
+
+		res = snprintf(brifnames, sizeof(brifnames), "Lan%d_ifnames", i);
+		if (os_snprintf_error(sizeof(brifnames), res)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			return RETURN_ERR;
+		}
+
+		// read bridge name
+		res = _syscmd_secure(brname_str, sizeof(brname_str),
+			"datconf -f %s get %s", WIFI_BRLAN_CONFIG, brname);
+
+		if (res) {
+			continue;
+		} else {
+			len = strlen(brname_str);
+			if ((len > 0) && (brname_str[len - 1] == '\n')) {
+				brname_str[len - 1] = '\0';
+			}
+		}
+
+		// read bridge ifnames
+		res = _syscmd_secure(brifnames_str, sizeof(brifnames_str),
+			"datconf -f %s get %s", WIFI_BRLAN_CONFIG, brifnames);
+
+		if (res) {
+			continue;
+		} else {
+			len = strlen(brifnames_str);
+			if ((len > 0) && (brifnames_str[len - 1] == '\n')) {
+				brifnames_str[len - 1] = '\0';
+			}
+		}
+
+		if (strlen(brifnames_str) && strstr(brifnames_str, vap_name)){
+			if(strlen(brname_str)) {
+				strncpy(bridge_name, brname_str, bridge_buf_size - 1);
+				bridge_name[bridge_buf_size - 1] = '\0';
+			}
+			ret = RETURN_OK;
+			break;
+		}
+	}
+	return ret;
+}
+
 INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 {
 	unsigned int i;
@@ -21108,7 +21199,8 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 	unsigned char ap_array_num;
 	char interface_name[IF_NAME_SIZE] = {0};
 	char bridge_name[WIFI_BRIDGE_NAME_LEN] = {0};
-	unsigned char hostapd_if_restart;
+	unsigned char hostapd_if_restart = 0, hostapd_allif_restart = 0;
+	struct params params[1];
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	printf("Entering %s radio[%d], map->num_vaps = %d\n", __func__, (int)index, map->num_vaps);
@@ -21154,7 +21246,6 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 			}
 		}
 
-		struct params params[3];
 		params[0].name = "interface";
 		params[0].value = vap_info->vap_name;
 		wifi_hostapdWrite(config_file, params, 1);
@@ -21184,20 +21275,6 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 			wifi_debug(DEBUG_ERROR, "wifi_setNeighborReportActivation return error\n");
 		}
 
-		if (vap_info->u.bss_info.mac_filter_enable == false){
-			acl_mode = 0;
-		}else {
-			if (vap_info->u.bss_info.mac_filter_mode == wifi_mac_filter_mode_black_list){
-				acl_mode = 2;
-				res = _syscmd_secure(buf, sizeof(buf), "touch %s%d", DENY_PREFIX, vap_info->vap_index);
-				if (res) {
-					wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-				}
-			}else{
-				acl_mode = 1;
-			}
-		}
-
 		ret = wifi_setApWmmUapsdEnable(vap_info->vap_index, vap_info->u.bss_info.UAPSDEnabled);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApWmmUapsdEnable return error\n");
@@ -21220,20 +21297,58 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 			wifi_debug(DEBUG_ERROR, "wifi_setApSecurity return error\n");
 		}
 
+		memset(buf, 0, sizeof(buf));
+		/*get bridge name from /etc/wireless/hal/wifi_config*/
+		if (wifi_get_bridge_name(vap_info->vap_name, buf, sizeof(buf)) != RETURN_OK)
+			strncpy(buf, DEFAULT_BRIDGE_NAME, sizeof(buf) - 1);
+		/*update bridge name to hostapd.conf from /etc/wireless/hal/wifi_config by requirement from customer*/
 		if (getVapBridge(vap_info->vap_index, bridge_name, sizeof(bridge_name)) == RETURN_OK) {
-			if ((strlen(vap_info->bridge_name) > 0) && (strlen(bridge_name) != strlen(vap_info->bridge_name) ||
-				(strlen(bridge_name) == strlen(vap_info->bridge_name) &&
-				strncmp(bridge_name, vap_info->bridge_name, strlen(bridge_name))))) {
-				hostapd_if_restart = 1;
-				setVapBridge(vap_info->vap_index, vap_info->bridge_name);
+			if ((strlen(buf) > 0) &&
+				strncmp(bridge_name, buf, strlen(bridge_name))) {
+					/*if not main interace, just do hostapd if restart for it*/
+					if (!is_main_vap_index(vap_info->vap_index))
+						hostapd_if_restart = 1;
+					else
+						hostapd_allif_restart = 1;
+					setVapBridge(vap_info->vap_index, buf);
 			}
 		}
 
 		multiple_set = FALSE;
-		if (hostapd_if_restart)
-			hostapd_raw_restart_bss(vap_info->vap_index);
-		else
-			wifi_quick_reload_ap(vap_info->vap_index);
+		if (!hostapd_allif_restart) {
+			if (hostapd_if_restart)
+				hostapd_raw_restart_bss(vap_info->vap_index);
+			else
+				wifi_quick_reload_ap(vap_info->vap_index);
+		}
+	}
+
+	/*restart all interface of this radio if needed*/
+	if (hostapd_allif_restart) {
+		wifi_setRadioEnable(index, FALSE);
+		wifi_setRadioEnable(index, TRUE);
+	}
+
+	/*do quick setting for wifi driver*/
+	for (i = 0; i < map->num_vaps; i++) {
+		vap_info = &map->vap_array[i];
+		if (vap_info->u.bss_info.enabled == FALSE)
+			continue;
+
+		if (vap_info->u.bss_info.mac_filter_enable == false){
+			acl_mode = 0;
+		}else {
+			if (vap_info->u.bss_info.mac_filter_mode == wifi_mac_filter_mode_black_list){
+				acl_mode = 2;
+				res = _syscmd_secure(buf, sizeof(buf), "touch %s%d", DENY_PREFIX, vap_info->vap_index);
+				if (res) {
+					wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+				}
+			}else{
+				acl_mode = 1;
+			}
+		}
+
 		// If config use hostapd_cli to set, we calling these type of functions after enable the ap.
 		ret = wifi_setApMacAddressControlMode(vap_info->vap_index, acl_mode);
 		if (ret != RETURN_OK) {
@@ -21249,9 +21364,9 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApIsolationEnable return error\n");
 		}
-
 		// TODO mgmtPowerControl, interworking, wps
 	}
+
 
 	/*process mlo operation*/
 	for (i = 0; i < map->num_vaps; i++) {
@@ -21573,7 +21688,14 @@ INT wifi_getHalCapability(wifi_hal_capability_t *cap)
 			if (wifi_GetInterfaceName(iface_info->index, output))
 				strncpy(iface_info->interface_name, output, sizeof(iface_info->interface_name) - 1);
 
-			getVapBridge(iface_info->index, iface_info->bridge_name, sizeof(iface_info->bridge_name));
+			memset(iface_info->bridge_name, 0, sizeof(iface_info->bridge_name));
+			wifi_get_bridge_name(iface_info->interface_name, iface_info->bridge_name,
+				sizeof(iface_info->bridge_name));
+
+			if (strlen(iface_info->bridge_name) == 0) {
+				strncpy(iface_info->bridge_name, DEFAULT_BRIDGE_NAME, sizeof(iface_info->bridge_name) - 1);
+				iface_info->bridge_name[sizeof(iface_info->bridge_name) - 1] = '\0';
+			}
 			// TODO: vlan id
 			// TODO: primary
 			if (wifi_getApName(iface_info->index, output) == RETURN_OK)
