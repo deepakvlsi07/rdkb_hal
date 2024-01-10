@@ -6001,8 +6001,50 @@ INT wifi_factoryResetAP(int apIndex)
 	return RETURN_OK;
 }
 
+
 INT wifi_setBandSteeringApGroup(char *ApGroup)
 {
+	int array[2];
+	char buf[MAX_BUF_SIZE] = {0};
+	char output[MAX_BUF_SIZE] = {0};
+	int ret;
+	int res;
+
+	if (ApGroup == NULL)
+		return RETURN_ERR;
+
+	if (sscanf(ApGroup, "%d,%d", &array[0], &array[1]) != 2) {
+		wifi_debug(DEBUG_ERROR, "Unable to parse the input ApGroup\n");
+		return RETURN_ERR;
+	}
+
+	ret = wifi_getBaseBSSID(array[0], output);
+	if (ret != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "wifi_getBaseBSSID return error\n");
+		return RETURN_ERR;
+	} else {
+		res = _syscmd_secure(buf, sizeof(buf), "mapd_cli /tmp/mapd_ctrl bss_group_set %s 1", output);
+		if (res)
+			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+	}
+
+	memset(output, 0, sizeof(output));
+	ret = wifi_getBaseBSSID(array[1], output);
+	if (ret != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "wifi_getBaseBSSID return error\n");
+		return RETURN_ERR;
+	} else {
+		memset(buf, 0, sizeof(buf));
+		res = _syscmd_secure(buf, sizeof(buf), "mapd_cli /tmp/mapd_ctrl bss_group_set %s 1", output);
+		if (res)
+			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+	}
+
+	memset(buf, 0, sizeof(buf));
+	res = _syscmd_secure(buf, sizeof(buf), "mapd_cli /tmp/mapd_ctrl restrict_bss_group_steering enable");
+	if (res)
+		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+
 	return RETURN_OK;
 }
 
@@ -14247,7 +14289,7 @@ INT wifi_getApInactiveAssociatedDeviceDiagnosticResult(char *filename,wifi_assoc
 //To get Band Steering Capability
 INT wifi_getBandSteeringCapability(BOOL *support)
 {
-	*support = FALSE;
+	*support = TRUE;
 	return RETURN_OK;
 }
 
@@ -14256,13 +14298,71 @@ INT wifi_getBandSteeringCapability(BOOL *support)
 //To get Band Steering enable status
 INT wifi_getBandSteeringEnable(BOOL *enable)
 {
-	*enable = FALSE;
+	char dat_file[MAX_BUF_SIZE] = {0};
+	int res;
+	int count = 0;
+	char buf[256] = {0};
+	int max_num_radios;
+	int radioIndex;
+
+	if (!enable)
+		return RETURN_ERR;
+
+	wifi_getMaxRadioNumber(&max_num_radios);
+
+	for(radioIndex=0; radioIndex < max_num_radios; radioIndex++)
+	{
+		memset(dat_file, 0, sizeof(dat_file));
+		res = snprintf(dat_file, sizeof(dat_file), "%s%d.dat", LOGAN_DAT_FILE, radioIndex);
+		if (os_snprintf_error(sizeof(dat_file), res)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			return RETURN_ERR;
+		}
+		memset(buf, 0, sizeof(buf));
+		wifi_datfileRead(dat_file, "MapMode", buf, sizeof(buf));
+
+		if (strncmp(buf, "2", 1) == 0)
+			count++;
+	}
+
+	if (count >= 2)
+		*enable = TRUE;
+	else
+		*enable = FALSE;
+
 	return RETURN_OK;
 }
 
 //To turn on/off Band steering
 INT wifi_setBandSteeringEnable(BOOL enable)
 {
+	struct params dat_param = {0};
+	char dat_file[MAX_BUF_SIZE] = {0};
+	int max_num_radios = 0;
+	int res;
+	char buf[256] = {0};
+
+	dat_param.name = "MapMode";
+	dat_param.value = enable ? "2" : "0";
+
+	wifi_getMaxRadioNumber(&max_num_radios);
+
+	for(int radioIndex=0; radioIndex < max_num_radios; radioIndex++)
+	{
+		memset(dat_file, 0, sizeof(dat_file));
+		res = snprintf(dat_file, sizeof(dat_file), "%s%d.dat", LOGAN_DAT_FILE, radioIndex);
+		if (os_snprintf_error(sizeof(dat_file), res)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			return RETURN_ERR;
+		}
+
+		wifi_datfileWrite(dat_file, &dat_param, 1);
+	}
+
+	res = _syscmd_secure(buf, sizeof(buf), "reboot");
+	if (res)
+		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+
 	return RETURN_OK;
 }
 
@@ -14270,11 +14370,71 @@ INT wifi_setBandSteeringEnable(BOOL enable)
 //To get Band Steering AP group
 INT wifi_getBandSteeringApGroup(char *output_ApGroup)
 {
+	char buf[MAX_APS * 20];
+	int res;
+	int macIndex = 0;
+	char apIndexesStr[(MAX_APS * 3) + 1] = {0};
+	int count = 0;
+
 	if (NULL == output_ApGroup)
 		return RETURN_ERR;
 
-	memcpy(output_ApGroup, "1,2", 3);
-	output_ApGroup[3] = '\0';
+	res = _syscmd_secure(buf, sizeof(buf), "mapd_cli /tmp/mapd_ctrl bss_group_list_get" );
+	if (res) {
+		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+		return RETURN_ERR;
+	}
+
+	char *token = strtok(buf, "\n");
+
+	while (token != NULL) {
+
+		char bssid[64] ;
+		int foundApIndex = 0;
+		char mac[64] = {0};
+
+		count++;
+
+		if (count < 3) {
+			token = strtok(NULL, "\n");
+			continue;
+		}
+
+		if (sscanf(token, "%s", mac) != 1) {
+			wifi_debug(DEBUG_ERROR, "Error parsing MAC address, sscanf failed\n");
+			return RETURN_ERR;
+		}
+
+		for (int apIndex = 0; apIndex < MAX_APS; apIndex++) {
+			wifi_getBaseBSSID(apIndex, bssid);
+			if (strcmp(bssid, mac) == 0) {
+				foundApIndex = apIndex;
+				break;
+			}
+		}
+
+		if (foundApIndex + 1) {
+			char apIndexStr[4];
+
+			if (macIndex % 2 == 1)
+				snprintf(apIndexStr, sizeof(apIndexStr), "%d%s", foundApIndex, ";");
+			else
+				snprintf(apIndexStr, sizeof(apIndexStr), "%d%s", foundApIndex, ",");
+			strcat(apIndexesStr, apIndexStr);
+			macIndex++;
+		}
+		token = strtok(NULL, "\n");
+	}
+
+	if (strlen(apIndexesStr) == 0) {
+		wifi_debug(DEBUG_ERROR, "BSS group list empty\n");
+		return RETURN_ERR;
+	} else {
+		apIndexesStr[strlen(apIndexesStr)-1] = '\0'; /* to remove trailing ';' */
+		memcpy(output_ApGroup, apIndexesStr, strlen(apIndexesStr));
+		output_ApGroup[strlen(apIndexesStr)] = '\0';
+	}
+
 	return RETURN_OK;
 }
 
@@ -14282,11 +14442,113 @@ INT wifi_getBandSteeringApGroup(char *output_ApGroup)
 //to set and read the band steering BandUtilizationThreshold parameters
 INT wifi_getBandSteeringBandUtilizationThreshold (INT radioIndex, INT *pBuThreshold)
 {
-	return RETURN_ERR;
+	wifi_band band = band_invalid;
+	int res;
+	char buf[256] = {0};
+	char conf_file[MAX_BUF_SIZE] = {0};
+
+	if (NULL == pBuThreshold)
+		return RETURN_ERR;
+
+	band = radio_index_to_band(radioIndex);
+
+	res = snprintf(conf_file, sizeof(conf_file), "/etc/mapd_strng.conf");
+	if (os_snprintf_error(sizeof(conf_file), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
+
+	if (band == band_invalid) {
+		return RETURN_ERR;
+	} else if (band == band_2_4) {
+		res = _syscmd_secure(buf, sizeof(buf), "cat %s 2> /dev/null | grep \"^CUOverloadTh_2G=\" | cut -d \"=\" -f 2 | head -n1 | tr -d \"\\n\"", conf_file);
+		if(res) {
+			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			return RETURN_ERR;
+		}
+
+	} else if (band == band_5) {
+		res = _syscmd_secure(buf, sizeof(buf), "cat %s 2> /dev/null | grep \"^CUOverloadTh_5G_L=\" | cut -d \"=\" -f 2 | head -n1 | tr -d \"\\n\"", conf_file);
+		if(res) {
+			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			return RETURN_ERR;
+		}
+	} else if (band == band_6) {
+		res = _syscmd_secure(buf, sizeof(buf), "cat %s 2> /dev/null | grep \"^CUOverloadTh_6G=\" | cut -d \"=\" -f 2 | head -n1 | tr -d \"\\n\"", conf_file);
+		if(res) {
+			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			return RETURN_ERR;
+		}
+	}
+
+	*pBuThreshold = atoi(buf);
+	return RETURN_OK;
 }
 
 INT wifi_setBandSteeringBandUtilizationThreshold (INT radioIndex, INT buThreshold)
 {
+	wifi_band band = band_invalid;
+	int res;
+	char buf[256] = {0};
+	char conf_file[MAX_BUF_SIZE] = {0};
+
+	band = radio_index_to_band(radioIndex);
+
+	res = snprintf(conf_file, sizeof(conf_file), "/etc/mapd_strng.conf");
+	if (os_snprintf_error(sizeof(conf_file), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
+
+	if (band == band_invalid) {
+		return RETURN_ERR;
+	} else if (band == band_2_4) {
+		res = _syscmd_secure(buf, sizeof(buf), "mapd_cli /tmp/mapd_ctrl set CUOverloadTh_2G %d", buThreshold);
+		if (res) {
+			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			return RETURN_ERR;
+		}
+		memset(buf, 0, sizeof(buf));
+		res = _syscmd_secure(buf, sizeof(buf), "sed -i \"s/^CUOverloadTh_2G=.*/CUOverloadTh_2G=%d/\" %s", buThreshold, conf_file);
+		if(res) {
+			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			return RETURN_ERR;
+		}
+		return RETURN_OK;
+	} else if (band == band_5) {
+		res = _syscmd_secure(buf, sizeof(buf), "mapd_cli /tmp/mapd_ctrl set CUOverloadTh_5G %d", buThreshold);
+		if (res) {
+			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			return RETURN_ERR;
+		}
+		memset(buf, 0, sizeof(buf));
+		res = _syscmd_secure(buf, sizeof(buf), "sed -i \"s/^CUOverloadTh_5G_L=.*/CUOverloadTh_5G_L=%d/\" %s", buThreshold, conf_file);
+		if(res) {
+			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			return RETURN_ERR;
+		}
+		memset(buf, 0, sizeof(buf));
+		res = _syscmd_secure(buf, sizeof(buf), "sed -i \"s/^CUOverloadTh_5G_H=.*/CUOverloadTh_5G_H=%d/\" %s", buThreshold, conf_file);
+		if(res) {
+			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			return RETURN_ERR;
+		}
+		return RETURN_OK;
+	} else if (band == band_6) {
+		res = _syscmd_secure(buf, sizeof(buf), "mapd_cli /tmp/mapd_ctrl set CUOverloadTh_6G %d", buThreshold );
+		if (res) {
+			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			return RETURN_ERR;
+		}
+		memset(buf, 0, sizeof(buf));
+		res = _syscmd_secure(buf, sizeof(buf), "sed -i \"s/^CUOverloadTh_6G=.*/CUOverloadTh_6G=%d/\" %s", buThreshold, conf_file);
+		if(res) {
+			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			return RETURN_ERR;
+		}
+		return RETURN_OK;
+	}
+
 	return RETURN_ERR;
 }
 
@@ -14294,12 +14556,114 @@ INT wifi_setBandSteeringBandUtilizationThreshold (INT radioIndex, INT buThreshol
 //to set and read the band steering RSSIThreshold parameters
 INT wifi_getBandSteeringRSSIThreshold (INT radioIndex, INT *pRssiThreshold)
 {
-	return RETURN_ERR;
+	wifi_band band = band_invalid;
+	int res;
+	char buf[256] = {0};
+	char conf_file[MAX_BUF_SIZE] = {0};
+
+	if (NULL == pRssiThreshold)
+		return RETURN_ERR;
+
+	band = radio_index_to_band(radioIndex);
+
+	res = snprintf(conf_file, sizeof(conf_file), "/etc/mapd_strng.conf");
+	if (os_snprintf_error(sizeof(conf_file), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
+
+	if (band == band_invalid) {
+		return RETURN_ERR;
+	} else if (band == band_2_4) {
+		res = _syscmd_secure(buf, sizeof(buf), "cat %s 2> /dev/null | grep \"^RSSISteeringEdge_UG=\" | cut -d \"=\" -f 2 | head -n1 | tr -d \"\\n\"", conf_file);
+		if(res) {
+			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			return RETURN_ERR;
+		}
+
+	} else if (band == band_5) {
+		res = _syscmd_secure(buf, sizeof(buf), "cat %s 2> /dev/null | grep \"^RSSISteeringEdge_DG=\" | cut -d \"=\" -f 2 | head -n1 | tr -d \"\\n\"", conf_file);
+		if(res) {
+			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			return RETURN_ERR;
+		}
+	} else if (band == band_6) {
+		res = _syscmd_secure(buf, sizeof(buf), "cat %s 2> /dev/null | grep \"^RSSISteeringEdge_6G_DG=\" | cut -d \"=\" -f 2 | head -n1 | tr -d \"\\n\"", conf_file);
+		if(res) {
+			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			return RETURN_ERR;
+		}
+	}
+
+	*pRssiThreshold = atoi(buf);
+
+	return RETURN_OK;
 }
 
 INT wifi_setBandSteeringRSSIThreshold (INT radioIndex, INT rssiThreshold)
 {
-	return RETURN_ERR;
+	wifi_band band = band_invalid;
+	int res;
+	char buf[256] = {0};
+	char conf_file[MAX_BUF_SIZE] = {0};
+
+	band = radio_index_to_band(radioIndex);
+
+	res = snprintf(conf_file, sizeof(conf_file), "/etc/mapd_strng.conf");
+	if (os_snprintf_error(sizeof(conf_file), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
+
+	if (band == band_invalid) {
+		return RETURN_ERR;
+	} else if (band == band_2_4) {
+		res = _syscmd_secure(buf, sizeof(buf), "mapd_cli /tmp/mapd_ctrl set RSSIThreshold %d", rssiThreshold);
+		if (res) {
+			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			return RETURN_ERR;
+		}
+		memset(buf, 0, sizeof(buf));
+		res = _syscmd_secure(buf, sizeof(buf), "sed -i \"s/^RSSISteeringEdge_UG=.*/RSSISteeringEdge_UG=%d/\" %s", rssiThreshold, conf_file);
+		if(res) {
+			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			return RETURN_ERR;
+		}
+		return RETURN_OK;
+	} else if (band == band_5) {
+		res = _syscmd_secure(buf, sizeof(buf), "mapd_cli /tmp/mapd_ctrl set RSSIThreshold5G %d", rssiThreshold);
+		if (res) {
+			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			return RETURN_ERR;
+		}
+		memset(buf, 0, sizeof(buf));
+		res = _syscmd_secure(buf, sizeof(buf), "sed -i \"s/^RSSISteeringEdge_DG=.*/RSSISteeringEdge_DG=%d/\" %s", rssiThreshold, conf_file);
+		if(res) {
+			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			return RETURN_ERR;
+		}
+		return RETURN_OK;
+	} else if (band == band_6) {
+		res = _syscmd_secure(buf, sizeof(buf), "mapd_cli /tmp/mapd_ctrl set RSSIThreshold6G %d", rssiThreshold);
+		if (res) {
+			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			return RETURN_ERR;
+		}
+		memset(buf, 0, sizeof(buf));
+		res = _syscmd_secure(buf, sizeof(buf), "sed -i \"s/^RSSISteeringEdge_6G_DG=.*/RSSISteeringEdge_6G_DG=%d/\" %s", rssiThreshold, conf_file);
+		if(res) {
+			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			return RETURN_ERR;
+		}
+		memset(buf, 0, sizeof(buf));
+		res = _syscmd_secure(buf, sizeof(buf), "sed -i \"s/^RSSISteeringEdge_6G_UG=.*/RSSISteeringEdge_6G_UG=%d/\" %s", rssiThreshold, conf_file);
+		if(res) {
+			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			return RETURN_ERR;
+		}
+	}
+
+	return RETURN_OK;
 }
 
 
@@ -14348,13 +14712,42 @@ INT wifi_setBandSteeringIdleInactiveTime(INT radioIndex, INT prThreshold)
 //pSteeringReason[256]
 INT wifi_getBandSteeringLog(INT record_index, ULONG *pSteeringTime, CHAR *pClientMAC, INT *pSourceSSIDIndex, INT *pDestSSIDIndex, INT *pSteeringReason)
 {
-	//if no steering or redord_index is out of boundary, return -1. pSteeringTime returns the UTC time in seconds. pClientMAC is pre allocated as 64bytes. pSteeringReason returns the predefined steering trigger reason
-	long int tim_tmp = time(NULL);
-	if (tim_tmp < 0)
+	char buffer[256];
+	INT currentLine = 0;
+	INT result = -1;
+	const char *filePath = "/etc/steer_db.txt";
+	FILE *file = fopen(filePath, "r");
+
+	if (!pSteeringTime || !pClientMAC || !pSourceSSIDIndex || !pDestSSIDIndex || !pSteeringReason) {
+		wifi_debug(DEBUG_ERROR, "Received variables are NULL\n");
 		return RETURN_ERR;
-	*pSteeringTime = tim_tmp;
-	*pSteeringReason = 0; //TODO: need to assign correct steering reason (INT numeric, i suppose)
-	return RETURN_OK;
+	}
+
+	if (!file) {
+		wifi_debug(DEBUG_ERROR, "Error opening the file\n");
+		return RETURN_ERR;
+	}
+
+	while (fgets(buffer, sizeof(buffer), file)) {
+		currentLine++;
+
+		if (currentLine == record_index) {
+			if (sscanf(buffer, "%lu %17s %d %d %d", pSteeringTime, pClientMAC, pSourceSSIDIndex, pDestSSIDIndex, pSteeringReason) == 5) {
+				result = RETURN_OK;
+			} else {
+				wifi_debug(DEBUG_ERROR, "Error parsing the record.\n");
+				result = RETURN_ERR;
+			}
+			break;
+		}
+	}
+
+	if (fclose(file) != 0) {
+		wifi_debug(DEBUG_ERROR, "fclose fail\n");
+		return RETURN_ERR;
+	}
+
+	return result;
 }
 
 INT wifi_ifConfigDown(INT apIndex)
