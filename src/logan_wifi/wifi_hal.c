@@ -21122,7 +21122,7 @@ static int wifi_get_bridge_name(char *vap_name, char *bridge_name, unsigned int 
 	int ret = RETURN_ERR;
 	char brname[64] = {0}, brifnames[64] = {0};
 	char brname_str[64] = {0}, brifnames_str[64] = {0};
-	int res, len;
+	int res;
 
 	for (int i = 0; i <= MAX_NUM_VAP_PER_RADIO; i++) {
 		memset(brname_str, 0, sizeof(brname_str));
@@ -21145,30 +21145,12 @@ static int wifi_get_bridge_name(char *vap_name, char *bridge_name, unsigned int 
 		}
 
 		// read bridge name
-		res = _syscmd_secure(brname_str, sizeof(brname_str),
-			"datconf -f %s get %s", WIFI_BRLAN_CONFIG, brname);
-
-		if (res) {
+		if(get_value(WIFI_BRLAN_CONFIG, brname, brname_str, sizeof(brname_str)) < 0)
 			continue;
-		} else {
-			len = strlen(brname_str);
-			if ((len > 0) && (brname_str[len - 1] == '\n')) {
-				brname_str[len - 1] = '\0';
-			}
-		}
 
 		// read bridge ifnames
-		res = _syscmd_secure(brifnames_str, sizeof(brifnames_str),
-			"datconf -f %s get %s", WIFI_BRLAN_CONFIG, brifnames);
-
-		if (res) {
+		if(get_value(WIFI_BRLAN_CONFIG, brifnames, brifnames_str, sizeof(brifnames_str)) < 0)
 			continue;
-		} else {
-			len = strlen(brifnames_str);
-			if ((len > 0) && (brifnames_str[len - 1] == '\n')) {
-				brifnames_str[len - 1] = '\0';
-			}
-		}
 
 		if (strlen(brifnames_str) && strstr(brifnames_str, vap_name)){
 			if(strlen(brname_str)) {
