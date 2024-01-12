@@ -3847,7 +3847,7 @@ INT wifi_getSSIDName(INT apIndex, CHAR *output)
         sprintf(config_file,"%s%d.conf",CONFIG_PREFIX,apIndex);
         wifi_hostapdRead(config_file,"ssid",output,32);
     } else
-        snprintf(output, MAX_BUF_SIZE, "%s", vap_info[apIndex].ssid);
+        snprintf(output, 32, "%s", vap_info[apIndex].ssid);
 
     wifi_dbg_printf("\n[%s]: SSID Name is : %s",__func__,output);
     return RETURN_OK;
@@ -5322,7 +5322,7 @@ INT wifi_getApBeaconType(INT apIndex, CHAR *output_string)
     if (!syn_flag)
         wifi_hostapdRead(config_file, "wpa", buf, sizeof(buf));
     else
-        snprintf(buf, MAX_BUF_SIZE, "%s", vap_info[apIndex].wpa);
+        snprintf(buf, sizeof(buf), "%s", vap_info[apIndex].wpa);
     if((strcmp(buf,"3")==0))
         snprintf(output_string, 32, "WPAand11i");
     else if((strcmp(buf,"2")==0))
@@ -5445,7 +5445,7 @@ INT wifi_getApWpaEncryptionMode(INT apIndex, CHAR *output_string)
     if (!syn_flag)
         wifi_hostapdRead(config_file,"wpa",buf,sizeof(buf));
     else
-        snprintf(buf, MAX_BUF_SIZE, "%s", vap_info[apIndex].wpa);
+        snprintf(buf, sizeof(buf), "%s", vap_info[apIndex].wpa);
 
     if(strcmp(buf,"0")==0)
     {
@@ -5641,7 +5641,7 @@ INT wifi_getApBasicAuthenticationMode(INT apIndex, CHAR *authMode)
         if (!syn_flag)
             wifi_hostapdRead(config_file, "wpa_key_mgmt", authMode, 32);
         else
-            snprintf(authMode, MAX_BUF_SIZE, "%s", vap_info[apIndex].wpa_key_mgmt);
+            snprintf(authMode, 32, "%s", vap_info[apIndex].wpa_key_mgmt);
         wifi_dbg_printf("\n[%s]: AuthMode Name is : %s",__func__,authMode);
         if(strcmp(authMode,"WPA-PSK") == 0)
             strcpy(authMode,"SharedAuthentication");
@@ -5768,7 +5768,7 @@ INT getAddressControlMode(INT apIndex, INT *mode)
     if (!syn_flag)
         wifi_hostapdRead(config_file, "macaddr_acl", buf, sizeof(buf));
     else
-        snprintf(buf, MAX_BUF_SIZE, "%s", vap_info[apIndex].macaddr_acl);
+        snprintf(buf, sizeof(buf), "%s", vap_info[apIndex].macaddr_acl);
 
     *mode = -1;
     // 0 use deny file, 1 use accept file
@@ -6337,7 +6337,7 @@ INT wifi_getApSsidAdvertisementEnable(INT apIndex, BOOL *output)
     if (!syn_flag)
         wifi_hostapdRead(config_file, "ignore_broadcast_ssid", buf, sizeof(buf));
     else
-        snprintf(buf, MAX_BUF_SIZE, "%s",vap_info[apIndex].ignore_broadcast_ssid);
+        snprintf(buf, sizeof(buf), "%s",vap_info[apIndex].ignore_broadcast_ssid);
     // default is enable
     if (strlen(buf) == 0 || strncmp("0", buf, 1) == 0)
         *output = TRUE;
@@ -6557,7 +6557,7 @@ INT wifi_getApMaxAssociatedDevices(INT apIndex, UINT *output_uint)
     if (!syn_flag)
         wifi_hostapdRead(config_file, "max_num_sta", output, sizeof(output));
     else
-        snprintf(output, MAX_BUF_SIZE, "%s", vap_info[apIndex].max_sta);
+        snprintf(output, sizeof(output), "%s", vap_info[apIndex].max_sta);
     if (strlen(output) == 0) *output_uint = MAX_ASSOCIATED_STA_NUM;
     else {
         int device_num = atoi(output);
@@ -6679,13 +6679,13 @@ INT wifi_getApSecurityModeEnabled(INT apIndex, CHAR *output)
     if (!syn_flag)
         wifi_hostapdRead(config_file, "wpa", wpa, sizeof(wpa));
     else
-        snprintf(wpa, MAX_BUF_SIZE, "%s", vap_info[apIndex].wpa);
+        snprintf(wpa, sizeof(wpa), "%s", vap_info[apIndex].wpa);
 
     strcpy(output, "None");//Copying "None" to output string for default case
     if (!syn_flag)
         wifi_hostapdRead(config_file, "wpa_key_mgmt", key_mgmt, sizeof(key_mgmt));
     else
-        snprintf(key_mgmt, MAX_BUF_SIZE, "%s", vap_info[apIndex].wpa_key_mgmt);
+        snprintf(key_mgmt, sizeof(key_mgmt), "%s", vap_info[apIndex].wpa_key_mgmt);
     if (strstr(key_mgmt, "WPA-PSK") && strstr(key_mgmt, "SAE") == NULL) {
         if (!strcmp(wpa, "1"))
             snprintf(output, 32, "WPA-Personal");
@@ -6833,7 +6833,7 @@ INT wifi_getApSecurityPreSharedKey(INT apIndex, CHAR *output_string)
     if (!syn_flag)
         wifi_hostapdRead(config_file,"wpa",buf,sizeof(buf));
     else
-        snprintf(buf, MAX_BUF_SIZE, "%s", vap_info[apIndex].wpa);
+        snprintf(buf, sizeof(buf), "%s", vap_info[apIndex].wpa);
     if(strcmp(buf,"0")==0)
     {
         printf("wpa_mode is %s ......... \n",buf);
@@ -6892,7 +6892,7 @@ INT wifi_getApSecurityKeyPassphrase(INT apIndex, CHAR *output_string)
     if (!syn_flag)
         wifi_hostapdRead(config_file,"wpa",buf,sizeof(buf));
     else
-        snprintf(buf, MAX_BUF_SIZE, "%s", vap_info[apIndex].wpa);
+        snprintf(buf, sizeof(buf), "%s", vap_info[apIndex].wpa);
     if(strcmp(buf,"0")==0)
     {
         printf("wpa_mode is %s ......... \n",buf);
@@ -6902,7 +6902,7 @@ INT wifi_getApSecurityKeyPassphrase(INT apIndex, CHAR *output_string)
     if (!syn_flag)
         wifi_hostapdRead(config_file,"wpa_passphrase",output_string,64);
     else
-        snprintf(output_string, MAX_BUF_SIZE, "%s", vap_info[apIndex].wpa_passphrase);
+        snprintf(output_string, 64, "%s", vap_info[apIndex].wpa_passphrase);
     wifi_dbg_printf("\noutput_string=%s\n",output_string);
 
     return RETURN_OK;
@@ -9531,7 +9531,7 @@ INT wifi_getApMacAddressControlMode(INT apIndex, INT *output_filterMode)
     if (!syn_flag)
         wifi_hostapdRead(config_file, "macaddr_acl", buf, sizeof(buf));
     else
-        snprintf(buf, MAX_BUF_SIZE, "%s", vap_info[apIndex].macaddr_acl);
+        snprintf(buf, sizeof(buf), "%s", vap_info[apIndex].macaddr_acl);
     if(strlen(buf) == 0) {
         *output_filterMode = 0;
     }
@@ -9805,7 +9805,7 @@ INT wifi_getApIsolationEnable(INT apIndex, BOOL *output)
     if (!syn_flag)
         wifi_hostapdRead(config_file, "ap_isolate", output_val, sizeof(output_val));
     else
-        snprintf(output_val, MAX_BUF_SIZE, "%s", vap_info[apIndex].ap_isolate);
+        snprintf(output_val, sizeof(output_val), "%s", vap_info[apIndex].ap_isolate);
     if( strcmp(output_val,"1") == 0 )
         *output = TRUE;
     else
@@ -10503,7 +10503,7 @@ INT wifi_getBSSTransitionActivation(UINT apIndex, BOOL *activate)
     if (!syn_flag)
         wifi_hostapdRead(config_file, "bss_transition", buf, sizeof(buf));
     else
-        snprintf(buf, MAX_BUF_SIZE, "%s", vap_info[apIndex].bss_transition);
+        snprintf(buf, sizeof(buf), "%s", vap_info[apIndex].bss_transition);
     *activate = (strncmp("1",buf,1) == 0);
 
     return RETURN_OK;
