@@ -19484,24 +19484,24 @@ int main(int argc,char **argv)
 
 		/*case 1-create mld[5], transfer ra0 mld[1]->mld[5]*/
 		vap[0].vap_array[0].u.bss_info.mld_info.common_info.mld_enable = 1;
-		vap[0].vap_array[0].u.bss_info.mld_info.common_info.mld_index = 5;	
+		vap[0].vap_array[0].u.bss_info.mld_info.common_info.mld_id = 5;	
 		memcpy(vap[0].vap_array[0].u.bss_info.mld_info.common_info.mld_addr, mld_mac, 6);
 
 		/*case 2-create mld[6], transfer ra1 mld[2]->mld[6]*/
 		vap[0].vap_array[1].u.bss_info.mld_info.common_info.mld_enable = 1;
-		vap[0].vap_array[1].u.bss_info.mld_info.common_info.mld_index = 6;	
+		vap[0].vap_array[1].u.bss_info.mld_info.common_info.mld_id = 6;	
 		memcpy(vap[0].vap_array[1].u.bss_info.mld_info.common_info.mld_addr, mld_mac2, 6);
 		if (wifi_createVAP(0, &vap[0]) != RETURN_OK)
 			printf("wifi_createVAP[0] fail\n");
 
 		/*case 3-rai0 keep in mld[1]*/
 		vap[1].vap_array[0].u.bss_info.mld_info.common_info.mld_enable = 1;
-		vap[1].vap_array[0].u.bss_info.mld_info.common_info.mld_index = 1;	
+		vap[1].vap_array[0].u.bss_info.mld_info.common_info.mld_id = 1;	
 		memcpy(vap[1].vap_array[0].u.bss_info.mld_info.common_info.mld_addr, mld_mac, 6);
 
 		/*case 4-rai1 leave mld[2]*/
 		vap[1].vap_array[1].u.bss_info.mld_info.common_info.mld_enable = 0;
-		vap[1].vap_array[1].u.bss_info.mld_info.common_info.mld_index = 2;	
+		vap[1].vap_array[1].u.bss_info.mld_info.common_info.mld_id = 2;	
 		memcpy(vap[1].vap_array[0].u.bss_info.mld_info.common_info.mld_addr, mld_mac2, 6);
 
 		if (wifi_createVAP(1, &vap[1]) != RETURN_OK)
@@ -19509,7 +19509,7 @@ int main(int argc,char **argv)
 
 		/*case 5-rax1 leave mld[2]->null*/
 		vap[2].vap_array[1].u.bss_info.mld_info.common_info.mld_enable = 0;
-		vap[2].vap_array[1].u.bss_info.mld_info.common_info.mld_index = 2;	
+		vap[2].vap_array[1].u.bss_info.mld_info.common_info.mld_id = 2;	
 		memcpy(vap[1].vap_array[0].u.bss_info.mld_info.common_info.mld_addr, mld_mac2, 6);
 
 		if (wifi_createVAP(2, &vap[2]) != RETURN_OK)
@@ -19517,7 +19517,7 @@ int main(int argc,char **argv)
 
 		/*case 6-rax1 null->join mld[7]*/
 		vap[2].vap_array[1].u.bss_info.mld_info.common_info.mld_enable = 1;
-		vap[2].vap_array[1].u.bss_info.mld_info.common_info.mld_index = 7;	
+		vap[2].vap_array[1].u.bss_info.mld_info.common_info.mld_id = 7;	
 		memcpy(vap[1].vap_array[0].u.bss_info.mld_info.common_info.mld_addr, mld_mac2, 6);
 
 		if (wifi_createVAP(2, &vap[2]) != RETURN_OK)
@@ -19525,7 +19525,7 @@ int main(int argc,char **argv)
 
 		/*case 7-ra0 leve mld[5]->null, mld[5] destroy*/
 		vap[0].vap_array[0].u.bss_info.mld_info.common_info.mld_enable = 0;
-		vap[0].vap_array[0].u.bss_info.mld_info.common_info.mld_index = 5;	
+		vap[0].vap_array[0].u.bss_info.mld_info.common_info.mld_id = 5;	
 		memcpy(vap[0].vap_array[0].u.bss_info.mld_info.common_info.mld_addr, mld_mac, 6);
 		if (wifi_createVAP(0, &vap[0]) != RETURN_OK)
 			printf("wifi_createVAP[0] fail\n");
@@ -21188,7 +21188,7 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 	wifi_vap_security_t security = {0};
 	int res = RETURN_OK;
 	wifi_vap_info_t *vap;
-	wifi_mld_info_t *mld_info;
+	wifi_mld_info_ap_t *mld_info;
 	unsigned char mld_index;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
@@ -21348,17 +21348,16 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 
 		mld_info = &(vap->u.bss_info.mld_info);
 		memset(mld_info, 0, sizeof(*mld_info));
-		memcpy(mld_info->local_addr, map->vap_array[i].u.bss_info.bssid, 6);
 
 		mld_index = mld_ap_test_all_mlds(vap->vap_index);
 		if (mld_index) {
 			memcpy(mld_info->common_info.mld_addr, mld_config.mld[mld_index].mld_mac, 6);
 			mld_info->common_info.mld_enable = TRUE;
-			mld_info->common_info.mld_index = mld_index;
+			mld_info->common_info.mld_id = mld_index;
 		}
 		wifi_debug(DEBUG_ERROR,
-				"vap_index[%d], mld_enable=%d, mld_index[%d]\n",
-				vap->vap_index, mld_info->common_info.mld_enable, mld_info->common_info.mld_index);
+				"vap_index[%d], mld_enable=%d, mld_id[%d]\n",
+				vap->vap_index, mld_info->common_info.mld_enable, mld_info->common_info.mld_id);
 	}
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 	return res;
@@ -21790,9 +21789,9 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 				}
 			}
 		} else {
-			if (mld_info->mld_index == 0 || mld_info->mld_index > MAX_ML_MLD_CNT) {
-				wifi_debug(DEBUG_ERROR, "invalid mld index %d, ignore it.\n",
-					(int)mld_info->mld_index);
+			if (mld_info->mld_id == 0 || mld_info->mld_id > MAX_ML_MLD_CNT) {
+				wifi_debug(DEBUG_ERROR, "invalid mld_id %d, ignore it.\n",
+					(int)mld_info->mld_id);
 				continue;
 			}
 
@@ -21802,17 +21801,17 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 				continue;
 			}
 			
-			if (!mld_test(mld_info->mld_index)) {
-				if (wifi_eht_create_ap_mld(mld_info->mld_index, mld_info->mld_addr) != RETURN_OK) {
+			if (!mld_test(mld_info->mld_id)) {
+				if (wifi_eht_create_ap_mld(mld_info->mld_id, mld_info->mld_addr) != RETURN_OK) {
 					wifi_debug(DEBUG_ERROR,
-						"fail to create ap mld(%d)\n", mld_info->mld_index);
+						"fail to create ap mld(%d)\n", mld_info->mld_id);
 					continue;
 				}
 			} else {
-				if(mld_ap_test(&(mld_config.mld[mld_info->mld_index]), vap_info->vap_index)) {
+				if(mld_ap_test(&(mld_config.mld[mld_info->mld_id]), vap_info->vap_index)) {
 					wifi_debug(DEBUG_ERROR,
 						"current vap(%d) is already the affiliated ap of mld(%d)\n",
-						vap_info->vap_index, mld_info->mld_index);
+						vap_info->vap_index, mld_info->mld_id);
 					continue;
 				}
 			}
@@ -21820,7 +21819,7 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 
 			if (mld_index != 0) {
 				/*transfer*/
-				wifi_eht_mld_ap_transfer(mld_index, mld_info->mld_index, vap_info->vap_index);
+				wifi_eht_mld_ap_transfer(mld_index, mld_info->mld_id, vap_info->vap_index);
 
 				if (wifi_eht_get_ap_from_mld(mld_index, ap_index_array, &ap_array_num) != RETURN_OK) {
 					wifi_debug(DEBUG_ERROR,
@@ -21834,7 +21833,7 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 				}
 			} else {
 				/*join*/
-				wifi_eht_add_to_ap_mld(mld_info->mld_index, vap_info->vap_index);
+				wifi_eht_add_to_ap_mld(mld_info->mld_id, vap_info->vap_index);
 			}
 		}
 	}
@@ -22081,7 +22080,11 @@ INT wifi_getHalCapability(wifi_hal_capability_t *cap)
 	}
 
 	cap->BandSteeringSupported = FALSE;
-
+#ifdef WIFI_7992
+	cap->wifi_prop.mu_bands = WIFI_BAND_2_5;
+#else
+	cap->wifi_prop.mu_bands = WIFI_BAND_2_5_6;
+#endif
 	memcpy(&g_hal_cap, cap, sizeof(g_hal_cap));
 
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
