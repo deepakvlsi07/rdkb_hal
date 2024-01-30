@@ -125,6 +125,19 @@ Licensed under the ISC license
    2x Service AP
 
 */
+#ifndef MIN
+#define MIN(a,b) \
+		({ __typeof__ (a) _a = (a); \
+		__typeof__ (b) _b = (b); \
+		_a < _b ? _a : _b; })
+#endif
+
+#ifndef MAX
+#define MAX(a,b) \
+		({ __typeof__ (a) _a = (a); \
+		__typeof__ (b) _b = (b); \
+		_a > _b ? _a : _b; })
+#endif
 
 #define LOGAN_MAX_NUM_VAP_PER_RADIO (MAX_NUM_VAP_PER_RADIO > 16 ? 16 : MAX_NUM_VAP_PER_RADIO)
 #define MAX_APS MAX_NUM_RADIOS * LOGAN_MAX_NUM_VAP_PER_RADIO
@@ -262,6 +275,82 @@ typedef enum {
 	EHT_BW_160,
 	EHT_BW_320,
 } eht_config_bw;
+
+static char *phy_bw_str_txrx_stainfo[] = {"20M", "40M", "80M", "160M", "320M"};
+static char *phy_mode_str[] = {"g", "b", "n", "n", "ac", "ax",
+				"be", "ax", "ax", "ax", "ax", "ax", "NA",
+				"be", "be", "be"};
+
+/* Device.WiFi.SSID.{i}.Stats. */
+typedef struct _wifi_bss_stats {
+	ULONG BytesSent;
+	ULONG BytesReceived;
+	ULONG PacketsSent;
+	ULONG PacketsReceived;
+	UINT ErrorsSent;
+	UINT RetransCount; /* MT7915 Not Support, default: 0 */
+	UINT FailedRetransCount; /* MT7915 Not Support, default: 0 */
+	UINT RetryCount; /* MT7915 Not Support, default: 0 */
+	UINT MultipleRetryCount; /* MT7915 Not Support, default: 0 */
+	UINT ACKFailureCount; /* MT7915 Not Support, default: 0 */
+	UINT AggregatedPacketCount; /* MT7915 Not Support, default: 0 */
+	UINT ErrorsReceived;
+	ULONG UnicastPacketsSent;
+	ULONG UnicastPacketsReceived;
+	UINT DiscardPacketsSent;
+	UINT DiscardPacketsReceived;
+	ULONG MulticastPacketsSent;
+	ULONG MulticastPacketsReceived;
+	ULONG BroadcastPacketsSent;
+	ULONG BroadcastPacketsReceived;
+	UINT UnknownProtoPacketsReceived; /* MT7915 Not Support, default: 0 */
+	ULONG DiscardPacketsSentBufOverflow; /* MT7915 Not Support, default: 0 */
+	ULONG DiscardPacketsSentNoAssoc; /* MT7915 Not Support, default: 0 */
+	ULONG FragSent; /* MT7915 Not Support, default: 0 */
+	ULONG SentNoAck; /* MT7915 Not Support, default: 0 */
+	ULONG DupReceived; /* MT7915 Not Support, default: 0 */
+	ULONG TooLongReceived; /* MT7915 Not Support, default: 0 */
+	ULONG TooShortReceived; /* MT7915 Not Support, default: 0 */
+	ULONG AckUcastReceived; /* MT7915 Not Support, default: 0 */
+}wifi_bss_stats_t;
+/* Device.WiFi.Radio.{i} */
+typedef struct _wifi_radio_stats {
+	ULONG BytesSent;
+	ULONG BytesReceived;
+	ULONG PacketsSent;
+	ULONG PacketsReceived;
+	ULONG ErrorsSent;
+	ULONG ErrorsReceived;
+	ULONG DiscardPacketsSent;
+	ULONG DiscardPacketsReceived;
+	UINT PLCPErrorCount; /* MT7915 Not Support, default: 0 */
+	UINT FCSErrorCount; /* MT7915 Not Support, default: 0 */
+	UINT InvalidMACCount; /* MT7915 Not Support, default: 0 */
+	UINT PacketsOtherReceived; /* MT7915 Not Support, default: 0 */
+	ULONG CtsReceived; /* MT7915 Not Support, default: 0 */
+	ULONG NoCtsReceived; /* MT7915 Not Support, default: 0 */
+	ULONG FrameHeaderError; /* MT7915 Not Support, default: 0 */
+	ULONG GoodPLCPReceived; /* MT7915 Not Support, default: 0 */
+	ULONG DPacketOtherMACReceived; /* MT7915 Not Support, default: 0 */
+	ULONG MPacketOtherMACReceived; /* MT7915 Not Support, default: 0 */
+	ULONG CPacketOtherMACReceived; /* MT7915 Not Support, default: 0 */
+	ULONG CtsOtherMACReceived; /* MT7915 Not Support, default: 0 */
+	ULONG RtsOtherMACReceived; /* MT7915 Not Support, default: 0 */
+	UINT TotalChannelChangeCount;
+	UINT ManualChannelChangeCount;
+	UINT AutoStartupChannelChangeCount;
+	UINT AutoUserChannelChangeCount;
+	UINT AutoRefreshChannelChangeCount;
+	UINT AutoDynamicChannelChangeCount;
+	UINT AutoDFSChannelChangeCount;
+	ULONG UnicastPacketsSent;
+	ULONG UnicastPacketsReceived;
+	ULONG MulticastPacketsSent;
+	ULONG MulticastPacketsReceived;
+	ULONG BroadcastPacketsSent;
+	ULONG BroadcastPacketsReceived;
+	INT Noise;
+}wifi_radio_stats_t;
 
 #ifdef WIFI_HAL_VERSION_3
 
@@ -7894,13 +7983,104 @@ INT GetIfacestatus(CHAR *interface_name, CHAR *status)
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n", __func__, __LINE__);
 	return RETURN_OK;
 }
+int mtk_get_radio_callback(struct nl_msg *msg, void *cb)
+{
+	struct nlattr *tb[NL80211_ATTR_MAX + 1];
+	struct nlattr *vndr_tb[MTK_NL80211_VENDOR_ATTR_RADIO_STATS_ATTR_MAX + 1];
+	struct genlmsghdr *gnlh;
+	int err = 0;
+	unsigned short len = 0;
+	wifi_radio_stats_t *stats;
+	struct mtk_nl80211_cb_data *cb_data = cb;
+
+	if (!msg || !cb_data) {
+		wifi_debug(DEBUG_ERROR, "msg(%p) or cb_data(%p) is null,error.\n", msg, cb_data);
+		return NL_SKIP;
+	}
+
+	gnlh = nlmsg_data(nlmsg_hdr(msg));
+	err = nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+			  genlmsg_attrlen(gnlh, 0), NULL);
+	if (err < 0) {
+		wifi_debug(DEBUG_ERROR, "nla_parse acl list nl80211 msg fails,error.\n");
+		return NL_SKIP;
+	}
+	if (tb[NL80211_ATTR_VENDOR_DATA]) {
+		err = nla_parse_nested(vndr_tb, MTK_NL80211_VENDOR_ATTR_RADIO_STATS_ATTR_MAX ,
+			tb[NL80211_ATTR_VENDOR_DATA], NULL);
+		if (err < 0)
+			return NL_SKIP;
+		if (vndr_tb[MTK_NL80211_VENDOR_ATTR_RADIO_STATS]) {
+			len = nla_len(vndr_tb[MTK_NL80211_VENDOR_ATTR_RADIO_STATS]);
+			stats = (wifi_radio_stats_t*)nla_data(vndr_tb[MTK_NL80211_VENDOR_ATTR_RADIO_STATS]);
+			if (len != sizeof(*stats)){
+				wifi_debug(DEBUG_ERROR,"result len(%u) is invalid, expected len(%lu)!!!\n", len, sizeof(*stats));
+				return NL_SKIP;
+			}
+			memcpy(cb_data->out_buf, stats, len);
+		} else
+			wifi_debug(DEBUG_ERROR, "no MTK_NL80211_VENDOR_ATTR_RADIO_STATS attr\n");
+	} else
+		wifi_debug(DEBUG_ERROR, "no any station result from driver\n");
+	return NL_OK;
+}
+
+INT mtk_get_radio_stats(INT apIndex, wifi_radio_stats_t *Stats)
+{
+	char inf_name[IF_NAME_SIZE] = {0};
+	unsigned int if_idx = 0;
+	int ret = -1;
+	struct unl unl_ins;
+	struct nl_msg *msg	= NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param nl_param;
+	struct mtk_nl80211_cb_data cb_data;
+
+	if (wifi_GetInterfaceName(apIndex, inf_name) != RETURN_OK)
+			return RETURN_ERR;
+
+	if_idx = if_nametoindex(inf_name);
+	if (!if_idx) {
+		wifi_debug(DEBUG_ERROR,"can't finde ifname(%s) index,ERROR\n", inf_name);
+		return RETURN_ERR;
+	}
+	/*init mtk nl80211 vendor cmd*/
+	nl_param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_GET_RADIO_STATS;
+	nl_param.if_type = NL80211_ATTR_IFINDEX;
+	nl_param.if_idx = if_idx;
+
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &nl_param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+	/*add mtk vendor cmd data*/
+	if (nla_put_flag(msg, MTK_NL80211_VENDOR_ATTR_RADIO_STATS)) {
+		wifi_debug(DEBUG_ERROR, "Nla put ACL_SHOW_ALL attribute error\n");
+		nlmsg_free(msg);
+		mtk_nl80211_deint(&unl_ins);
+		return RETURN_ERR;
+	}
+	cb_data.out_buf = (void*)Stats;
+	cb_data.out_len =sizeof(wifi_bss_stats_t);
+
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, mtk_get_radio_callback, &cb_data);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		mtk_nl80211_deint(&unl_ins);
+		return RETURN_ERR;
+	}
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+
+	return RETURN_OK;
+}
 
 //Get detail radio traffic static info
 INT wifi_getRadioTrafficStats2(INT radioIndex, wifi_radioTrafficStats2_t *output_struct) //Tr181
 {
 	CHAR interface_name[64] = {0};
-	BOOL iface_status = FALSE;
-	wifi_radioTrafficStats2_t radioTrafficStats = {0};
+	wifi_radio_stats_t radioTrafficStats = {0};
 	int main_vap_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
@@ -7915,21 +8095,16 @@ INT wifi_getRadioTrafficStats2(INT radioIndex, wifi_radioTrafficStats2_t *output
 	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 
-	wifi_getApEnable(main_vap_idx, &iface_status);
+	mtk_get_radio_stats(main_vap_idx, &radioTrafficStats);
 
-	if (iface_status == TRUE)
-		wifi_halGetIfStats(interface_name, &radioTrafficStats);
-	else
-		wifi_halGetIfStatsNull(&radioTrafficStats);	 // just set some transmission statistic value to 0
-
-	output_struct->radio_BytesSent = radioTrafficStats.radio_BytesSent;
-	output_struct->radio_BytesReceived = radioTrafficStats.radio_BytesReceived;
-	output_struct->radio_PacketsSent = radioTrafficStats.radio_PacketsSent;
-	output_struct->radio_PacketsReceived = radioTrafficStats.radio_PacketsReceived;
-	output_struct->radio_ErrorsSent = radioTrafficStats.radio_ErrorsSent;
-	output_struct->radio_ErrorsReceived = radioTrafficStats.radio_ErrorsReceived;
-	output_struct->radio_DiscardPacketsSent = radioTrafficStats.radio_DiscardPacketsSent;
-	output_struct->radio_DiscardPacketsReceived = radioTrafficStats.radio_DiscardPacketsReceived;
+	output_struct->radio_BytesSent = radioTrafficStats.BytesSent;
+	output_struct->radio_BytesReceived = radioTrafficStats.BytesReceived;
+	output_struct->radio_PacketsSent = radioTrafficStats.PacketsSent;
+	output_struct->radio_PacketsReceived = radioTrafficStats.PacketsReceived;
+	output_struct->radio_ErrorsSent = radioTrafficStats.ErrorsSent;
+	output_struct->radio_ErrorsReceived = radioTrafficStats.ErrorsReceived;
+	output_struct->radio_DiscardPacketsSent = radioTrafficStats.DiscardPacketsSent;
+	output_struct->radio_DiscardPacketsReceived = radioTrafficStats.DiscardPacketsReceived;
 
 	output_struct->radio_PLCPErrorCount = 0;				  //The number of packets that were received with a detected Physical Layer Convergence Protocol (PLCP) header error.
 	output_struct->radio_FCSErrorCount = 0;					  //The number of packets that were received with a detected FCS error. This parameter is based on dot11FCSErrorCount from [Annex C/802.11-2012].
@@ -8686,6 +8861,98 @@ err:
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 	return RETURN_ERR;
 }
+int mtk_get_bss_callback(struct nl_msg *msg, void *cb)
+{
+	struct nlattr *tb[NL80211_ATTR_MAX + 1];
+	struct nlattr *vndr_tb[MTK_NL80211_VENDOR_ATTR_BSS_STATS_ATTR_MAX + 1];
+	struct genlmsghdr *gnlh;
+	int err = 0;
+	unsigned short len = 0;
+	wifi_bss_stats_t *stats;
+	struct mtk_nl80211_cb_data *cb_data = cb;
+
+	if (!msg || !cb_data) {
+		wifi_debug(DEBUG_ERROR, "msg(%p) or cb_data(%p) is null,error.\n", msg, cb_data);
+		return NL_SKIP;
+	}
+
+	gnlh = nlmsg_data(nlmsg_hdr(msg));
+	err = nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+			  genlmsg_attrlen(gnlh, 0), NULL);
+	if (err < 0) {
+		wifi_debug(DEBUG_ERROR, "nla_parse acl list nl80211 msg fails,error.\n");
+		return NL_SKIP;
+	}
+	if (tb[NL80211_ATTR_VENDOR_DATA]) {
+		err = nla_parse_nested(vndr_tb, MTK_NL80211_VENDOR_ATTR_BSS_STATS_ATTR_MAX ,
+			tb[NL80211_ATTR_VENDOR_DATA], NULL);
+		if (err < 0)
+			return NL_SKIP;
+		if (vndr_tb[MTK_NL80211_VENDOR_ATTR_BSS_STATS]) {
+			len = nla_len(vndr_tb[MTK_NL80211_VENDOR_ATTR_BSS_STATS]);
+			stats = (wifi_bss_stats_t*)nla_data(vndr_tb[MTK_NL80211_VENDOR_ATTR_BSS_STATS]);
+			if (len != sizeof(*stats)){
+				wifi_debug(DEBUG_ERROR,"result len(%u) is invalid, expected len(%lu)!!!\n", len, sizeof(*stats));
+				return NL_SKIP;
+			}
+			memcpy(cb_data->out_buf, stats, len);
+		} else
+			wifi_debug(DEBUG_ERROR, "no MTK_NL80211_VENDOR_ATTR_BSS_STATS attr\n");
+	} else
+		wifi_debug(DEBUG_ERROR, "no any station result from driver\n");
+	return NL_OK;
+}
+
+INT mtk_get_ssid_stats(INT apIndex, wifi_bss_stats_t *Stats)
+{
+	char inf_name[IF_NAME_SIZE] = {0};
+	unsigned int if_idx = 0;
+	int ret = -1;
+	struct unl unl_ins;
+	struct nl_msg *msg	= NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param nl_param;
+	struct mtk_nl80211_cb_data cb_data;
+
+	if (wifi_GetInterfaceName(apIndex, inf_name) != RETURN_OK)
+			return RETURN_ERR;
+
+	if_idx = if_nametoindex(inf_name);
+	if (!if_idx) {
+		wifi_debug(DEBUG_ERROR,"can't finde ifname(%s) index,ERROR\n", inf_name);
+		return RETURN_ERR;
+	}
+	/*init mtk nl80211 vendor cmd*/
+	nl_param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_GET_BSS_STATS;
+	nl_param.if_type = NL80211_ATTR_IFINDEX;
+	nl_param.if_idx = if_idx;
+
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &nl_param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+	/*add mtk vendor cmd data*/
+	if (nla_put_flag(msg, MTK_NL80211_VENDOR_ATTR_BSS_STATS)) {
+		wifi_debug(DEBUG_ERROR, "Nla put ACL_SHOW_ALL attribute error\n");
+		nlmsg_free(msg);
+		mtk_nl80211_deint(&unl_ins);
+		return RETURN_ERR;
+	}
+	cb_data.out_buf = (void*)Stats;
+	cb_data.out_len =sizeof(wifi_bss_stats_t);
+
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, mtk_get_bss_callback, &cb_data);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		mtk_nl80211_deint(&unl_ins);
+		return RETURN_ERR;
+	}
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+
+	return RETURN_OK;
+}
 
 //>> Deprecated: used for old RDKB code.
 INT wifi_getRadioWifiTrafficStats(INT radioIndex, wifi_radioTrafficStats_t *output_struct)
@@ -8706,10 +8973,8 @@ INT wifi_getRadioWifiTrafficStats(INT radioIndex, wifi_radioTrafficStats_t *outp
 INT wifi_getBasicTrafficStats(INT apIndex, wifi_basicTrafficStats_t *output_struct)
 {
 	char interface_name[16] = {0};
-
-	char buf[1280] = {0};
-	char *pos = NULL;
 	int res;
+	wifi_bss_stats_t stat;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	if (NULL == output_struct)
@@ -8719,36 +8984,16 @@ INT wifi_getBasicTrafficStats(INT apIndex, wifi_basicTrafficStats_t *output_stru
 		return RETURN_ERR;
 
 	memset(output_struct, 0, sizeof(wifi_basicTrafficStats_t));
-
-	res = _syscmd_secure(buf, sizeof(buf), "ifconfig %s", interface_name);
+	res = mtk_get_ssid_stats(apIndex, &stat);
 	if (res) {
-		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+		wifi_debug(DEBUG_ERROR, "cmd_fail\n");
 	}
 
-	pos = buf;
-	if ((pos = strstr(pos, "RX packets:")) == NULL)
-		return RETURN_ERR;
-	output_struct->wifi_PacketsReceived = atoi(pos+strlen("RX packets:"));
+	output_struct->wifi_PacketsReceived = stat.PacketsSent;
+	output_struct->wifi_PacketsSent = stat.PacketsSent;
+	output_struct->wifi_BytesReceived = stat.BytesReceived;
+	output_struct->wifi_BytesSent = stat.BytesSent;
 
-	if ((pos = strstr(pos, "TX packets:")) == NULL)
-		return RETURN_ERR;
-	output_struct->wifi_PacketsSent = atoi(pos+strlen("TX packets:"));
-
-	if ((pos = strstr(pos, "RX bytes:")) == NULL)
-		return RETURN_ERR;
-	output_struct->wifi_BytesReceived = atoi(pos+strlen("RX bytes:"));
-
-	if ((pos = strstr(pos, "TX bytes:")) == NULL)
-		return RETURN_ERR;
-	output_struct->wifi_BytesSent = atoi(pos+strlen("TX bytes:"));
-
-	res = _syscmd_secure(buf, sizeof(buf), "hostapd_cli -i %s list_sta | wc -l | tr -d '\n'", interface_name);
-	if (res) {
-		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-	}
-
-	if (sscanf(buf, "%lu", &output_struct->wifi_Associations) == EOF)
-		wifi_debug(DEBUG_ERROR, "Unexpected sscanf fail\n");
 
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 	return RETURN_OK;
@@ -8758,10 +9003,8 @@ INT wifi_getWifiTrafficStats(INT apIndex, wifi_trafficStats_t *output_struct)
 {
 	char interface_name[IF_NAME_SIZE] = {0};
 	char interface_status[MAX_BUF_SIZE] = {0};
-	char Value[MAX_BUF_SIZE] = {0};
-	FILE *fp = NULL;
 	int res;
-	unsigned long tmp;
+	wifi_bss_stats_t stat;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	if (NULL == output_struct)
@@ -8776,70 +9019,22 @@ INT wifi_getWifiTrafficStats(INT apIndex, wifi_trafficStats_t *output_struct)
 	if(0 != strncmp(interface_status, "1", 1))
 		return RETURN_ERR;
 
-	res = v_secure_system("ifconfig %s > /tmp/SSID_Stats.txt", interface_name);
+	res = mtk_get_ssid_stats(apIndex, &stat);
 	if (res) {
-		wifi_debug(DEBUG_ERROR, "v_secure_system fail\n");
-		return RETURN_ERR;
+		wifi_debug(DEBUG_ERROR, "cmd_fail\n");
 	}
 
-	fp = fopen("/tmp/SSID_Stats.txt", "r");
-	if(fp == NULL)
-	{
-		printf("/tmp/SSID_Stats.txt not exists \n");
-		return RETURN_ERR;
-	}
-	if (fclose(fp) == EOF) {
-		wifi_debug(DEBUG_ERROR, "Unexpected fclose fail\n");
-		return RETURN_ERR;
-	}
-
-	res = _syscmd_secure(Value, sizeof(Value), "cat /tmp/SSID_Stats.txt | grep 'RX packets' | tr -s ' ' | cut -d ':' -f3 | cut -d ' ' -f1");
-	if(res) {
-		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-	}
-
-	if (hal_strtoul(Value, 10, &tmp) < 0) {
-		wifi_debug(DEBUG_ERROR, "strtol fail\n");
-	}
-	output_struct->wifi_ErrorsReceived = tmp;
-
-	res = _syscmd_secure(Value, sizeof(Value), "cat /tmp/SSID_Stats.txt | grep 'TX packets' | tr -s ' ' | cut -d ':' -f3 | cut -d ' ' -f1");
-	if(res) {
-		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-	}
-
-	if (hal_strtoul(Value, 10, &tmp) < 0) {
-		wifi_debug(DEBUG_ERROR, "strtol fail\n");
-	}
-	output_struct->wifi_ErrorsSent = tmp;
-
-	res = _syscmd_secure(Value, sizeof(Value), "cat /tmp/SSID_Stats.txt | grep 'RX packets' | tr -s ' ' | cut -d ':' -f4 | cut -d ' ' -f1");
-	if(res) {
-		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-	}
-
-	if (hal_strtoul(Value, 10, &tmp) < 0) {
-		wifi_debug(DEBUG_ERROR, "strtol fail\n");
-	}
-	output_struct->wifi_DiscardedPacketsReceived = tmp;
-
-	res = _syscmd_secure(Value, sizeof(Value),"cat /tmp/SSID_Stats.txt | grep 'TX packets' | tr -s ' ' | cut -d ':' -f4 | cut -d ' ' -f1");
-	if(res) {
-		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-	}
-
-	if (hal_strtoul(Value, 10, &tmp) < 0) {
-		wifi_debug(DEBUG_ERROR, "strtol fail\n");
-	}
-	output_struct->wifi_DiscardedPacketsSent = tmp;
-
-	output_struct->wifi_UnicastPacketsSent = 0;
-	output_struct->wifi_UnicastPacketsReceived = 0;
-	output_struct->wifi_MulticastPacketsSent = 0;
-	output_struct->wifi_MulticastPacketsReceived = 0;
-	output_struct->wifi_BroadcastPacketsSent = 0;
-	output_struct->wifi_BroadcastPacketsRecevied = 0;
-	output_struct->wifi_UnknownPacketsReceived = 0;
+	output_struct->wifi_ErrorsReceived = stat.ErrorsReceived;
+	output_struct->wifi_ErrorsSent = stat.ErrorsSent;
+	output_struct->wifi_DiscardedPacketsReceived = stat.DiscardPacketsReceived;
+	output_struct->wifi_DiscardedPacketsSent = stat.DiscardPacketsSent;
+	output_struct->wifi_UnicastPacketsSent = stat.UnicastPacketsSent;
+	output_struct->wifi_UnicastPacketsReceived = stat.UnicastPacketsReceived;
+	output_struct->wifi_MulticastPacketsSent = stat.MulticastPacketsSent;
+	output_struct->wifi_MulticastPacketsReceived = stat.MulticastPacketsReceived;
+	output_struct->wifi_BroadcastPacketsSent = stat.BroadcastPacketsSent;
+	output_struct->wifi_BroadcastPacketsRecevied = stat.BroadcastPacketsReceived;
+	output_struct->wifi_UnknownPacketsReceived = stat.UnknownProtoPacketsReceived;
 
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 	return RETURN_OK;
@@ -13981,7 +14176,9 @@ int mtk_get_station_callback(struct nl_msg *msg, void *cb)
 INT station_info_2_dev3(struct station_information *sta, wifi_associated_dev3_t *dev3)
 {
 	int i = 0, n = 0;
-
+	UCHAR len = 0;
+	UCHAR phymode;
+	UCHAR bw;
 	dev3->cli_LastDataDownlinkRate = sta->rx_rate;
 	dev3->cli_LastDataUplinkRate = sta->tx_rate;
 	dev3->cli_SNR = sta->snr[0];
@@ -13993,6 +14190,17 @@ INT station_info_2_dev3(struct station_information *sta, wifi_associated_dev3_t 
 		dev3->cli_RSSI += sta->rssi[i];
 		n++;
 	}
+	if (sta->cap_phymode < ARRAY_SIZE(phy_mode_str)) {
+		phymode = sta->cap_phymode;
+		len = sizeof(phy_mode_str[sta->cap_phymode]);
+		memcpy(dev3->cli_OperatingStandard, phy_mode_str[phymode], len);
+	}
+	if (MAX(sta->tx_bw, sta->rx_bw) < ARRAY_SIZE(phy_bw_str_txrx_stainfo)) {
+		bw = MAX(sta->tx_bw, sta->rx_bw);
+		len = sizeof(phy_mode_str[bw]);
+		memcpy(dev3->cli_OperatingChannelBandwidth, phy_bw_str_txrx_stainfo[bw], len);
+	}
+
 	dev3->cli_RSSI = dev3->cli_RSSI/n;
 	dev3->cli_PacketsReceived = sta->rx_packets;
 	dev3->cli_PacketsSent = sta->tx_packets;
