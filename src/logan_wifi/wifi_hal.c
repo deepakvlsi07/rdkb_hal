@@ -8339,6 +8339,7 @@ INT wifi_setSSIDName(INT apIndex, CHAR *ssid_string)
 	struct params params;
 	char config_file[MAX_BUF_SIZE] = {0};
 	int res;
+	char ssid[64] = {0};
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	if(NULL == ssid_string || strlen(ssid_string) > 32 || strlen(ssid_string) == 0 )
@@ -8354,6 +8355,15 @@ INT wifi_setSSIDName(INT apIndex, CHAR *ssid_string)
 	}
 
 	wifi_hostapdWrite(config_file, &params, 1);
+
+	res = snprintf(ssid, sizeof(ssid), "\"%s\"", ssid_string);
+	if (os_snprintf_error(sizeof(ssid), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
+
+	params.name = "ssid2";
+	params.value = ssid;
 	wifi_hostapdProcessUpdate(apIndex, &params, 1);
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
