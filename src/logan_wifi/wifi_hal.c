@@ -19420,7 +19420,7 @@ INT wifi_getApInterworkingElement(INT apIndex, wifi_InterworkingElement_t *outpu
 }
 
 INT mtk_wifi_set_get_mru_info(
-	INT radioIndex, INT vendor_data_attr, char data, mtk_nl80211_cb call_back, void *output)
+	INT radioIndex, INT vendor_data_attr, USHORT punct_bitmap, mtk_nl80211_cb call_back, void *output)
 {
 	int ret = -1;
 	struct unl unl_ins;
@@ -19439,7 +19439,8 @@ INT mtk_wifi_set_get_mru_info(
 		return RETURN_ERR;
 	}
 	/*add mtk vendor cmd data*/
-	if (nla_put_u8(msg, vendor_data_attr, data)) {
+
+	if (nla_put_u16(msg, vendor_data_attr, punct_bitmap)) {
 		wifi_debug(DEBUG_ERROR, "Nla put vendor_data_attr(%d) attribute error\n", vendor_data_attr);
 		nlmsg_free(msg);
 		goto err;
@@ -19467,7 +19468,7 @@ int get_mru_info_handler(struct nl_msg *msg, void *data)
 	struct nlattr *tb[NL80211_ATTR_MAX + 1];
 	struct nlattr *vndr_tb[MTK_NL80211_VENDOR_AP_RADIO_ATTR_MAX + 1];
 	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
-	unsigned char *enable = (unsigned char *)data;
+	USHORT *punct_bitmap = (USHORT *)data;
 	int err = 0;
 
 	err = nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
@@ -19482,53 +19483,41 @@ int get_mru_info_handler(struct nl_msg *msg, void *data)
 			return err;
 
 		if (vndr_tb[MTK_NL80211_VENDOR_ATTR_AP_MRU_INFO]) {
-			*enable = nla_get_u8(vndr_tb[MTK_NL80211_VENDOR_ATTR_AP_MRU_INFO]);
+			*punct_bitmap = nla_get_u16(vndr_tb[MTK_NL80211_VENDOR_ATTR_AP_MRU_INFO]);
 		}
 	}
 
 	return 0;
 }
 
-INT wifi_setRadioMRUEnable(INT radioIndex, BOOL Enable)
-{
-	struct params dat_param = {0};
-	char dat_file[MAX_BUF_SIZE] = {0};
-	int res;
 
-	if (mtk_wifi_set_get_mru_info(radioIndex, MTK_NL80211_VENDOR_ATTR_AP_MRU_INFO, Enable,
+INT wifi_setRadioPreamblePuncture(INT radioIndex, USHORT punct_bitmap)
+{
+	if (mtk_wifi_set_get_mru_info(radioIndex, MTK_NL80211_VENDOR_ATTR_AP_MRU_INFO, punct_bitmap,
 		NULL, NULL)!= RETURN_OK) {
 		wifi_debug(DEBUG_ERROR, "send MTK_NL80211_VENDOR_ATTR_AP_MRU_INFO cmd fails\n");
 		return RETURN_ERR;
 	}
 
-	dat_param.name = "PPEnable";
-	dat_param.value = Enable ? "1" : "0";
-
-	res = snprintf(dat_file, sizeof(dat_file), "%s%d.dat", LOGAN_DAT_FILE, radioIndex);
-	if (os_snprintf_error(sizeof(dat_file), res)) {
-		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-		return RETURN_ERR;
-	}
-
-	wifi_datfileWrite(dat_file, &dat_param, 1);
-
 	return RETURN_OK;
 }
 
-INT wifi_getRadioMRUEnable(INT radioIndex, BOOL *output)
+INT wifi_getRadioPreamblePuncture(INT radioIndex, USHORT *output)
 {
-	BOOL enable;
+	USHORT punct_bitmap;
 
-	if (mtk_wifi_set_get_mru_info(radioIndex, MTK_NL80211_VENDOR_ATTR_AP_MRU_INFO, 0xf,
-		get_mru_info_handler, &enable)!= RETURN_OK) {
+	if (mtk_wifi_set_get_mru_info(radioIndex, MTK_NL80211_VENDOR_ATTR_AP_MRU_INFO, 0xffff,
+		get_mru_info_handler, &punct_bitmap)!= RETURN_OK) {
 		wifi_debug(DEBUG_ERROR, "send MTK_NL80211_VENDOR_ATTR_AP_MRU_INFO cmd fails\n");
 		return RETURN_ERR;
 	}
 
-	*output = enable;
+	*output = punct_bitmap;
 
 	return RETURN_OK;
 }
+
+
 INT wifi_getApWpsLastConnectionStatus(INT apIndex, CHAR *output_string);
 
 #ifdef _WIFI_HAL_TEST_
@@ -20671,26 +20660,22 @@ int main(int argc,char **argv)
 		printf("sta air time percent is %s \n", outbuf);
 		return 0;
 	}
-	if (strstr(argv[1], "wifi_setRadioMRUEnable") != NULL) {
-		unsigned char enable;
+	if (strstr(argv[1], "wifi_setRadioPreamblePuncture") != NULL) {
+		USHORT punct_bitmap;
 		if(argc <= 3)
 		{
 			wifi_debug(DEBUG_ERROR, "Insufficient arguments \n");
 			exit(-1);
 		}
-		enable = atoi(argv[3]);
-		if (enable)
-			wifi_setRadioMRUEnable(index, TRUE);
-		else
-			wifi_setRadioMRUEnable(index, FALSE);
-		printf("%s handle wifi_setRadioMRUEnable\n", __FUNCTION__);
+		punct_bitmap = atoi(argv[3]);
+		wifi_setRadioPreamblePuncture(index, punct_bitmap);
+		printf("%s handle punct_bitmap\n", __FUNCTION__);
 	}
-	if (strstr(argv[1], "wifi_getRadioMRUEnable") != NULL) {
-		BOOL b = FALSE;
-        BOOL *output_bool = &b;
+	if (strstr(argv[1], "wifi_getRadioPreamblePuncture") != NULL) {
+		USHORT punct_bitmap = 0;
 
-		wifi_getRadioMRUEnable(index, output_bool);
-		printf("wifi_getRadioMRUEnable = %d\n", b);
+		wifi_getRadioPreamblePuncture(index, &punct_bitmap);
+		printf("wifi_getRadioPreamblePuncture = %d\n", punct_bitmap);
 	}
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 	return 0;
@@ -21025,9 +21010,10 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 			goto err;
 		}
 	}
-	if (current_param.MRU_enable != operationParam->MRU_enable) {
-		if (wifi_setRadioMRUEnable(index, operationParam->MRU_enable) != RETURN_OK) {
-			wifi_debug(DEBUG_ERROR, "wifi_setRadioMRUEnable return error.\n");
+
+	if (current_param.puncturingInfo.punct_bitmap != operationParam->puncturingInfo.punct_bitmap) {
+		if (wifi_setRadioPreamblePuncture(index, operationParam->puncturingInfo.punct_bitmap) != RETURN_OK) {
+			wifi_debug(DEBUG_ERROR, "wifi_setRadioPreamblePuncture return error.\n");
 			goto err;
 		}
 	}
@@ -21080,6 +21066,7 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 	unsigned long channel = 0;
 	BOOL auto_ch_en = FALSE;
 	wifi_band band_idx;
+	USHORT punct_bitmap;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	printf("Entering %s index = %d\n", __func__, (int)index);
@@ -21251,10 +21238,11 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 		return RETURN_ERR;
 	}
 
-	if (wifi_getRadioMRUEnable(index, &operationParam->MRU_enable) != RETURN_OK) {
-		wifi_debug(DEBUG_ERROR, "wifi_getRadioMRUEnable return error.\n");
+	if (wifi_getRadioPreamblePuncture(index, &punct_bitmap) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "wifi_getRadioPreamblePuncture return error.\n");
 		return RETURN_ERR;
 	}
+	operationParam->puncturingInfo.punct_bitmap = punct_bitmap;
 
 	// Below value is hardcoded
 
