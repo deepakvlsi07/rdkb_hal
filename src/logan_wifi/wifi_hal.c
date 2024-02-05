@@ -21869,6 +21869,11 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 			wifi_debug(DEBUG_ERROR, "wifi_setApSecurity return error\n");
 		}
 
+		ret = wifi_setApWpsEnable(vap_info->vap_index, vap_info->u.bss_info.wps.enable);
+		if (ret != RETURN_OK) {
+			wifi_debug(DEBUG_ERROR, "wifi_setApWpsEnable return error\n");
+		}
+
 		memset(buf, 0, sizeof(buf));
 		/*get bridge name from /etc/wireless/hal/wifi_config*/
 		if (wifi_get_bridge_name(vap_info->vap_name, buf, sizeof(buf)) != RETURN_OK)
