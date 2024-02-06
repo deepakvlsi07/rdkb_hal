@@ -415,6 +415,7 @@ int g_phy_count = 0;
 #define MAX_SSID_LEN  64
 char default_ssid[MAX_NUM_RADIOS][MAX_SSID_LEN];;
 int radio_band[MAX_NUM_RADIOS];
+BOOL bs_curr_status = TRUE;
 
 static void wifi_ParseProfile(void);
 
@@ -14560,75 +14561,54 @@ INT wifi_getBandSteeringCapability(BOOL *support)
 	return RETURN_OK;
 }
 
-
 //Device.WiFi.X_RDKCENTRAL-COM_BandSteering.Enable bool r/w
 //To get Band Steering enable status
 INT wifi_getBandSteeringEnable(BOOL *enable)
 {
-	char dat_file[MAX_BUF_SIZE] = {0};
-	int res;
-	int count = 0;
-	char buf[256] = {0};
-	int max_num_radios;
-	int radioIndex;
-
-	if (!enable)
-		return RETURN_ERR;
-
-	wifi_getMaxRadioNumber(&max_num_radios);
-
-	for(radioIndex=0; radioIndex < max_num_radios; radioIndex++)
-	{
-		memset(dat_file, 0, sizeof(dat_file));
-		res = snprintf(dat_file, sizeof(dat_file), "%s%d.dat", LOGAN_DAT_FILE, radioIndex);
-		if (os_snprintf_error(sizeof(dat_file), res)) {
-			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-			return RETURN_ERR;
-		}
-		memset(buf, 0, sizeof(buf));
-		wifi_datfileRead(dat_file, "MapMode", buf, sizeof(buf));
-
-		if (strncmp(buf, "2", 1) == 0)
-			count++;
-	}
-
-	if (count >= 2)
-		*enable = TRUE;
-	else
-		*enable = FALSE;
-
+	*enable = bs_curr_status;
 	return RETURN_OK;
 }
 
 //To turn on/off Band steering
 INT wifi_setBandSteeringEnable(BOOL enable)
 {
-	struct params dat_param = {0};
-	char dat_file[MAX_BUF_SIZE] = {0};
-	int max_num_radios = 0;
 	int res;
 	char buf[256] = {0};
+	int bs_set_status;
 
-	dat_param.name = "MapMode";
-	dat_param.value = enable ? "2" : "0";
+	bs_set_status = enable ? 0 : 1;
 
-	wifi_getMaxRadioNumber(&max_num_radios);
-
-	for(int radioIndex=0; radioIndex < max_num_radios; radioIndex++)
-	{
-		memset(dat_file, 0, sizeof(dat_file));
-		res = snprintf(dat_file, sizeof(dat_file), "%s%d.dat", LOGAN_DAT_FILE, radioIndex);
-		if (os_snprintf_error(sizeof(dat_file), res)) {
-			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-			return RETURN_ERR;
-		}
-
-		wifi_datfileWrite(dat_file, &dat_param, 1);
+	res = _syscmd_secure(buf, sizeof(buf), "mapd_cli /tmp/mapd_ctrl set disable_active_ug %d", bs_set_status);
+	if (res) {
+		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+		return RETURN_ERR;
+	}
+	memset(buf, 0, sizeof(buf));
+	res = _syscmd_secure(buf, sizeof(buf), "mapd_cli /tmp/mapd_ctrl set disable_idle_ug %d", bs_set_status);
+	if (res) {
+		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+		return RETURN_ERR;
+	}
+	memset(buf, 0, sizeof(buf));
+	res = _syscmd_secure(buf, sizeof(buf), "mapd_cli /tmp/mapd_ctrl set disable_active_dg %d", bs_set_status);
+	if (res) {
+		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+		return RETURN_ERR;
+	}
+	memset(buf, 0, sizeof(buf));
+	res = _syscmd_secure(buf, sizeof(buf), "mapd_cli /tmp/mapd_ctrl set disable_idle_dg %d", bs_set_status);
+	if (res) {
+		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+		return RETURN_ERR;
+	}
+	memset(buf, 0, sizeof(buf));
+	res = _syscmd_secure(buf, sizeof(buf), "mapd_cli /tmp/mapd_ctrl set disable_offloading %d", bs_set_status);
+	if (res) {
+		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+		return RETURN_ERR;
 	}
 
-	res = _syscmd_secure(buf, sizeof(buf), "reboot");
-	if (res)
-		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+	bs_curr_status = enable;
 
 	return RETURN_OK;
 }
