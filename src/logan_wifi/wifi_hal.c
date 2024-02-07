@@ -44,6 +44,7 @@ Licensed under the ISC license
 #include <string.h>
 #include <fcntl.h>
 #include <stdbool.h>
+#include <pthread.h>
 #include "wifi_hal.h"
 
 #ifdef HAL_NETLINK_IMPL
@@ -79,14 +80,14 @@ Licensed under the ISC license
 #define MAX_BUF_SIZE 256
 #define MAX_CMD_SIZE 256
 #define MAX_SUB_CMD_SIZE 200
-
+#define MAX_CB_SIZE 5
 #define IF_NAME_SIZE 16
 #define MAX_SSID_NAME_LEN 33
 #define CONFIG_PREFIX "/nvram/hostapd"
 #define ACL_PREFIX "/nvram/hostapd-acl"
 #define DENY_PREFIX "/nvram/hostapd-deny"
 //#define ACL_PREFIX "/tmp/wifi_acl_list" //RDKB convention
-#define SOCK_PREFIX "/var/run/hostapd/wifi"
+#define SOCK_PREFIX "/var/run/hostapd/"
 #define VAP_STATUS_FILE "/nvram/vap-status"
 #define ESSID_FILE "/tmp/essid"
 #define GUARD_INTERVAL_FILE "/nvram/guard-interval"
@@ -14578,30 +14579,39 @@ INT wifi_setBandSteeringEnable(BOOL enable)
 
 	bs_set_status = enable ? 0 : 1;
 
+	/*To Disable/Enable Upgrade steer <2G to 5G> for ACTIVE clients*/
 	res = _syscmd_secure(buf, sizeof(buf), "mapd_cli /tmp/mapd_ctrl set disable_active_ug %d", bs_set_status);
 	if (res) {
 		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 		return RETURN_ERR;
 	}
 	memset(buf, 0, sizeof(buf));
+
+	/*To Disable/Enable Upgrade steer <2G to 5G> for IDLE clients*/
 	res = _syscmd_secure(buf, sizeof(buf), "mapd_cli /tmp/mapd_ctrl set disable_idle_ug %d", bs_set_status);
 	if (res) {
 		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 		return RETURN_ERR;
 	}
 	memset(buf, 0, sizeof(buf));
+
+	/*To Disable/Enable Downgrade steer <2G to 5G> for ACTIVE clients*/
 	res = _syscmd_secure(buf, sizeof(buf), "mapd_cli /tmp/mapd_ctrl set disable_active_dg %d", bs_set_status);
 	if (res) {
 		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 		return RETURN_ERR;
 	}
 	memset(buf, 0, sizeof(buf));
+
+	/*To Disable/Enable Downgrade steer <2G to 5G> for IDLE clients*/
 	res = _syscmd_secure(buf, sizeof(buf), "mapd_cli /tmp/mapd_ctrl set disable_idle_dg %d", bs_set_status);
 	if (res) {
 		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 		return RETURN_ERR;
 	}
 	memset(buf, 0, sizeof(buf));
+
+	/*To Disable/Enable offloading (Radio is overloaded) <2G to 5G> or <5G to 2G> for ACTIVE clients*/
 	res = _syscmd_secure(buf, sizeof(buf), "mapd_cli /tmp/mapd_ctrl set disable_offloading %d", bs_set_status);
 	if (res) {
 		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
@@ -18047,8 +18057,10 @@ struct ctrl {
 	ev_stat stat;
 	ev_io io;
 };
-static wifi_newApAssociatedDevice_callback clients_connect_cb;
-static wifi_apDisassociatedDevice_callback clients_disconnect_cb;
+struct ev_loop *evloop = NULL;
+static wifi_newApAssociatedDevice_callback clients_connect_cb[MAX_CB_SIZE] = {0};
+static wifi_apDisassociatedDevice_callback clients_disconnect_cb[MAX_CB_SIZE] = {0};
+static wifi_apDeAuthEvent_callback clients_deauth_cb[MAX_CB_SIZE] = {0};
 static struct ctrl wpa_ctrl[MAX_APS];
 static int initialized;
 
@@ -18075,9 +18087,9 @@ static unsigned int ctrl_get_drops(struct ctrl *ctrl)
 static void ctrl_close(struct ctrl *ctrl)
 {
 	if (ctrl->io.cb)
-		ev_io_stop(EV_DEFAULT_ &ctrl->io);
+		ev_io_stop(evloop, &ctrl->io);
 	if (ctrl->retry.cb)
-		ev_timer_stop(EV_DEFAULT_ &ctrl->retry);
+		ev_timer_stop(evloop, &ctrl->retry);
 	if (!ctrl->wpa)
 		return;
 
@@ -18091,7 +18103,7 @@ static void ctrl_process(struct ctrl *ctrl)
 {
 	const char *str;
 	int drops;
-	int level;
+	int level, i;
 
 	/* Example events:
 	 *
@@ -18109,6 +18121,7 @@ static void ctrl_process(struct ctrl *ctrl)
 	str++;
 
 	if (strncmp("AP-STA-CONNECTED ", str, 17) == 0) {
+		wifi_debug(DEBUG_INFO, "AP-STA-CONNECTED received \n");
 		if (!(str = index(ctrl->reply, ' ')))
 			return;
 		wifi_associated_dev_t sta;
@@ -18122,16 +18135,24 @@ static void ctrl_process(struct ctrl *ctrl)
 		}
 
 		sta.cli_Active=true;
-
-		(clients_connect_cb)(ctrl->ssid_index, &sta);
+		for(i=0; i < MAX_CB_SIZE; i++) {
+			if (clients_connect_cb[i]) {
+				(clients_connect_cb[i])(ctrl->ssid_index, &sta);
+			}
+		}
 		goto handled;
 	}
 
 	if (strncmp("AP-STA-DISCONNECTED ", str, 20) == 0) {
+		wifi_debug(DEBUG_INFO, "AP-STA-DISCONNECTED received \n");
 		if (!(str = index(ctrl->reply, ' ')))
 			return;
+		for(i=0; i < MAX_CB_SIZE; i++) {
+			if (clients_disconnect_cb[i]) {
+                                (clients_disconnect_cb[i])(ctrl->ssid_index, (char*)str, 0);
+                        }
+                }
 
-		(clients_disconnect_cb)(ctrl->ssid_index, (char*)str, 0);
 		goto handled;
 	}
 
@@ -18161,7 +18182,7 @@ retry:
 	printf("WPA_CTRL: closing\n");
 	ctrl_close(ctrl);
 	printf("WPA_CTRL: retrying from ctrl prcoess\n");
-	ev_timer_again(EV_DEFAULT_ &ctrl->retry);
+	ev_timer_again(evloop, &ctrl->retry);
 }
 
 static void ctrl_ev_cb(EV_P_ struct ev_io *io, int events)
@@ -18206,7 +18227,7 @@ static int ctrl_open(struct ctrl *ctrl)
 		goto err_detach;
 
 	ev_io_init(&ctrl->io, ctrl_ev_cb, fd, EV_READ);
-	ev_io_start(EV_DEFAULT_ &ctrl->io);
+	ev_io_start(evloop, &ctrl->io);
 
 	return 0;
 
@@ -18234,7 +18255,7 @@ static void ctrl_retry_cb(EV_P_ ev_timer *timer, int events)
 	printf("WPA_CTRL: index=%d retrying\n", ctrl->ssid_index);
 	if (ctrl_open(ctrl) == 0) {
 		printf("WPA_CTRL: retry successful\n");
-		ev_timer_stop(EV_DEFAULT_ &ctrl->retry);
+		ev_timer_stop(evloop, &ctrl->retry);
 	}
 }
 
@@ -18245,7 +18266,7 @@ int ctrl_enable(struct ctrl *ctrl)
 
 	if (!ctrl->stat.cb) {
 		ev_stat_init(&ctrl->stat, ctrl_stat_cb, ctrl->sockpath, 0.);
-		ev_stat_start(EV_DEFAULT_ &ctrl->stat);
+		ev_stat_start(evloop, &ctrl->stat);
 	}
 
 	if (!ctrl->retry.cb) {
@@ -18276,7 +18297,7 @@ static int ctrl_request(struct ctrl *ctrl, const char *cmd, size_t cmd_len, char
 	(*reply_len)--;
 	ctrl->reply_len = sizeof(ctrl->reply);
 	err = wpa_ctrl_request(ctrl->wpa, cmd, cmd_len, ctrl->reply, &ctrl->reply_len, ctrl_msg_cb);
-	printf("WPA_CTRL: index=%d cmd='%s' err=%d\n", ctrl->ssid_index, cmd, err);
+	wifi_debug(DEBUG_INFO, "WPA_CTRL: index=%d cmd='%s' err=%d\n", ctrl->ssid_index, cmd, err);
 	if (err < 0)
 		return err;
 
@@ -18286,7 +18307,7 @@ static int ctrl_request(struct ctrl *ctrl, const char *cmd, size_t cmd_len, char
 	*reply_len = ctrl->reply_len;
 	memcpy(reply, ctrl->reply, *reply_len);
 	reply[*reply_len - 1] = 0;
-	printf("WPA_CTRL: index=%d reply='%s'\n", ctrl->ssid_index, reply);
+	wifi_debug(DEBUG_INFO, "WPA_CTRL: index=%d reply='%s'\n", ctrl->ssid_index, reply);
 	return 0;
 }
 
@@ -18301,7 +18322,7 @@ static void ctrl_watchdog_cb(EV_P_ ev_timer *timer, int events)
 	INT ret;
 	BOOL status;
 
-	printf("WPA_CTRL: watchdog cb\n");
+	wifi_debug(DEBUG_INFO, "WPA_CTRL: watchdog cb\n");
 
 	ret = wifi_getSSIDNumberOfEntries(&snum);
 	if (ret != RETURN_OK) {
@@ -18323,7 +18344,7 @@ static void ctrl_watchdog_cb(EV_P_ ev_timer *timer, int events)
 
 		memset(reply, 0, sizeof(reply));
 		len = sizeof(reply);
-		printf("WPA_CTRL: pinging index=%d\n", wpa_ctrl[s].ssid_index);
+		wifi_debug(DEBUG_INFO, "WPA_CTRL: pinging index=%d\n", wpa_ctrl[s].ssid_index);
 		err = ctrl_request(&wpa_ctrl[s], ping, strlen(ping), reply, &len);
 		if (err == 0 && len > strlen(pong) && !strncmp(reply, pong, strlen(pong)))
 			continue;
@@ -18331,14 +18352,22 @@ static void ctrl_watchdog_cb(EV_P_ ev_timer *timer, int events)
 		printf("WPA_CTRL: ping timeout index=%d\n", wpa_ctrl[s].ssid_index);
 		ctrl_close(&wpa_ctrl[s]);
 		printf("WPA_CTRL: ev_timer_again %lu\n", s);
-		ev_timer_again(EV_DEFAULT_ &wpa_ctrl[s].retry);
+		ev_timer_again(evloop, &wpa_ctrl[s].retry);
 	}
+}
+
+void *event_loop_thread(void *arg) {
+        struct ev_loop *loop = (struct ev_loop *)arg;
+        ev_run(loop,0);
+        return RETURN_OK;
 }
 
 static int init_wpa()
 {
 	int ret = 0;
+	char interface_name[IF_NAME_SIZE] = {0};
 	ULONG s, snum;
+	pthread_t thread_id;
 
 	ret = wifi_getSSIDNumberOfEntries(&snum);
 	if (ret != RETURN_OK) {
@@ -18350,10 +18379,14 @@ static int init_wpa()
 		printf("more ssid than supported! %lu\n", snum);
 		return RETURN_ERR;
 	}
-
+	evloop = ev_loop_new(0);
 	for (s = 0; s < snum; s++) {
 		memset(&wpa_ctrl[s], 0, sizeof(struct ctrl));
-		ret = snprintf(wpa_ctrl[s].sockpath, sizeof(wpa_ctrl[s].sockpath), "%s%lu", SOCK_PREFIX, s);
+		if (wifi_GetInterfaceName(s, interface_name) != RETURN_OK) {
+			wifi_debug(DEBUG_ERROR, "DEBUG: Invalid interface_name \n");
+			return RETURN_ERR;
+		}
+		ret = snprintf(wpa_ctrl[s].sockpath, sizeof(wpa_ctrl[s].sockpath), "%s%s", SOCK_PREFIX, interface_name);
 		if (os_snprintf_error(sizeof(wpa_ctrl[s].sockpath), ret)) {
 			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 			return RETURN_ERR;
@@ -18363,8 +18396,11 @@ static int init_wpa()
 	}
 
 	ev_timer_init(&wpa_ctrl->watchdog, ctrl_watchdog_cb, 0., 30.);
-	ev_timer_again(EV_DEFAULT_ &wpa_ctrl->watchdog);
-
+	ev_timer_again(evloop, &wpa_ctrl->watchdog);
+	if (pthread_create(&thread_id, NULL, event_loop_thread, evloop)) {
+                wifi_debug(DEBUG_ERROR, "Failed to create pthread \n");
+                return RETURN_ERR;
+        }
 	initialized = 1;
 	printf("WPA_CTRL: initialized\n");
 
@@ -18373,14 +18409,45 @@ static int init_wpa()
 
 void wifi_newApAssociatedDevice_callback_register(wifi_newApAssociatedDevice_callback callback_proc)
 {
-	clients_connect_cb = callback_proc;
+	int i;
+
+	WIFI_ENTRY_EXIT_DEBUG("Registered %s \n", __func__);
+	for (i=0; i < MAX_CB_SIZE; i++) {
+		if(clients_connect_cb[i] == NULL) {
+			clients_connect_cb[i] = callback_proc;
+			break;
+		}
+	}
 	if (!initialized)
 		init_wpa();
 }
 
 void wifi_apDisassociatedDevice_callback_register(wifi_apDisassociatedDevice_callback callback_proc)
 {
-	clients_disconnect_cb = callback_proc;
+	int i;
+
+	WIFI_ENTRY_EXIT_DEBUG("Registered %s \n", __func__);
+	for (i=0; i < MAX_CB_SIZE; i++) {
+		if(clients_disconnect_cb[i] == NULL) {
+			clients_disconnect_cb[i] = callback_proc;
+			break;
+		}
+	}
+	if (!initialized)
+		init_wpa();
+}
+
+void wifi_apDeAuthEvent_callback_register(wifi_apDeAuthEvent_callback callback_proc)
+{
+	int i;
+
+	WIFI_ENTRY_EXIT_DEBUG("Registered %s \n", __func__);
+	for (i=0; i < MAX_CB_SIZE; i++) {
+		if(clients_deauth_cb[i] == NULL) {
+			clients_deauth_cb[i] = callback_proc;
+			break;
+		}
+	}
 	if (!initialized)
 		init_wpa();
 }
