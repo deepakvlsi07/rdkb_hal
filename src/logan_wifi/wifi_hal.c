@@ -12666,6 +12666,9 @@ INT wifi_getApSecurityModeEnabled(INT apIndex, CHAR *output)
 
 	memcpy(output, "None", 4);//Copying "None" to output string for default case
 	output[4] = '\0';
+	if (!strcmp(wpa, "0"))
+		return RETURN_OK;
+
 	wifi_hostapdRead(config_file, "wpa_key_mgmt", key_mgmt, sizeof(key_mgmt));
 	if (strstr(key_mgmt, "WPA-PSK") && strstr(key_mgmt, "SAE") == NULL) {
 		if (!strcmp(wpa, "1"))
