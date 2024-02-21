@@ -46,6 +46,8 @@ Licensed under the ISC license
 #include <stdbool.h>
 #include <pthread.h>
 #include "wifi_hal.h"
+#include <libkvcutil.h>
+#include <dirent.h>
 
 #ifdef HAL_NETLINK_IMPL
 #include <errno.h>
@@ -353,6 +355,24 @@ typedef struct _wifi_radio_stats {
 	INT Noise;
 }wifi_radio_stats_t;
 
+struct ctrl {
+	char sockpath[128];
+	char sockdir[128];
+	char bss[IFNAMSIZ];
+	char reply[4096];
+	int ssid_index;
+	void (*cb)(struct ctrl *ctrl, int level, const char *buf, size_t len);
+	void (*overrun)(struct ctrl *ctrl);
+	struct wpa_ctrl *wpa;
+	unsigned int ovfl;
+	size_t reply_len;
+	int initialized;
+	ev_timer retry;
+	ev_timer watchdog;
+	ev_stat stat;
+	ev_io io;
+};
+
 #ifdef WIFI_HAL_VERSION_3
 
 // Return number of elements in array
@@ -442,6 +462,8 @@ static int util_get_sec_chan_offset(int channel, const char* ht_mode);
 int hostapd_raw_add_bss(int apIndex);
 int hostapd_raw_remove_bss(int apIndex);
 INT wifi_getApDevicesAssociated(INT apIndex, CHAR *macArray, UINT buf_size);
+static int wifi_GetInterfaceName(int apIndex, char *interface_name);
+bool wifi_get_ap_status_ioctl(char *interface_name);
 
 static inline int hal_strtol(char *src, int base, long int *out)
 {
@@ -1874,22 +1896,24 @@ wifi_band wifi_index_to_band(int apIndex)
 
 static int wifi_hostapdRead(char *conf_file, char *param, char *output, int output_size)
 {
-
-	char buf[MAX_BUF_SIZE] = {0};
+	struct kvc_context *ctx;
+	const char *value;
 	int res = 0;
 
-
-	res = _syscmd_secure(buf, sizeof(buf), "cat %s 2> /dev/null | grep \"^%s=\" | cut -d \"=\" -f 2 | head -n1 | tr -d \"\\n\"",conf_file, param);
-	if (res) {
-		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-	}
-
-
-	res = snprintf(output, output_size, "%s", buf);
-	if (os_snprintf_error(output_size, res)) {
-		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+	ctx = kvc_load(conf_file, LF_KEY_CASE_SENSITIVE);
+	if (!ctx) {
+		wifi_debug(DEBUG_ERROR, "load conf fail\n");
 		return RETURN_ERR;
 	}
+	value = kvc_get(ctx, param);
+	if (value) {
+		res = snprintf(output, output_size, "%s", value);
+		if (os_snprintf_error(output_size, res)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail, conf_file[%s] param[%s] %s\n", conf_file, param, value);
+			return RETURN_ERR;
+		}
+	}
+	kvc_unload(ctx);
 
 	return 0;
 }
@@ -3637,7 +3661,6 @@ INT wifi_getSSIDNumberOfEntries(ULONG *output) //Tr181
 INT wifi_getRadioEnable(INT radioIndex, BOOL *output_bool)	  //RDKB
 {
 	char interface_name[16] = {0};
-	char buf[128] = {0};
 	int apIndex, bss_idx;
 
 	if (NULL == output_bool)
@@ -3655,7 +3678,7 @@ INT wifi_getRadioEnable(INT radioIndex, BOOL *output_bool)	  //RDKB
 		if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
 			continue;
 
-		*output_bool = _syscmd_secure(buf, sizeof(buf), "ifconfig %s 2> /dev/null | grep UP", interface_name) ? FALSE : TRUE;
+		*output_bool = wifi_get_ap_status_ioctl(interface_name);
 		if (*output_bool == TRUE)
 			break;
 
@@ -6821,10 +6844,9 @@ INT wifi_getRadioConfiguredChannelBandwidth(INT radioIndex, CHAR *output_string)
 INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) //Tr181
 {
 	char buf[32] = {0};
-	int ret = 0, res, len = 0;
+	int ret = 0, res;
 	BOOL radio_enable = FALSE;
-	//unsigned char bw;
-	char interface_name[64] = {0};
+	unsigned char bw;
 	int main_vap_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
@@ -6847,17 +6869,13 @@ INT wifi_getRadioOperatingChannelBandwidth(INT radioIndex, CHAR *output_string) 
 		return RETURN_ERR;
 	}
 
-	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
-		return RETURN_ERR;
-
-	ret = _syscmd_secure(buf, sizeof(buf), "iw dev %s info | grep 'width' | cut -d  ' ' -f6 | tr -d '\\n'", interface_name);
-	if(ret) {
-		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+	if (mtk_wifi_get_radio_info(radioIndex, MTK_NL80211_VENDOR_ATTR_GET_BAND_INFO_BANDWIDTH,
+		get_bandwidth_handler, &bw) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "send MTK_NL80211_VENDOR_ATTR_GET_BAND_INFO_BANDWIDTH cmd fails\n");
 	}
-
-	len = strlen(buf);
-	if ((ret != 0) || (len == 0))  {
-		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+	ret = bwidx_to_string(bw, buf);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "bwidx_to_string fails\n");
 		return RETURN_ERR;
 	}
 
@@ -12057,12 +12075,154 @@ INT wifi_setApEnable(INT apIndex, BOOL enable)
 	return RETURN_OK;
 }
 
+bool get_ctrl_interface(char *ctrl_interface, char *interface_name)
+{
+	DIR *dir;
+	struct dirent *entry;
+	bool found = FALSE;
+
+	if (strlen(ctrl_interface) == 0)
+		dir = opendir("/var/run/hostapd/");
+	else
+		dir = opendir(ctrl_interface);
+
+	if (dir == NULL) {
+		wifi_debug(DEBUG_ERROR, "opendir fail\n");
+		return FALSE;
+	}
+
+	while ((entry = readdir(dir)) != NULL) {
+		if (strcmp(entry->d_name, interface_name) == 0) {
+			found = TRUE;
+			break;
+		}
+	}
+
+	closedir(dir);
+	return found;
+}
+
+int hostapd_connect(struct ctrl *wpa_ctrl, char *interface_name)
+{
+	int ret = 0;
+
+	ret = snprintf(wpa_ctrl->sockpath, sizeof(wpa_ctrl->sockpath), "%s%s", SOCK_PREFIX, interface_name);
+	if (os_snprintf_error(sizeof(wpa_ctrl->sockpath), ret)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
+
+	wpa_ctrl->wpa = wpa_ctrl_open(wpa_ctrl->sockpath);
+	if (!wpa_ctrl->wpa)
+		return RETURN_ERR;
+
+	if (wpa_ctrl_attach(wpa_ctrl->wpa) < 0) {
+		wpa_ctrl_close(wpa_ctrl->wpa);
+		return RETURN_ERR;
+	}
+
+	return RETURN_OK;
+}
+
+void hostapd_disconnect(struct ctrl *wpa_ctrl)
+{
+	wpa_ctrl_detach(wpa_ctrl->wpa);
+	wpa_ctrl_close(wpa_ctrl->wpa);
+	wpa_ctrl->wpa = NULL;
+
+	return;
+}
+
+static int hostapd_command(struct ctrl *ctrl, const char *cmd, char *reply, size_t *reply_len)
+{
+	char buf[4096];
+	size_t len;
+	int ret;
+
+	len = sizeof(buf) - 1;
+	ret = wpa_ctrl_request(ctrl->wpa, cmd, strlen(cmd), buf, &len, NULL);
+
+	if (ret < 0) {
+		wifi_debug(DEBUG_ERROR, "wpa_ctrl_request fail, ret = %d\n", ret);
+		return ret;
+	}
+
+	if (len > *reply_len)
+		len = *reply_len;
+
+	memcpy(reply, buf, len);
+	reply[*reply_len - 1] = '\0';
+
+	return 0;
+}
+
+int wifi_get_ap_status_hostapd(char *interface_name, BOOL *output_bool)
+{
+	struct ctrl wpa_ctrl = {0};
+	const char *status = "STATUS";
+	char reply[1024];
+	size_t len = sizeof(reply);
+	char *pos;
+
+	if(hostapd_connect(&wpa_ctrl, interface_name) == RETURN_ERR) {
+		wifi_debug(DEBUG_ERROR, "hostapd_connect fail\n");
+		return RETURN_ERR;
+	}
+
+	if (hostapd_command(&wpa_ctrl, status, reply, &len)) {
+		hostapd_disconnect(&wpa_ctrl);
+		return RETURN_ERR;
+	}
+
+	pos = strstr(reply, "state=");
+    if (pos != NULL) {
+		pos += 6;
+	    if (strncmp(pos, "ENABLED", 7) == 0 || strncmp(pos, "ACS", 3) == 0 ||
+			strncmp(pos, "HT_SCAN", 7) == 0 || strncmp(pos, "DFS", 3) == 0)  {
+			*output_bool = TRUE;
+		} else
+			*output_bool = FALSE;
+    } else {
+        *output_bool = FALSE;
+    }
+
+	hostapd_disconnect(&wpa_ctrl);
+	return RETURN_OK;
+}
+
+
+bool wifi_get_ap_status_ioctl(char *interface_name)
+{
+	struct ifreq ifr;
+	int sock = socket(AF_INET, SOCK_DGRAM, 0);
+
+	if(sock < 0) {
+		wifi_debug(DEBUG_ERROR, "sock init fail\n");
+		return FALSE;
+	}
+
+	if (strlen(interface_name) >= IFNAMSIZ) {
+		wifi_debug(DEBUG_ERROR, "invalide interface_name length=%ld\n", strlen(interface_name));
+		close(sock);
+		return FALSE;
+	}
+
+	memset(&ifr, 0, sizeof(ifr));
+	strncpy(ifr.ifr_name, interface_name, strlen(interface_name));
+	if (ioctl(sock, SIOCGIFFLAGS, &ifr) < 0) {
+		wifi_debug(DEBUG_INFO, "ioctl(SIOCGIFFLAGS) failed, %s\n", strerror(errno));
+		close(sock);
+		return FALSE;
+	}
+
+	close(sock);
+	return !!(ifr.ifr_flags & IFF_UP);
+}
 // Outputs the setting of the internal variable that is set by wifi_setApEnable().
 INT wifi_getApEnable(INT apIndex, BOOL *output_bool)
 {
 	char interface_name[IF_NAME_SIZE] = {0};
-	char buf[MAX_BUF_SIZE] = {0};
-	int res, len;
+	int res;
 	char ctrl_interface[64] = {0};
 	char config_file[128] = {0};
 	BOOL is_ap_enable, hostapd_state;
@@ -12089,26 +12249,13 @@ INT wifi_getApEnable(INT apIndex, BOOL *output_bool)
 			wifi_debug(DEBUG_ERROR, "ctrl_interface for %s not exist\n", interface_name);
 		}
 
-		_syscmd_secure(buf, sizeof(buf), "ls %s | grep %s",
-			strlen(ctrl_interface) == 0 ? "/var/run/hostapd/" : ctrl_interface, interface_name);
-		len = strlen(buf) >= strlen(interface_name) ? strlen(interface_name) : strlen(buf);
-
-		if (len == 0 || strncmp(buf, interface_name, len)) {
+		if (get_ctrl_interface(ctrl_interface, interface_name) == FALSE)
 			return RETURN_OK;
-		}
-		memset(buf, 0, sizeof(buf));
 
-		res = _syscmd_secure(buf, sizeof(buf), "hostapd_cli -i %s status | grep state | cut -d '=' -f2", interface_name);
-		if (res) {
-			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-		}
+		if (wifi_get_ap_status_hostapd(interface_name, &hostapd_state) == RETURN_ERR)
+			wifi_debug(DEBUG_ERROR, "wifi_get_ap_status_hostapd RETURN_ERR\n");
 
-		if (strncmp(buf, "ENABLED", 7) == 0 || strncmp(buf, "ACS", 3) == 0 ||
-			strncmp(buf, "HT_SCAN", 7) == 0 || strncmp(buf, "DFS", 3) == 0)  {
-			hostapd_state = TRUE;
-		}
-
-		is_ap_enable = _syscmd_secure(buf, sizeof(buf), "ifconfig %s | grep UP", interface_name) ? FALSE : TRUE;
+		is_ap_enable = wifi_get_ap_status_ioctl(interface_name);
 
 		if (hostapd_state && is_ap_enable)
 			*output_bool = TRUE;
@@ -18043,23 +18190,6 @@ INT wifi_getRadioChannelStats(INT radioIndex,wifi_channelStats_t *input_output_c
 				   ((type *)((char *)ptr - offset_of(type, member)))
 #endif /* container_of */
 
-struct ctrl {
-	char sockpath[128];
-	char sockdir[128];
-	char bss[IFNAMSIZ];
-	char reply[4096];
-	int ssid_index;
-	void (*cb)(struct ctrl *ctrl, int level, const char *buf, size_t len);
-	void (*overrun)(struct ctrl *ctrl);
-	struct wpa_ctrl *wpa;
-	unsigned int ovfl;
-	size_t reply_len;
-	int initialized;
-	ev_timer retry;
-	ev_timer watchdog;
-	ev_stat stat;
-	ev_io io;
-};
 struct ev_loop *evloop = NULL;
 static wifi_newApAssociatedDevice_callback clients_connect_cb[MAX_CB_SIZE] = {0};
 static wifi_apDisassociatedDevice_callback clients_disconnect_cb[MAX_CB_SIZE] = {0};
@@ -22828,6 +22958,77 @@ INT wifi_getApSecurity(INT ap_index, wifi_vap_security_t *security)
 
 #endif /* WIFI_HAL_VERSION_3 */
 
+static int hostapd_get_sta(struct ctrl *ctrl, const char *cmd,
+				char *addr, size_t addr_len)
+{
+	char buf[4096], *pos;
+	size_t len;
+	int ret;
+
+	len = sizeof(buf) - 1;
+	ret = wpa_ctrl_request(ctrl->wpa, cmd, strlen(cmd), buf, &len, NULL);
+	if (ret < 0) {
+		wifi_debug(DEBUG_ERROR, "wpa_ctrl_request fail, ret = %d\n", ret);
+		return ret;
+	}
+
+	buf[len] = '\0';
+	if (memcmp(buf, "FAIL", 4) == 0 || memcmp(buf, "UNKNOWN COMMAND", 15) == 0)
+		return -1;
+
+	pos = buf;
+	while (*pos != '\0' && *pos != '\n')
+		pos++;
+	*pos = '\0';
+	memcpy(addr, buf, addr_len);
+	return 0;
+}
+
+int wifi_get_associated_sta(char *interface_name, CHAR *output_buf, INT output_buf_size)
+{
+	struct ctrl wpa_ctrl = {0};
+	char addr[32], cmd[64];
+	int tem_len;
+	int res;
+
+	memset(output_buf, 0, output_buf_size);
+	tem_len = output_buf_size - strlen(output_buf);
+
+	if(hostapd_connect(&wpa_ctrl, interface_name) == RETURN_ERR) {
+		wifi_debug(DEBUG_ERROR, "hostapd_connect fail\n");
+		return RETURN_ERR;
+	}
+
+	if (hostapd_get_sta(&wpa_ctrl, "STA-FIRST", addr, sizeof(addr))) {
+		hostapd_disconnect(&wpa_ctrl);
+		return RETURN_OK;
+	}
+
+	do {
+		if (strlen(addr) == 17) {
+			res = snprintf(output_buf + strlen(output_buf), tem_len, "%s,", addr);
+			if (os_snprintf_error(tem_len, res)) {
+				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+				break;
+			}
+			tem_len = output_buf_size - strlen(output_buf);
+		}
+
+		res = snprintf(cmd, sizeof(cmd), "STA-NEXT %s", addr);
+		if (os_snprintf_error(sizeof(cmd), res)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			break;
+		}
+	} while (hostapd_get_sta(&wpa_ctrl, cmd, addr, sizeof(addr)) == 0);
+
+	/* Remove the last comma */
+	if (strlen(output_buf) != 0)
+		output_buf[strlen(output_buf) - 1] = '\0';
+
+	hostapd_disconnect(&wpa_ctrl);
+	return RETURN_OK;
+}
+
 #ifdef WIFI_HAL_VERSION_3_PHASE2
 INT wifi_getApAssociatedDevice(INT ap_index, mac_address_t *output_deviceMacAddressArray, UINT maxNumDevices, UINT *output_numDevices)
 {
@@ -22872,7 +23073,7 @@ INT wifi_getApAssociatedDevice(INT ap_index, CHAR *output_buf, INT output_buf_si
 	char interface_name[16] = {0};
 
 	BOOL status = false;
-	int res;
+	//int res;
 
 	if(ap_index > MAX_APS || output_buf == NULL || output_buf_size <= 0)
 		return RETURN_ERR;
@@ -22885,13 +23086,11 @@ INT wifi_getApAssociatedDevice(INT ap_index, CHAR *output_buf, INT output_buf_si
 
 	if (wifi_GetInterfaceName(ap_index, interface_name) != RETURN_OK)
 		return RETURN_ERR;
-	res = _syscmd_secure(output_buf, output_buf_size, "hostapd_cli -i %s list_sta | tr '\\n' ',' | sed 's/.$//'", interface_name);
-	if (res) {
-		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 
+	if (wifi_get_associated_sta(interface_name, output_buf, output_buf_size) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "wifi_get_associated_sta fail\n");
+		return RETURN_ERR;
 	}
-
-
 
 	return RETURN_OK;
 }
