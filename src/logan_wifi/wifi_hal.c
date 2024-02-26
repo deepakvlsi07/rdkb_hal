@@ -15014,6 +15014,13 @@ INT wifi_setBandSteeringRSSIThreshold (INT radioIndex, INT rssiThreshold)
 	char buf[256] = {0};
 	char conf_file[MAX_BUF_SIZE] = {0};
 
+	if ((rssiThreshold >= 0 && rssiThreshold <= 60) || (rssiThreshold >= -94 && rssiThreshold <= -30)) {
+		wifi_debug(DEBUG_ERROR, "Valid threshold!\n");
+	} else {
+		wifi_debug(DEBUG_ERROR, "ERROR! Input is invalid threshold!, Valid range from -30 to -94 or 0 to 60\n");
+		return RETURN_ERR;
+	}
+
 	band = radio_index_to_band(radioIndex);
 
 	res = snprintf(conf_file, sizeof(conf_file), "/etc/mapd_strng.conf");
@@ -22462,7 +22469,7 @@ INT wifi_getHalCapability(wifi_hal_capability_t *cap)
 		}
 	}
 
-	cap->BandSteeringSupported = FALSE;
+	cap->BandSteeringSupported = TRUE;
 #ifdef WIFI_7992
 	cap->wifi_prop.mu_bands = WIFI_BAND_2_5;
 #else
