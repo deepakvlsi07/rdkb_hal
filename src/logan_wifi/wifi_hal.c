@@ -21724,6 +21724,11 @@ INT wifi_getRadioVapInfoMap(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 		}
 
 		map->vap_array[i].u.bss_info.isolation = enabled;
+
+		wifi_getApWpsEnable(vap_index, &enabled);
+		if (enabled) {
+			map->vap_array[i].u.bss_info.wps.enable = enabled;
+		}
 	}
 
 	for (i = 0; i < map->num_vaps; i++)
