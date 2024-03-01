@@ -1920,21 +1920,20 @@ static int wifi_hostapdRead(char *conf_file, char *param, char *output, int outp
 
 static int wifi_hostapdWrite(char *conf_file, struct params *list, int item_count)
 {
+	struct kvc_context *ctx;
 
-	char buf[MAX_BUF_SIZE] = {0};
-	int res;
-
-	for (int i = 0; i < item_count; i++) {
-		wifi_hostapdRead(conf_file, list[i].name, buf, sizeof(buf));
-		if (strlen(buf) == 0) /*no such item, insert it*/
-			res = _syscmd_secure(buf, sizeof(buf), "sed -i -e '$a %s=%s' %s", list[i].name, list[i].value, conf_file);
-		else /*find the item, update it*/
-			res = _syscmd_secure(buf, sizeof(buf), "sed -i \"s/^%s=.*/%s=%s/\" %s", list[i].name, list[i].name, list[i].value, conf_file);
-
-		if(res) {
-			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-		}
+	ctx = kvc_load(conf_file, LF_KEY_CASE_SENSITIVE);
+	if (!ctx) {
+		wifi_debug(DEBUG_ERROR, "load conf fail\n");
+		return RETURN_ERR;
 	}
+	for (int i = 0; i < item_count; i++) {
+		if (kvc_set(ctx, list[i].name, list[i].value))
+			wifi_debug(DEBUG_ERROR, "kvc_set %s to conf_file[%s] fail\n", list[i].name, conf_file);
+		if (kvc_commit(ctx))
+			wifi_debug(DEBUG_ERROR, "kvc_commit %s to conf_file[%s] fail\n", list[i].name, conf_file);
+	}
+	kvc_unload(ctx);
 
 	return 0;
 }
@@ -2870,7 +2869,7 @@ wifi_PrepareDefaultHostapdConfigs(bool reset)
 			}
 
 			/* fix wpa_psk_file path */
-			res = snprintf(psk_file, sizeof(psk_file), "\\/nvram\\/hostapd%d.psk", ap_idx);
+			res = snprintf(psk_file, sizeof(psk_file), "/nvram/hostapd%d.psk", ap_idx);
 			if (os_snprintf_error(sizeof(psk_file), res)) {
 				wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 				return;
@@ -6117,7 +6116,7 @@ INT wifi_factoryResetAP(int apIndex)
 	}
 
 	/* fix wpa_psk_file path */
-	res = snprintf(psk_file, sizeof(psk_file), "\\/nvram\\/hostapd%d.psk", apIndex);
+	res = snprintf(psk_file, sizeof(psk_file), "/nvram/hostapd%d.psk", apIndex);
 	if (os_snprintf_error(sizeof(psk_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
