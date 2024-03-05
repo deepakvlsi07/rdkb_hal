@@ -18305,7 +18305,7 @@ static void ctrl_process(struct ctrl *ctrl)
 		goto retry;
 	}
 
-	printf("Event not supported!!\n");
+	wifi_debug(DEBUG_INFO, "Event not supported!!\n");
 
 handled:
 
