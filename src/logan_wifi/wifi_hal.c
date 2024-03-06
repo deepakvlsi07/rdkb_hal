@@ -1910,9 +1910,18 @@ static int wifi_hostapdRead(char *conf_file, char *param, char *output, int outp
 		res = snprintf(output, output_size, "%s", value);
 		if (os_snprintf_error(output_size, res)) {
 			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail, conf_file[%s] param[%s] %s\n", conf_file, param, value);
+			kvc_unload(ctx);
+			return RETURN_ERR;
+		}
+	} else {
+		res = snprintf(output, output_size, "%s", "");
+		if (os_snprintf_error(output_size, res)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			kvc_unload(ctx);
 			return RETURN_ERR;
 		}
 	}
+
 	kvc_unload(ctx);
 
 	return 0;
