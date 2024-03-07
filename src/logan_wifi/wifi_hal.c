@@ -5010,23 +5010,79 @@ unsigned int puremode_to_wireless_mode(INT radioIndex, UINT pureMode)
 	return wireless_mode;
 }
 
-// Set the radio operating mode, and pure mode flag.
-INT wifi_setRadioMode(INT radioIndex, CHAR *channelMode, UINT pureMode)
+int wifi_setRadioMode_netlink(int radioIndex, unsigned char *wireless_mode, int bss_num)
 {
-	unsigned char wireless_mode = PHY_MODE_MAX;
-
-	char interface_name[IF_NAME_SIZE] = {0};
-	int ret = -1;
-	unsigned int if_idx = 0;
+	int ret;
 	struct unl unl_ins;
 	struct nl_msg *msg  = NULL;
 	struct nlattr * msg_data = NULL;
 	struct mtk_nl80211_param param;
+	int bss_idx, ap_idx;
+	char interface_name[IF_NAME_SIZE] = {0};
+	unsigned int if_idx = 0;
+
+	for (bss_idx = 0; bss_idx < bss_num; bss_idx++) {
+		if (array_index_to_vap_index(radioIndex, bss_idx, &ap_idx) != RETURN_OK) {
+			wifi_debug(DEBUG_ERROR, "invalid radio_idx %d, bss_idx %d\n", radioIndex, bss_idx);
+			continue;
+		}
+
+		if (getVapEnableConfig(ap_idx) == FALSE)
+			continue;
+
+		if (wifi_GetInterfaceName(ap_idx, interface_name) != RETURN_OK)
+			return RETURN_ERR;
+
+		if_idx = if_nametoindex(interface_name);
+		if (!if_idx) {
+			wifi_debug(DEBUG_ERROR,"can't finde ifname(%s) index,ERROR\n", interface_name);
+			return RETURN_ERR;
+		}
+		/*init mtk nl80211 vendor cmd*/
+		param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_AP_BSS;
+		param.if_type = NL80211_ATTR_IFINDEX;
+		param.if_idx = if_idx;
+
+		ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+		if (ret) {
+			wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+			return RETURN_ERR;
+		}
+
+		/*add mtk vendor cmd data*/
+		if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_AP_WIRELESS_MODE, *wireless_mode)) {
+			wifi_debug(DEBUG_ERROR, "Nla put AP_WIRELESS_MODE attribute error\n");
+			nlmsg_free(msg);
+			goto err;
+		}
+		/*send mtk nl80211 vendor msg*/
+		ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
+		if (ret) {
+			wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+			goto err;
+		}
+		/*deinit mtk nl80211 vendor msg*/
+		mtk_nl80211_deint(&unl_ins);
+		wifi_debug(DEBUG_INFO, "set cmd success.\n");
+	 }
+	return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR, "set cmd fails.\n");
+	return RETURN_ERR;
+}
+// Set the radio operating mode, and pure mode flag.
+INT wifi_setRadioMode(INT radioIndex, CHAR *channelMode, UINT pureMode)
+{
+	unsigned char wireless_mode = PHY_MODE_MAX;
 	char buf[MAX_BUF_SIZE] = {0};
 	char dat_file[MAX_BUF_SIZE] = {0};
 	struct params params={0};
 	int res;
-	int main_vap_idx;
+	int ret;
+	int bss_num;
+	char ret_buf[MAX_BUF_SIZE] = {0};
+	int pos = 0, i;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s_%s:%d_%d\n", __func__, channelMode, pureMode, __LINE__);
 
@@ -5037,54 +5093,38 @@ INT wifi_setRadioMode(INT radioIndex, CHAR *channelMode, UINT pureMode)
 		return RETURN_ERR;
 	}
 
-	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
-		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+	ret = wifi_BandProfileRead(0, radioIndex, "BssidNum", ret_buf, sizeof(ret_buf), "1");
+	if (ret != 0) {
+		wifi_debug(DEBUG_ERROR, "wifi_BandProfileRead BssidNum failed\n");
 		return RETURN_ERR;
 	}
 
-	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
-		return RETURN_ERR;
-
-	if_idx = if_nametoindex(interface_name);
-	if (!if_idx) {
-		wifi_debug(DEBUG_ERROR,"can't finde ifname(%s) index,ERROR\n", interface_name);
-		return RETURN_ERR;
-	}
-	/*init mtk nl80211 vendor cmd*/
-	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_AP_BSS;
-	param.if_type = NL80211_ATTR_IFINDEX;
-	param.if_idx = if_idx;
-
-	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
-	if (ret) {
-		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+	bss_num = atoi(ret_buf);
+	if (bss_num <= 0)  {
+		wifi_debug(DEBUG_ERROR, "invalid BssidNum %s\n", ret_buf);
 		return RETURN_ERR;
 	}
 
-	/*add mtk vendor cmd data*/
-	if (nla_put_u8(msg, MTK_NL80211_VENDOR_ATTR_AP_WIRELESS_MODE, wireless_mode)) {
-		wifi_debug(DEBUG_ERROR, "Nla put AP_WIRELESS_MODE attribute error\n");
-		nlmsg_free(msg);
-		goto err;
+	if (bss_num > LOGAN_MAX_NUM_VAP_PER_RADIO) {
+		wifi_debug(DEBUG_ERROR, "bss_num is larger than %d, use %d\n", LOGAN_MAX_NUM_VAP_PER_RADIO, LOGAN_MAX_NUM_VAP_PER_RADIO);
+		bss_num = LOGAN_MAX_NUM_VAP_PER_RADIO;
 	}
-	/*send mtk nl80211 vendor msg*/
-	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
-	if (ret) {
-		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
-		goto err;
+
+	if (wifi_setRadioMode_netlink(radioIndex, &wireless_mode, bss_num) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "wifi_setRadioMode_netlink fail\n");
+		return RETURN_ERR;
 	}
-	/*deinit mtk nl80211 vendor msg*/
-	mtk_nl80211_deint(&unl_ins);
-	wifi_debug(DEBUG_NOTICE, "set cmd success.\n");
 
 	/*update dat profile*/
 	params.name = "WirelessMode";
-	res = snprintf(buf, sizeof(buf), "%d", wireless_mode);
-	if (os_snprintf_error(sizeof(buf), res)) {
-		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-		return RETURN_ERR;
+	for (i = 0; i < bss_num; i++) {
+		pos += snprintf(buf + pos, sizeof(buf) - pos, "%d;", wireless_mode);
+		if (os_snprintf_error(sizeof(buf), pos)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			break;
+		}
 	}
-
+	buf[pos - 1] = '\0';
 	params.value = buf;
 
 	res = snprintf(dat_file, sizeof(dat_file), "%s%d.dat", LOGAN_DAT_FILE, radioIndex);
@@ -5097,10 +5137,6 @@ INT wifi_setRadioMode(INT radioIndex, CHAR *channelMode, UINT pureMode)
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 
 	return RETURN_OK;
-err:
-	mtk_nl80211_deint(&unl_ins);
-	wifi_debug(DEBUG_ERROR, "set cmd fails.\n");
-	return RETURN_ERR;
 }
 
 INT wifi_setRadioHwMode(INT radioIndex, CHAR *hw_mode) {
@@ -18400,7 +18436,7 @@ static void ctrl_retry_cb(EV_P_ ev_timer *timer, int events)
 {
 	struct ctrl *ctrl = container_of(timer, struct ctrl, retry);
 
-	printf("WPA_CTRL: index=%d retrying\n", ctrl->ssid_index);
+	wifi_debug(DEBUG_INFO, "WPA_CTRL: index=%d retrying\n", ctrl->ssid_index);
 	if (ctrl_open(ctrl) == 0) {
 		printf("WPA_CTRL: retry successful\n");
 		ev_timer_stop(evloop, &ctrl->retry);
