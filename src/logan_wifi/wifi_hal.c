@@ -5248,6 +5248,45 @@ INT wifi_setNoscan(INT radioIndex, CHAR *noscan)
 	return RETURN_OK;
 }
 
+INT wifi_getRadioCapChannels(INT radioIndex, CHAR *output_string)
+{
+	wifi_band band = band_invalid;
+	int ret;
+	char ch_string_2G[] = "1,2,3,4,5,6,7,8,9,10,11,12,13,14";
+	char ch_string_5G[] = "36,40,44,48,52,56,60,64,100,104,108,112,116,120,124,128,132,136,140,144,149,153,157,161,165,169,173,177";
+	char ch_string_6G[] = "1,5,9,13,17,21,25,29,33,37,41,45,49,53,57,61,65,69,73,77,81,85,89,93,97,101,105,109,113,117,121,125,129,133,137,141,145,149,153,157,161,165,169,173,177,181,185,189,193,197,201,205,209,213,217,221,225,229,233";
+
+	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
+
+	if (NULL == output_string)
+		return RETURN_ERR;
+
+	band = radio_index_to_band(radioIndex);
+
+	if (band == band_2_4) {
+		ret = snprintf(output_string, 512, "%s", ch_string_2G);
+		if (os_snprintf_error(512, ret)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			return RETURN_ERR;
+		}
+	} else if (band == band_5) {
+		ret = snprintf(output_string, 512, "%s", ch_string_5G);
+		if (os_snprintf_error(512, ret)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			return RETURN_ERR;
+		}
+	} else if (band == band_6) {
+		ret = snprintf(output_string, 512, "%s", ch_string_6G);
+		if (os_snprintf_error(512, ret)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			return RETURN_ERR;
+		}
+	}
+
+	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+	return RETURN_OK;
+}
+
 //Get the list of supported channel. eg: "1-11"
 //The output_string is a max length 64 octet string that is allocated by the RDKB code.  Implementations must ensure that strings are not longer than this.
 INT wifi_getRadioPossibleChannels(INT radioIndex, CHAR *output_string)	//RDKB
@@ -5893,7 +5932,7 @@ INT wifi_setRadioChannel(INT radioIndex, ULONG channel)	//RDKB	//AP only
 	// We only write hostapd config here
 	char str_channel[8]={0};
 	char *list_channel;
-	char possible_channels[256] = {0};
+	char possible_channels[512] = {0};
 	char config_file_dat[128] = {0};
 	struct params dat = {0};
 	struct params acs = {0};
@@ -5913,7 +5952,7 @@ INT wifi_setRadioChannel(INT radioIndex, ULONG channel)	//RDKB	//AP only
 		return RETURN_ERR;
 	}
 
-	wifi_getRadioPossibleChannels(radioIndex, possible_channels);
+	wifi_getRadioCapChannels(radioIndex, possible_channels);
 	list_channel = strtok(possible_channels, ",");
 	while(true)
 	{
@@ -22314,7 +22353,7 @@ static int getRadioCapabilities(int radioIndex, wifi_radio_capabilities_t *rcap)
 	INT status;
 	wifi_channels_list_t *chlistp;
 	CHAR output_string[64];
-	CHAR pchannels[128];
+	CHAR pchannels[512];
 	CHAR interface_name[16] = {0};
 	wifi_band band;
 	int res;
@@ -22338,8 +22377,8 @@ static int getRadioCapabilities(int radioIndex, wifi_radio_capabilities_t *rcap)
 	chlistp = &(rcap->channel_list[0]);
 	memset(pchannels, 0, sizeof(pchannels));
 
-	/* possible number of radio channels */
-	status = wifi_getRadioPossibleChannels(radioIndex, pchannels);
+	/* get radio channels cabability */
+	status = wifi_getRadioCapChannels(radioIndex, pchannels);
 	{
 		 printf("[wifi_hal dbg] : func[%s] line[%d] error_ret[%d] radio_index[%d] output[%s]\n", __FUNCTION__, __LINE__, status, radioIndex, pchannels);
 	}
