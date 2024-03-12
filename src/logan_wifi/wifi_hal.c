@@ -3266,6 +3266,7 @@ static void wifi_mcs_file_check()
 	}
 }
 
+#ifdef WIFI_AGENT_TDK_TEST
 static void wifi_upload_reset()
 {
 	FILE *f = NULL;
@@ -3279,6 +3280,7 @@ static void wifi_upload_reset()
 			wifi_debug(DEBUG_ERROR, "Unexpected fclose fail\n");
 	}
 }
+#endif
 
 // Initializes the wifi subsystem (all radios)
 INT wifi_init()							//RDKB
@@ -3307,8 +3309,10 @@ INT wifi_init()							//RDKB
 		wifi_guard_interval_file_check();
 		wifi_power_percentage_file_check();
 		wifi_mcs_file_check();
+#ifdef WIFI_AGENT_TDK_TEST
 		/* for wifiagent TDK test */
 		wifi_upload_reset();
+#endif
 	}
 
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
@@ -3847,7 +3851,7 @@ INT wifi_setRadioEnable(INT radioIndex, BOOL enable)
 	char buf[MAX_BUF_SIZE] = {0};
 	int apIndex, bss_idx;
 	int phyId = 0, res;
-	int main_vap_idx;
+	int main_vap_idx = 0;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -5124,7 +5128,9 @@ INT wifi_setRadioMode(INT radioIndex, CHAR *channelMode, UINT pureMode)
 			break;
 		}
 	}
-	buf[pos - 1] = '\0';
+	if (strlen(buf) != 0)
+		buf[pos - 1] = '\0';
+
 	params.value = buf;
 
 	res = snprintf(dat_file, sizeof(dat_file), "%s%d.dat", LOGAN_DAT_FILE, radioIndex);
