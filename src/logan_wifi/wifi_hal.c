@@ -2190,6 +2190,25 @@ static int wifi_quick_reload_ap(int apIndex)
 	return RETURN_OK;
 }
 
+static int wifi_delete_pmkid_cache(int apIndex)
+{
+	char interface_name[16] = {0};
+	int res;
+
+	char buf[MAX_BUF_SIZE]="";
+
+	if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
+		return RETURN_ERR;
+
+	res = _syscmd_secure(buf, sizeof(buf), "hostapd_cli -i %s pmksa_flush", interface_name);
+	if (res) {
+		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+		return RETURN_ERR;
+	}
+
+	return RETURN_OK;
+}
+
 static int wifi_reloadAp(int apIndex)
 {
 	char interface_name[16] = {0};
@@ -22685,7 +22704,7 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
 	char wpa_mode[32] = {0};
 	BOOL okc_enable = FALSE;
 	BOOL sae_MFP = FALSE;
-	BOOL disable_EAPOL_retries = TRUE;
+	BOOL disable_EAPOL_retries = FALSE;
 	int sae_pwe = 0;
 	struct params params = {0};
 	wifi_band band = band_invalid;
@@ -22776,6 +22795,7 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
 			} else if (key_len >= 8 && key_len < 64) {  // set wpa_passphrase
 				strncpy(password, security->u.key.key, 63);
 				password[63] = '\0';
+				wifi_delete_pmkid_cache(ap_index);
 				wifi_setApSecurityKeyPassphrase(ap_index, password);
 				res = _syscmd_secure(buf, sizeof(buf), "sed -i -n -e '/^wpa_psk=/!p' %s", config_file);
 				if (res) {
@@ -22789,6 +22809,7 @@ INT wifi_setApSecurity(INT ap_index, wifi_vap_security_t *security)
 		if (security->u.key.type == wifi_security_key_type_sae || security->u.key.type == wifi_security_key_type_psk_sae) {
 			params.name = "sae_password";
 			params.value = security->u.key.key;
+			wifi_delete_pmkid_cache(ap_index);
 			wifi_hostapdWrite(config_file, &params, 1);
 			wifi_hostapdProcessUpdate(ap_index, &params, 1);
 		} else {	// remove sae_password
