@@ -11608,6 +11608,13 @@ INT wifi_kickApAclAssociatedDevices(INT apIndex, BOOL enable)
 {
 	char aclArray[MAX_BUF_SIZE] = {0}, *acl = NULL;
 	char assocArray[MAX_BUF_SIZE] = {0};
+	int policy = 0;
+
+	/*only when the policy is black list, do it*/
+	wifi_getApMacAddressControlMode(apIndex, &policy);
+
+	if (policy != 2)
+		return RETURN_OK;
 
 	wifi_getApDenyAclDevices(apIndex, aclArray, sizeof(aclArray));
 	wifi_getApDevicesAssociated(apIndex, assocArray, sizeof(assocArray));
@@ -11625,9 +11632,7 @@ INT wifi_kickApAclAssociatedDevices(INT apIndex, BOOL enable)
 
 			acl = strtok(NULL, "\n");
 		}
-		wifi_setApMacAddressControlMode(apIndex, 2);
-	} else
-		wifi_setApMacAddressControlMode(apIndex, 0);
+	}
 
 	return RETURN_OK;
 }
