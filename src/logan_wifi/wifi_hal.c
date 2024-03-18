@@ -15238,13 +15238,14 @@ INT wifi_getBandSteeringLog(INT record_index, ULONG *pSteeringTime, CHAR *pClien
 	INT currentLine = 0;
 	INT result = -1;
 	const char *filePath = "/etc/steer_db.txt";
-	FILE *file = fopen(filePath, "r");
+	FILE *file = NULL;
 
 	if (!pSteeringTime || !pClientMAC || !pSourceSSIDIndex || !pDestSSIDIndex || !pSteeringReason) {
 		wifi_debug(DEBUG_ERROR, "Received variables are NULL\n");
 		return RETURN_ERR;
 	}
 
+	file = fopen(filePath, "r");
 	if (!file) {
 		wifi_debug(DEBUG_ERROR, "Error opening the file\n");
 		return RETURN_ERR;
