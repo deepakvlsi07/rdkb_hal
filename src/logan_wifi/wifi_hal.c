@@ -21501,9 +21501,29 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 		}
 	}
 
+	if (current_param.countryCode != operationParam->countryCode) {
+		USHORT country_idx;
+		UCHAR country_find = FALSE;
+
+		for (country_idx = 0; country_idx < ARRAY_SIZE(all_country_code); country_idx++) {
+			if (operationParam->countryCode == all_country_code[country_idx].wifi_countrycode) {
+				country_find = TRUE;
+				break;
+			}
+		}
+
+		if (country_find) {
+			if (wifi_setRadioCountryCode(index, all_country_code[country_idx].CountryName) != RETURN_OK) {
+				wifi_debug(DEBUG_ERROR, "wifi_setRadioCountryCode return error.\n");
+				goto err;
+			}
+		} else
+			wifi_debug(DEBUG_ERROR, "the new countrycode: %d is not supported\n", operationParam->countryCode);
+	}
+
 	/* only down/up interface when dat file has been changed,
 	 * if enable is true, then restart the radio.
-	 */	 
+	 */
 	multiple_set = false;
 	if (drv_dat_change == TRUE) {
 		wifi_setRadioEnable(index, FALSE);
