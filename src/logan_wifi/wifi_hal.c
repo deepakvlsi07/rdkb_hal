@@ -3441,6 +3441,114 @@ INT wifi_createInitialConfigFiles()
 	return RETURN_OK;
 }
 
+struct hal_country_code {
+	wifi_countrycode_type_t wifi_countrycode;
+	CHAR CountryName[3];
+};
+
+static struct hal_country_code all_country_code[] = {
+	{wifi_countrycode_AE, "AE"},/**< UNITED ARAB EMIRATES */
+	{wifi_countrycode_AL, "AL"},/**< ALBANIA */
+	{wifi_countrycode_AM, "AM"},/**< ARMENIA */
+	{wifi_countrycode_AR, "AR"},/**< ARGENTINA */
+	{wifi_countrycode_AT, "AT"},/**< AUSTRIA */
+	{wifi_countrycode_AU, "AU"},/**< AUSTRALIA */
+	{wifi_countrycode_AZ, "AZ"},/**< AZERBAIJAN */
+	{wifi_countrycode_BE, "BE"},/**< BELGIUM */
+	{wifi_countrycode_BG, "BG"},/**< BULGARIA */
+	{wifi_countrycode_BH, "BH"},/**< BAHRAIN */
+	{wifi_countrycode_BN, "BN"},/**< BRUNEI DARUSSALAM */
+	{wifi_countrycode_BO, "BO"},/**< BOLIVIA */
+	{wifi_countrycode_BR, "BR"},/**< BRAZIL */
+	{wifi_countrycode_BY, "BY"},/**< BELARUS */
+	{wifi_countrycode_BZ, "BZ"},/**< BELIZE */
+	{wifi_countrycode_CA, "CA"},/**< CANADA */
+	{wifi_countrycode_CH, "CH"},/**< SWITZERLAND */
+	{wifi_countrycode_CL, "CL"},/**< CHILE */
+	{wifi_countrycode_CN, "CN"},/**< CHINA */
+	{wifi_countrycode_CO, "CO"},/**< COLOMBIA */
+	{wifi_countrycode_CR, "CR"},/**< COSTA RICA */
+	{wifi_countrycode_CY, "CY"},/**< CYPRUS */
+	{wifi_countrycode_CZ, "CZ"},/**< CZECH REPUBLIC */
+	{wifi_countrycode_DE, "DE"},/**< GERMANY */
+	{wifi_countrycode_DK, "DK"},/**< DENMARK */
+	{wifi_countrycode_DO, "DO"},/**< DOMINICAN REPUBLIC */
+	{wifi_countrycode_DZ, "DZ"},/**< ALGERIA */
+	{wifi_countrycode_EC, "EC"},/**< ECUADOR */
+	{wifi_countrycode_EE, "EE"},/**< ESTONIA */
+	{wifi_countrycode_EG, "EG"},/**< EGYPT */
+	{wifi_countrycode_ES, "ES"},/**< SPAIN */
+	{wifi_countrycode_FI, "FI"},/**< FINLAND */
+	{wifi_countrycode_FR, "FR"},/**< FRANCE */
+	{wifi_countrycode_GB, "GB"},/**< UNITED KINGDOM */
+	{wifi_countrycode_GE, "GE"},/**< GEORGIA */
+	{wifi_countrycode_GR, "GR"},/**< GREECE */
+	{wifi_countrycode_GT, "GT"},/**< GUATEMALA */
+	{wifi_countrycode_HR, "HR"},/**< CROATIA */
+	{wifi_countrycode_HN, "HN"},/**< HONDURAS */
+	{wifi_countrycode_HK, "HK"},/**< HONG KONG */
+	{wifi_countrycode_HU, "HU"},/**< HUNGARY */
+	{wifi_countrycode_IS, "IS"},/**< ICELAND */
+	{wifi_countrycode_IN, "IN"},/**< INDIA */
+	{wifi_countrycode_ID, "ID"},/**< INDONESIA */
+	{wifi_countrycode_IR, "IR"},/**< IRAN, ISLAMIC REPUBLIC OF */
+	{wifi_countrycode_IE, "IE"},/**< IRELAND */
+	{wifi_countrycode_IL, "IL"},/**< ISRAEL */
+	{wifi_countrycode_IT, "IT"},/**< ITALY */
+	{wifi_countrycode_JP, "JP"},/**< JAPAN */
+	{wifi_countrycode_JO, "JO"},/**< JORDAN */
+	{wifi_countrycode_KP, "KP"},/**< KOREA, DEMOCRATIC PEOPLE'S REPUBLIC OF */
+	{wifi_countrycode_KR, "KR"},/**< KOREA, REPUBLIC OF */
+	{wifi_countrycode_KW, "KW"},/**< KUWAIT */
+	{wifi_countrycode_KZ, "KZ"},/**< KAZAKHSTAN */
+	{wifi_countrycode_LB, "LB"},/**< LEBANON */
+	{wifi_countrycode_LI, "LI"},/**< LIECHTENSTEIN */
+	{wifi_countrycode_LT, "LT"},/**< LITHUANIA */
+	{wifi_countrycode_LU, "LU"},/**< LUXEMBOURG */
+	{wifi_countrycode_LV, "LV"},/**< LATVIA */
+	{wifi_countrycode_MA, "MA"},/**< MOROCCO */
+	{wifi_countrycode_MC, "MC"},/**< MONACO */
+	{wifi_countrycode_MK, "MK"},/**< MACEDONIA, THE FORMER YUGOSLAV REPUBLIC OF */
+	{wifi_countrycode_MO, "MO"},/**< MACAO */
+	{wifi_countrycode_MX, "MX"},/**< MEXICO */
+	{wifi_countrycode_MY, "MY"},/**< MALAYSIA */
+	{wifi_countrycode_NL, "NL"},/**< NETHERLANDS */
+	{wifi_countrycode_NO, "NO"},/**< NORWAY */
+	{wifi_countrycode_NZ, "NZ"},/**< NEW ZEALAND */
+	{wifi_countrycode_OM, "OM"},/**< OMAN */
+	{wifi_countrycode_PA, "PA"},/**< PANAMA */
+	{wifi_countrycode_PE, "PE"},/**< PERU */
+	{wifi_countrycode_PH, "PH"},/**< PHILIPPINES */
+	{wifi_countrycode_PK, "PK"},/**< PAKISTAN */
+	{wifi_countrycode_PL, "PL"},/**< POLAND */
+	{wifi_countrycode_PR, "PR"},/**< PUERTO RICO */
+	{wifi_countrycode_PT, "PT"},/**< PORTUGAL */
+	{wifi_countrycode_QA, "QA"},/**< QATAR */
+	{wifi_countrycode_RO, "RO"},/**< ROMANIA */
+	{wifi_countrycode_RU, "RU"},/**< RUSSIAN FEDERATION */
+	{wifi_countrycode_SA, "SA"},/**< SAUDI ARABIA */
+	{wifi_countrycode_SE, "SE"},/**< SWEDEN */
+	{wifi_countrycode_SG, "SG"},/**< SINGAPORE */
+	{wifi_countrycode_SI, "SI"},/**< SLOVENIA */
+	{wifi_countrycode_SK, "SK"},/**< SLOVAKIA */
+	{wifi_countrycode_SV, "SV"},/**< EL SALVADOR */
+	{wifi_countrycode_SY, "SY"},/**< SYRIAN ARAB REPUBLIC */
+	{wifi_countrycode_TH, "TH"},/**< THAILAND */
+	{wifi_countrycode_TN, "TN"},/**< TUNISIA */
+	{wifi_countrycode_TR, "TR"},/**< TURKEY */
+	{wifi_countrycode_TT, "TT"},/**< TRINIDAD AND TOBAGO */
+	{wifi_countrycode_TW, "TW"},/**< TAIWAN, PROVINCE OF CHINA */
+	{wifi_countrycode_UA, "UA"},/**< UKRAINE */
+	{wifi_countrycode_US, "US"},/**< UNITED STATES */
+	{wifi_countrycode_UY, "UY"},/**< URUGUAY */
+	{wifi_countrycode_UZ, "UZ"},/**< UZBEKISTAN */
+	{wifi_countrycode_VE, "VE"},/**< VENEZUELA */
+	{wifi_countrycode_VN, "VN"},/**< VIET NAM */
+	{wifi_countrycode_YE, "YE"},/**< YEMEN */
+	{wifi_countrycode_ZA, "ZA"},/**< SOUTH AFRICA */
+	{wifi_countrycode_ZW, "ZW"},/**< ZIMBABWE */
+};
+
 /* outputs the country code to a max 64 character string */
 INT wifi_getRadioCountryCode(INT radioIndex, CHAR *output_string)
 {
@@ -3459,51 +3567,100 @@ INT wifi_getRadioCountryCode(INT radioIndex, CHAR *output_string)
 	return RETURN_OK;
 }
 
+INT wifi_setCountryCode_netlink(INT radioIndex, CHAR *CountryCode)
+{
+	int ret;
+	struct unl unl_ins;
+	struct nl_msg *msg  = NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+	int len;
+
+	len = strlen(CountryCode);
+	if (len != 2) {
+		wifi_debug(DEBUG_ERROR, "invalid CountryCode len!!!\n");
+		return RETURN_ERR;
+	}
+
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_COUNTRY;
+	param.if_type = NL80211_ATTR_WIPHY;
+	param.if_idx = radio_index_to_phy(radioIndex);
+
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+
+	/*add mtk vendor cmd data*/
+	if (nla_put(msg, MTK_NL80211_VENDOR_ATTR_COUNTRY_SET_CODE, len, CountryCode)) {
+		wifi_debug(DEBUG_ERROR, "Nla put COUNTRY_SET_CODE attribute error\n");
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	/*send mtk nl80211 vendor msg*/
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		goto err;
+	}
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_NOTICE, "set cmd success.\n");
+	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
+	return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR, "set cmd fails.\n");
+	return RETURN_ERR;
+}
+
 INT wifi_setRadioCountryCode(INT radioIndex, CHAR *CountryCode)
 {
-	/*Set wifi config. Wait for wifi reset to apply*/
-	struct params params;
-	char config_file[MAX_BUF_SIZE] = {0};
-	int ret = 0, res;
-	int main_vap_idx;
+	struct params dat = {0};
+	char config_file_dat[128] = {0};
+	wifi_band band = band_invalid;
+	USHORT country_idx;
+	UCHAR country_find = FALSE;
+	int res;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
 
-	if(NULL == CountryCode || strlen(CountryCode) >= 32 ) {
-		printf("%s: input para error!!!\n", __func__);
+	if ((CountryCode == NULL) || (strlen(CountryCode) != 2)) {
+		wifi_debug(DEBUG_ERROR, "input para error!!!\n");
 		return RETURN_ERR;
 	}
 
-	if (!strlen(CountryCode)) {
-		memcpy(CountryCode, "US", strlen("US")); /*default set the code to US*/
-		CountryCode[2] = '\0';
+	/*check country code is valid*/
+	for (country_idx = 0; country_idx < ARRAY_SIZE(all_country_code); country_idx++) {
+		if (!strcmp(CountryCode, all_country_code[country_idx].CountryName)) {
+			country_find = TRUE;
+			break;
+		}
 	}
 
-	params.name = "country_code";
-	params.value = CountryCode;
-
-	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
-		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+	if (!country_find) {
+		wifi_debug(DEBUG_ERROR, "CountryCode: %s is not supported!!!\n", CountryCode);
 		return RETURN_ERR;
 	}
-	res = snprintf(config_file, MAX_BUF_SIZE, "%s%d.conf", CONFIG_PREFIX, main_vap_idx);
-	if (os_snprintf_error(MAX_BUF_SIZE, res)) {
+
+	dat.name = "CountryCode";
+	dat.value = CountryCode;
+
+	band = radio_index_to_band(radioIndex);
+	res = snprintf(config_file_dat, sizeof(config_file_dat), "%s%d.dat", LOGAN_DAT_FILE, band);
+	if (os_snprintf_error(sizeof(config_file_dat), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
 	}
-	ret = wifi_hostapdWrite(config_file, &params, 1);
 
-	if (ret) {
-		WIFI_ENTRY_EXIT_DEBUG("Inside %s: wifi_hostapdWrite() return %d\n",
-			__func__, ret);
-	}
+	wifi_datfileWrite(config_file_dat, &dat, 1);
 
-	ret = wifi_hostapdProcessUpdate(radioIndex, &params, 1);
-
-	if (ret) {
-		WIFI_ENTRY_EXIT_DEBUG("Inside %s: wifi_hostapdProcessUpdate() return %d\n",
-			__func__, ret);
-	}
+	/*do country code quick setting*/
+	wifi_setCountryCode_netlink(radioIndex, CountryCode);
 
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n", __func__, __LINE__);
 
@@ -20214,6 +20371,19 @@ int main(int argc,char **argv)
 		return 0;
 	}
 
+	if(strstr(argv[1], "wifi_setCountryCode") != NULL)
+	{
+		if(argc <= 3)
+		{
+			wifi_debug(DEBUG_ERROR, "Insufficient arguments \n");
+			exit(-1);
+		}
+
+		wifi_setRadioCountryCode(index, argv[3]);
+		printf("Ap SET CountryCode %s\n", argv[3]);
+		return 0;
+	}
+
 	if(strstr(argv[1], "wifi_setChannel") != NULL)
 	{
 		UINT channel;
@@ -20808,6 +20978,18 @@ int main(int argc,char **argv)
 		printf("Current operating bandwidth is %s \n",buf);
 		return 0;
 	}
+	if(strstr(argv[1],"wifi_getCountryCode") != NULL)
+	{
+		if (argc <= 2)
+		{
+			printf("Insufficient arguments\n");
+			exit(-1);
+		}
+		char country[64]= {'\0'};
+		wifi_getRadioCountryCode(index, country);
+		printf("Current country code is %s \n", country);
+		return 0;
+	}
 	if(strstr(argv[1],"wifi_getRadioConfiguredChannelBandwidth") != NULL)
 	{
 		if (argc <= 2)
@@ -21368,6 +21550,9 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 	BOOL auto_ch_en = FALSE;
 	wifi_band band_idx;
 	USHORT punct_bitmap;
+	CHAR country_string[64] = {0};
+	USHORT country_idx;
+	UCHAR country_find = FALSE;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	printf("Entering %s index = %d\n", __func__, (int)index);
@@ -21552,7 +21737,26 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 		operationParam->channelSecondary[i] = 0;
 	}
 	operationParam->csa_beacon_count = 15;
-	operationParam->countryCode = wifi_countrycode_US;  // hard to convert string to corresponding enum
+
+	/* get current Country code*/
+	if (wifi_getRadioCountryCode(index, country_string) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "wifi_getRadioCountryCode return error.\n");
+		return RETURN_ERR;
+	}
+
+	for (country_idx = 0; country_idx < ARRAY_SIZE(all_country_code); country_idx++) {
+		if (!strcmp(country_string, all_country_code[country_idx].CountryName)) {
+			country_find = TRUE;
+			break;
+		}
+	}
+
+	if (country_find)
+		operationParam->countryCode = all_country_code[country_idx].wifi_countrycode;
+	else {
+		wifi_debug(DEBUG_ERROR, "current Country Code:%s not supported, use US as default\n", country_string);
+		operationParam->countryCode = wifi_countrycode_US;
+	}
 
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 	return RETURN_OK;
@@ -21561,7 +21765,7 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 static BOOL is_main_vap_index(int vap_index)
 {
 	int radio, main_vap_index;
-	
+
 	for (radio = 0; radio < get_runtime_max_radio(); radio++) {
 		if (array_index_to_vap_index(radio, 0, &main_vap_index) == RETURN_OK) {
 			if (vap_index == main_vap_index)
@@ -22383,6 +22587,8 @@ static int getRadioCapabilities(int radioIndex, wifi_radio_capabilities_t *rcap)
 	wifi_band band;
 	int res;
 	int main_vap_idx;
+	USHORT country_idx;
+	UCHAR country_find = FALSE;
 
 	if(rcap == NULL)
 	{
@@ -22424,24 +22630,31 @@ static int getRadioCapabilities(int radioIndex, wifi_radio_capabilities_t *rcap)
 	/* Supported Country List*/
 	memset(output_string, 0, sizeof(output_string));
 	status = wifi_getRadioCountryCode(radioIndex, output_string);
-	if( status != 0 ) {
+	if (status != 0) {
 		printf("[wifi_hal dbg] : func[%s] line[%d] error_ret[%d] radio_index[%d] output[%s]\n", __FUNCTION__, __LINE__, status, radioIndex, output_string);
 		return RETURN_ERR;
-	} else {
+	} else
 		printf("[wifi_hal dbg] : func[%s] line[%d], output [%s]\n", __FUNCTION__, __LINE__, output_string);
-	}
-	if(!strcmp(output_string,"US")){
-		rcap->countrySupported[0] = wifi_countrycode_US;
-		rcap->countrySupported[1] = wifi_countrycode_CA;
-	} else if (!strcmp(output_string,"CA")) {
-		rcap->countrySupported[0] = wifi_countrycode_CA;
-		rcap->countrySupported[1] = wifi_countrycode_US;
-	} else {
-		printf("[wifi_hal dbg] : func[%s] line[%d] radio_index[%d] Invalid Country [%s]\n", __FUNCTION__, __LINE__, radioIndex, output_string);
+
+	rcap->numcountrySupported = ARRAY_SIZE(all_country_code);
+
+	for (country_idx = 0; (country_idx < rcap->numcountrySupported) && (rcap->numcountrySupported <= wifi_countrycode_max); country_idx++)
+		rcap->countrySupported[country_idx] = all_country_code[country_idx].wifi_countrycode;
+
+	for (country_idx = 0; country_idx < rcap->numcountrySupported; country_idx++) {
+		if (!strcmp(output_string, all_country_code[country_idx].CountryName)) {
+			country_find = TRUE;
+			break;
+		}
 	}
 
-	rcap->numcountrySupported = 2;
+	if (country_find && (country_idx != 0) && (country_idx < wifi_countrycode_max)) {
+		wifi_countrycode_type_t tmp;
 
+		tmp = rcap->countrySupported[0];
+		rcap->countrySupported[0] = rcap->countrySupported[country_idx];
+		rcap->countrySupported[country_idx] = tmp;
+	}
 	/* csi */
 	rcap->csi.maxDevices = 8;
 	rcap->csi.soudingFrameSupported = TRUE;
