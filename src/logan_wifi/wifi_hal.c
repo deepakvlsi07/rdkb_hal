@@ -2959,6 +2959,7 @@ wifiBringUpInterfacesForRadio(int radio_idx)
 	char ret_buf[MAX_BUF_SIZE] = {0};
 	char inf_name[IF_NAME_SIZE] = {0};
 	int res, ret, bss_num;
+	char interface_name[IF_NAME_SIZE] = {0};
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -2987,6 +2988,14 @@ wifiBringUpInterfacesForRadio(int radio_idx)
 		if (array_index_to_vap_index(radio_idx, bss_idx, &ap_idx) != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "invalid radio_idx %d, bss_idx %d\n", radio_idx, bss_idx);
 			continue;
+		}
+
+		/* use iw add interface to create interface by default*/
+		if ((wifi_GetInterfaceName(ap_idx, interface_name) == RETURN_OK) && !is_main_vap_index(ap_idx)) {
+			res = _syscmd_secure(ret_buf, sizeof(ret_buf), "iw phy%d interface add %s type __ap", radio_idx, interface_name);
+			if (res) {
+				wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			}
 		}
 
 		/* For main interface, always bring it up firstly.
