@@ -14063,6 +14063,7 @@ INT wifi_getApAssociatedDeviceDiagnosticResult(INT apIndex, wifi_associated_dev_
 	FILE *f = NULL;
 	int read_flag=0, auth_temp=0, mac_temp=0;
 	char buf[2048] = {0};
+	char count[8] = {0};
 	char *param = NULL, *value = NULL, *line=NULL;
 	size_t len = 0;
 	wifi_associated_dev_t *dev=NULL;
@@ -14072,12 +14073,18 @@ INT wifi_getApAssociatedDeviceDiagnosticResult(INT apIndex, wifi_associated_dev_
 	*associated_dev_array = NULL;
 	if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
 		return RETURN_ERR;
-	res = _syscmd_secure(buf, sizeof(buf), "hostapd_cli -i%s all_sta | grep AUTHORIZED | wc -l", interface_name);
+
+	res = _syscmd_secure(buf, sizeof(buf), "hostapd_cli -i%s all_sta > /tmp/connected_devices.txt" , interface_name);
 	if (res) {
 		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 	}
 
-	*output_array_size = atoi(buf);
+	res = _syscmd_secure(count, sizeof(count), "cat /tmp/connected_devices.txt | grep AUTHORIZED | wc -l");
+	if(res) {
+		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+	}
+
+	*output_array_size = atoi(count);
 
 	if (*output_array_size <= 0)
 		return RETURN_OK;
@@ -14088,10 +14095,6 @@ INT wifi_getApAssociatedDeviceDiagnosticResult(INT apIndex, wifi_associated_dev_
 		return RETURN_ERR;
 	}
 	*associated_dev_array = dev;
-	res = _syscmd_secure(buf, sizeof(buf), "hostapd_cli -i%s all_sta > /tmp/connected_devices.txt" , interface_name);
-	if (res) {
-		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-	}
 
 	f = fopen("/tmp/connected_devices.txt", "r");
 	if (f==NULL)
@@ -14113,27 +14116,33 @@ INT wifi_getApAssociatedDeviceDiagnosticResult(INT apIndex, wifi_associated_dev_
 			value[strlen(value)-1]='\0';
 			if(strstr (value,"AUTHORIZED") != NULL )
 			{
-				dev[auth_temp].cli_AuthenticationState = 1;
-				dev[auth_temp].cli_Active = 1;
-				auth_temp++;
-				read_flag=1;
+				if (auth_temp < *output_array_size) {
+					dev[auth_temp].cli_AuthenticationState = 1;
+					dev[auth_temp].cli_Active = 1;
+					auth_temp++;
+					read_flag=1;
+				} else
+					wifi_debug(DEBUG_ERROR, "auth_temp = %d, output_array_size = %d\n", auth_temp ,*output_array_size);
 			}
 		}
 		if(read_flag==1)
 		{
 			if( strcmp("dot11RSNAStatsSTAAddress",param) == 0 )
 			{
-				value[strlen(value)-1]='\0';
-				if (sscanf(value, "%x:%x:%x:%x:%x:%x",
-						(unsigned int *)&dev[mac_temp].cli_MACAddress[0],
-						(unsigned int *)&dev[mac_temp].cli_MACAddress[1],
-						(unsigned int *)&dev[mac_temp].cli_MACAddress[2],
-						(unsigned int *)&dev[mac_temp].cli_MACAddress[3],
-						(unsigned int *)&dev[mac_temp].cli_MACAddress[4],
-						(unsigned int *)&dev[mac_temp].cli_MACAddress[5] ) == EOF)
-						continue;
-				mac_temp++;
-				read_flag=0;
+				if (mac_temp < *output_array_size) {
+					value[strlen(value)-1]='\0';
+					if (sscanf(value, "%x:%x:%x:%x:%x:%x",
+							(unsigned int *)&dev[mac_temp].cli_MACAddress[0],
+							(unsigned int *)&dev[mac_temp].cli_MACAddress[1],
+							(unsigned int *)&dev[mac_temp].cli_MACAddress[2],
+							(unsigned int *)&dev[mac_temp].cli_MACAddress[3],
+							(unsigned int *)&dev[mac_temp].cli_MACAddress[4],
+							(unsigned int *)&dev[mac_temp].cli_MACAddress[5] ) == EOF)
+							continue;
+					mac_temp++;
+					read_flag=0;
+				} else
+					wifi_debug(DEBUG_ERROR, "mac_temp = %d, output_array_size = %d\n", auth_temp ,*output_array_size);
 			}
 		}
 	}
@@ -14712,6 +14721,7 @@ INT wifi_getApAssociatedDeviceDiagnosticResult3(INT apIndex, wifi_associated_dev
 	FILE *f = NULL;
 	int auth_temp= -1;
 	char buf[2048] = {0};
+	char count[8] = {0};
 	char *param = NULL, *value = NULL, *line=NULL;
 	size_t len = 0;
 	wifi_associated_dev3_t *dev=NULL;
@@ -14722,12 +14732,18 @@ INT wifi_getApAssociatedDeviceDiagnosticResult3(INT apIndex, wifi_associated_dev
 	if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 
-	res = _syscmd_secure(buf, sizeof(buf), "hostapd_cli -i%s all_sta | grep AUTHORIZED | wc -l", interface_name);
+	res = _syscmd_secure(buf, sizeof(buf),
+		"hostapd_cli -i%s all_sta > /tmp/diagnostic3_devices.txt" , interface_name);
 	if (res) {
 		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 	}
 
-	*output_array_size = atoi(buf);
+	res = _syscmd_secure(count, sizeof(count), "cat /tmp/diagnostic3_devices.txt | grep AUTHORIZED | wc -l");
+	if(res) {
+		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+	}
+
+	*output_array_size = atoi(count);
 
 	if (*output_array_size <= 0)
 		return RETURN_OK;
@@ -14739,11 +14755,6 @@ INT wifi_getApAssociatedDeviceDiagnosticResult3(INT apIndex, wifi_associated_dev
 		return RETURN_ERR;
 	}
 	*associated_dev_array = dev;
-	res = _syscmd_secure(buf, sizeof(buf),
-		"hostapd_cli -i%s all_sta > /tmp/diagnostic3_devices.txt" , interface_name);
-	if (res) {
-		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-	}
 
 	f = fopen("/tmp/diagnostic3_devices.txt", "r");
 	if (f == NULL)
@@ -14766,27 +14777,36 @@ INT wifi_getApAssociatedDeviceDiagnosticResult3(INT apIndex, wifi_associated_dev
 			if(strstr (value,"AUTHORIZED") != NULL )
 			{
 				auth_temp++;
-				dev[auth_temp].cli_AuthenticationState = 1;
-				dev[auth_temp].cli_Active = 1;
+				if (auth_temp < *output_array_size) {
+					dev[auth_temp].cli_AuthenticationState = 1;
+					dev[auth_temp].cli_Active = 1;
+				} else
+					wifi_debug(DEBUG_ERROR, "auth_temp = %d, output_array_size = %d\n", auth_temp ,*output_array_size);
 			}
 		} else if (auth_temp < 0) {
 			continue;
 		} else if( strcmp("dot11RSNAStatsSTAAddress", param) == 0 )
 		{
-			value[strlen(value)-1]='\0';
-			if (sscanf(value, "%x:%x:%x:%x:%x:%x",
-				(unsigned int *)&dev[auth_temp].cli_MACAddress[0],
-				(unsigned int *)&dev[auth_temp].cli_MACAddress[1],
-				(unsigned int *)&dev[auth_temp].cli_MACAddress[2],
-				(unsigned int *)&dev[auth_temp].cli_MACAddress[3],
-				(unsigned int *)&dev[auth_temp].cli_MACAddress[4],
-				(unsigned int *)&dev[auth_temp].cli_MACAddress[5]) == EOF)
-				continue;
+			if (auth_temp < *output_array_size) {
+				value[strlen(value)-1]='\0';
+				if (sscanf(value, "%x:%x:%x:%x:%x:%x",
+					(unsigned int *)&dev[auth_temp].cli_MACAddress[0],
+					(unsigned int *)&dev[auth_temp].cli_MACAddress[1],
+					(unsigned int *)&dev[auth_temp].cli_MACAddress[2],
+					(unsigned int *)&dev[auth_temp].cli_MACAddress[3],
+					(unsigned int *)&dev[auth_temp].cli_MACAddress[4],
+					(unsigned int *)&dev[auth_temp].cli_MACAddress[5]) == EOF)
+					continue;
+			} else
+				wifi_debug(DEBUG_ERROR, "auth_temp = %d, output_array_size = %d\n", auth_temp ,*output_array_size);
 		} else if (strcmp("signal", param) == 0) {
-			value[strlen(value)-1]='\0';
-			if (sscanf(value, "%d", &dev[auth_temp].cli_RSSI) == EOF)
-				continue;
-			dev[auth_temp].cli_SNR = 95 + dev[auth_temp].cli_RSSI;
+			if (auth_temp < *output_array_size) {
+				value[strlen(value)-1]='\0';
+				if (sscanf(value, "%d", &dev[auth_temp].cli_RSSI) == EOF)
+					continue;
+				dev[auth_temp].cli_SNR = 95 + dev[auth_temp].cli_RSSI;
+			} else
+				wifi_debug(DEBUG_ERROR, "auth_temp = %d, output_array_size = %d\n", auth_temp ,*output_array_size);
 		}
 	}
 	if (line)
