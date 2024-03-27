@@ -7868,6 +7868,7 @@ INT wifi_setRadioCarrierSenseThresholdInUse(INT radioIndex, INT threshold)	//P3
 INT wifi_getRadioBeaconPeriod(INT radioIndex, UINT *output)
 {
 	char interface_name[16] = {0};
+	char config_file[128] = {0};
 	char buf[MAX_CMD_SIZE]={'\0'};
 	int res;
 	int main_vap_idx;
@@ -7890,6 +7891,15 @@ INT wifi_getRadioBeaconPeriod(INT radioIndex, UINT *output)
 	}
 
 	*output = atoi(buf);
+	if (*output == 0) {
+		res = snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, main_vap_idx);
+		if (os_snprintf_error(sizeof(config_file), res)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+			return RETURN_ERR;
+		}
+		wifi_hostapdRead(config_file, "beacon_int", buf, sizeof(buf));
+		*output = atoi(buf);
+	}
 
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 	return RETURN_OK;
