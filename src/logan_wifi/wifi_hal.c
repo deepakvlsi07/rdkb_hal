@@ -554,6 +554,8 @@ struct mtk_nl80211_cb_data {
 
 int mtk_nl80211_init(struct unl *nl, struct nl_msg **msg,
 	struct nlattr **msg_data, struct mtk_nl80211_param *param) {
+	int retry_count = 0;
+
 	/*sanity check here*/
 	if (!nl || !param) {
 		(void)fprintf(stderr,
@@ -568,10 +570,15 @@ int mtk_nl80211_init(struct unl *nl, struct nl_msg **msg,
 			__func__, __LINE__, param->if_type, NL80211_ATTR_IFINDEX, NL80211_ATTR_WIPHY);
 		return -1;
 	}
+retry:
 	/*init the nl*/
 	if (unl_genl_init(nl, "nl80211") < 0) {
-		(void)fprintf(stderr, "[%s][%d]::Failed to connect to nl80211\n",
-			__func__, __LINE__);
+		if (retry_count++ < 3) {
+			(void)fprintf(stderr, "[%s][%d]::Failed to connect to nl80211, retry %d\n",
+				__func__, __LINE__, retry_count);
+			usleep(200000);
+			goto retry;
+		}
 		return -1;
 	}
 	/*init the msg*/
