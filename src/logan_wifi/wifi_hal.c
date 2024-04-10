@@ -6502,7 +6502,7 @@ INT wifi_setBandSteeringApGroup(char *ApGroup)
 		return RETURN_ERR;
 	}
 
-	ret = wifi_getBaseBSSID(array[0], output);
+	ret = wifi_getBaseBSSID(array[0]-1, output);
 	if (ret != RETURN_OK) {
 		wifi_debug(DEBUG_ERROR, "wifi_getBaseBSSID return error\n");
 		return RETURN_ERR;
@@ -6513,7 +6513,7 @@ INT wifi_setBandSteeringApGroup(char *ApGroup)
 	}
 
 	memset(output, 0, sizeof(output));
-	ret = wifi_getBaseBSSID(array[1], output);
+	ret = wifi_getBaseBSSID(array[1]-1, output);
 	if (ret != RETURN_OK) {
 		wifi_debug(DEBUG_ERROR, "wifi_getBaseBSSID return error\n");
 		return RETURN_ERR;
@@ -15264,7 +15264,7 @@ INT wifi_setBandSteeringBandUtilizationThreshold (INT radioIndex, INT buThreshol
 			return RETURN_ERR;
 		}
 		memset(buf, 0, sizeof(buf));
-		res = _syscmd_secure(buf, sizeof(buf), "sed -i \"s/^CUOverloadTh_2G=.*/CUOverloadTh_2G=%d/\" %s", buThreshold, conf_file);
+		res = _syscmd_secure(buf, sizeof(buf), "datconf -f %s set CUOverloadTh_2G %d", conf_file, buThreshold);
 		if(res) {
 			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 			return RETURN_ERR;
@@ -15277,13 +15277,13 @@ INT wifi_setBandSteeringBandUtilizationThreshold (INT radioIndex, INT buThreshol
 			return RETURN_ERR;
 		}
 		memset(buf, 0, sizeof(buf));
-		res = _syscmd_secure(buf, sizeof(buf), "sed -i \"s/^CUOverloadTh_5G_L=.*/CUOverloadTh_5G_L=%d/\" %s", buThreshold, conf_file);
+		res = _syscmd_secure(buf, sizeof(buf), "datconf -f %s set CUOverloadTh_5G_L %d", conf_file, buThreshold);
 		if(res) {
 			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 			return RETURN_ERR;
 		}
 		memset(buf, 0, sizeof(buf));
-		res = _syscmd_secure(buf, sizeof(buf), "sed -i \"s/^CUOverloadTh_5G_H=.*/CUOverloadTh_5G_H=%d/\" %s", buThreshold, conf_file);
+		res = _syscmd_secure(buf, sizeof(buf), "datconf -f %s set CUOverloadTh_5G_H %d", conf_file, buThreshold);
 		if(res) {
 			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 			return RETURN_ERR;
@@ -15296,7 +15296,7 @@ INT wifi_setBandSteeringBandUtilizationThreshold (INT radioIndex, INT buThreshol
 			return RETURN_ERR;
 		}
 		memset(buf, 0, sizeof(buf));
-		res = _syscmd_secure(buf, sizeof(buf), "sed -i \"s/^CUOverloadTh_6G=.*/CUOverloadTh_6G=%d/\" %s", buThreshold, conf_file);
+		res = _syscmd_secure(buf, sizeof(buf), "datconf -f %s set CUOverloadTh_6G %d", conf_file, buThreshold);
 		if(res) {
 			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 			return RETURN_ERR;
@@ -15386,7 +15386,7 @@ INT wifi_setBandSteeringRSSIThreshold (INT radioIndex, INT rssiThreshold)
 			return RETURN_ERR;
 		}
 		memset(buf, 0, sizeof(buf));
-		res = _syscmd_secure(buf, sizeof(buf), "sed -i \"s/^RSSISteeringEdge_UG=.*/RSSISteeringEdge_UG=%d/\" %s", rssiThreshold, conf_file);
+		res = _syscmd_secure(buf, sizeof(buf), "datconf -f %s set RSSISteeringEdge_UG %d", conf_file, rssiThreshold);
 		if(res) {
 			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 			return RETURN_ERR;
@@ -15399,7 +15399,7 @@ INT wifi_setBandSteeringRSSIThreshold (INT radioIndex, INT rssiThreshold)
 			return RETURN_ERR;
 		}
 		memset(buf, 0, sizeof(buf));
-		res = _syscmd_secure(buf, sizeof(buf), "sed -i \"s/^RSSISteeringEdge_DG=.*/RSSISteeringEdge_DG=%d/\" %s", rssiThreshold, conf_file);
+		res = _syscmd_secure(buf, sizeof(buf), "datconf -f %s set RSSISteeringEdge_DG %d", conf_file, rssiThreshold);
 		if(res) {
 			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 			return RETURN_ERR;
@@ -15412,13 +15412,7 @@ INT wifi_setBandSteeringRSSIThreshold (INT radioIndex, INT rssiThreshold)
 			return RETURN_ERR;
 		}
 		memset(buf, 0, sizeof(buf));
-		res = _syscmd_secure(buf, sizeof(buf), "sed -i \"s/^RSSISteeringEdge_6G_DG=.*/RSSISteeringEdge_6G_DG=%d/\" %s", rssiThreshold, conf_file);
-		if(res) {
-			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-			return RETURN_ERR;
-		}
-		memset(buf, 0, sizeof(buf));
-		res = _syscmd_secure(buf, sizeof(buf), "sed -i \"s/^RSSISteeringEdge_6G_UG=.*/RSSISteeringEdge_6G_UG=%d/\" %s", rssiThreshold, conf_file);
+		res = _syscmd_secure(buf, sizeof(buf), "datconf -f %s set RSSISteeringEdge_6G_DG %d", conf_file, rssiThreshold);
 		if(res) {
 			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 			return RETURN_ERR;
