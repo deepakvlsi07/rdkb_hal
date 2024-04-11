@@ -110,6 +110,14 @@ Licensed under the ISC license
 #define ROM_LOGAN_DAT_FILE "/rom/etc/wireless/mediatek/mt7990.b"
 #endif
 
+#ifdef ARHT_SOC
+#define ROM_SSID_ENABLE_CONFIG "/usr/wireless/hal/wifi_config"
+#define ROM_WIFI_BRLAN_CONFIG "/usr/wireless/hal/wifi_config"
+#else
+#define ROM_SSID_ENABLE_CONFIG "/rom/etc/wireless/hal/wifi_config"
+#define ROM_WIFI_BRLAN_CONFIG "/rom/etc/wireless/hal/wifi_config"
+#endif
+
 #define SSID_ENABLE_CONFIG "/etc/wireless/hal/wifi_config"
 #define WIFI_BRLAN_CONFIG "/etc/wireless/hal/wifi_config"
 
@@ -497,6 +505,9 @@ char *				  wifi_get_str_by_key(wifi_secur_list *list, int list_sz, int key);
 static int ieee80211_channel_to_frequency(int channel, int *freqMHz);
 static void wifi_PrepareDefaultHostapdConfigs(bool reset);
 static void wifi_psk_file_reset();
+static void wifi_vap_status_reset();
+static void wifi_radio_reset_count_reset();
+static void wifi_guard_interval_file_check();
 static void wifi_dat_file_reset_by_radio(char radio_idx);
 static int util_get_sec_chan_offset(int channel, const char* ht_mode);
 int hostapd_raw_add_bss(int apIndex);
@@ -2509,7 +2520,7 @@ wifi_PrepareEnableSSIDConfig(bool reset)
 
 	if (access(SSID_ENABLE_CONFIG, F_OK) == 0 && reset == FALSE)
 		return;
-	res = _syscmd_secure(ret_buf, sizeof(ret_buf), "cp /rom%s %s", SSID_ENABLE_CONFIG, SSID_ENABLE_CONFIG);
+	res = _syscmd_secure(ret_buf, sizeof(ret_buf), "cp %s %s", ROM_SSID_ENABLE_CONFIG, SSID_ENABLE_CONFIG);
 	if (res) {
 		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 	}
@@ -2526,7 +2537,7 @@ wifi_PrepareWifiBrlanConfig(bool reset)
 
 	if (access(WIFI_BRLAN_CONFIG, F_OK) == 0 && reset == FALSE)
 		return;
-	res = _syscmd_secure(ret_buf, sizeof(ret_buf), "cp /rom%s %s", WIFI_BRLAN_CONFIG, WIFI_BRLAN_CONFIG);
+	res = _syscmd_secure(ret_buf, sizeof(ret_buf), "cp %s %s", ROM_WIFI_BRLAN_CONFIG, WIFI_BRLAN_CONFIG);
 	if (res) {
 		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 	}
@@ -2597,24 +2608,33 @@ INT wifi_factoryReset()
 	/*delete running hostapd conf files*/
 	wifi_dbg_printf("\n[%s]: deleting hostapd conf file.", __func__);
 
-	res = _syscmd_secure(buf, sizeof(buf), "rm -rf /nvram/*.conf");
+	res = _syscmd_secure(buf, sizeof(buf), "rm -rf /nvram/hostapd*.conf");
 	if (res) {
 		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 	}
-	wifi_PrepareWifiBrlanConfig(TRUE);
 
+	wifi_psk_file_reset();
+	wifi_vap_status_reset();
+	wifi_radio_reset_count_reset();
+	wifi_guard_interval_file_check();
+
+	wifi_PrepareWifiBrlanConfig(TRUE);
 	wifi_PrepareDefaultHostapdConfigs(TRUE);
 	wifi_PrepareEnableSSIDConfig(TRUE);
 	wifi_psk_file_reset();
 
+	for (UCHAR radio_idx = 0; radio_idx < get_runtime_max_radio(); radio_idx++) {
+		wifi_dat_file_reset_by_radio(radio_idx);
+	}
 
+#if 0
 	memset(buf, 0, MAX_BUF_SIZE);
 
 	res = _syscmd_secure(buf, sizeof(buf), "systemctl restart hostapd.service");
 	if (res) {
 		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 	}
-
+#endif
 	return RETURN_OK;
 }
 
