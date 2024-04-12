@@ -169,7 +169,8 @@ enum {
 	DEBUG_ERROR = 1,
 	DEBUG_WARN = 2,
 	DEBUG_NOTICE = 3,
-	DEBUG_INFO = 4
+	DEBUG_INFO = 4,
+	DEBUG_MAX
 };
 int wifi_debug_level = DEBUG_WARN;
 
@@ -188,25 +189,52 @@ char *get_time(char *time)
 	return time;
 }
 
-
 void _wifi_debug(int level, const char *function, int line, const char *format, ...)
 {
-	char time[128];
-	va_list args;
+	char buff[256] = {0};
+	va_list list;
+	FILE *fpg = NULL;
+	get_time(buff);
 
-	if (level <= wifi_debug_level) {
-		FILE *file = fopen("/rdklogs/logs/wifi_vendor_hal.log", "a");
-		if (file == NULL) {
+	if ((access("/nvram/wifiVendorHalDbg", R_OK)) == 0) {
+		fpg = fopen("/tmp/wifiVendorHal", "a+");
+		if (fpg == NULL) {
 			return;
 		}
-
-		get_time(time);
-		va_start(args, format);
-		fprintf(file, "[%s][%s:%d] ", time, function, line);
-		vfprintf(file, format, args);
-		va_end(args);
-		fclose(file);
+	} else {
+		switch (level) {
+			case DEBUG_OFF:
+			case DEBUG_ERROR:
+			case DEBUG_WARN:
+				fpg = fopen("/rdklogs/logs/wifi_vendor_hal.log", "a+");
+				if (fpg == NULL) {
+					return;
+				}
+			break;
+			case DEBUG_NOTICE:
+			case DEBUG_INFO:
+			default:
+				return;
+		}
 	}
+	static const char *level_marker[DEBUG_MAX] =
+	{
+		[DEBUG_OFF] = "<OFF>",
+		[DEBUG_ERROR] = "<ERR>",
+		[DEBUG_WARN] = "<WARN>",
+		[DEBUG_NOTICE] = "<NOTICE>",
+		[DEBUG_INFO] = "<INFO>",
+	};
+	if (level < DEBUG_MAX)
+		snprintf(&buff[strlen(buff)], 256 - strlen(buff), " %s ", level_marker[level]);
+	fprintf(fpg, "%s[%s:%d]", buff, function, line);
+	va_start(list, format);
+	vfprintf(fpg, format, list);
+	va_end(list);
+	fflush(fpg);
+	fclose(fpg);
+
+	return;
 }
 
 #define wifi_debug(level, format, ...) _wifi_debug(level, __func__, __LINE__, format, ##__VA_ARGS__)
@@ -227,10 +255,8 @@ void _wifi_debug(int level, const char *function, int line, const char *format, 
 }
 
 #ifdef WIFI_DEBUG
-#define wifi_dbg_printf(format, ...) _wifi_debug(DEBUG_OFF, __func__, __LINE__, format, ##__VA_ARGS__)
 #define WIFI_ENTRY_EXIT_DEBUG(format, ...) _wifi_debug(DEBUG_OFF, __func__, __LINE__, format, ##__VA_ARGS__)
 #else
-#define wifi_dbg_printf(format, args...)
 #define WIFI_ENTRY_EXIT_DEBUG(format, args...)
 #endif
 
@@ -2595,7 +2621,7 @@ INT wifi_factoryReset()
 	int res;
 
 	/*delete running hostapd conf files*/
-	wifi_dbg_printf("\n[%s]: deleting hostapd conf file.", __func__);
+	wifi_debug(DEBUG_INFO, "deleting hostapd conf file.\n");
 
 	res = _syscmd_secure(buf, sizeof(buf), "rm -rf /nvram/*.conf");
 	if (res) {
@@ -3077,7 +3103,7 @@ wifiBringUpInterfacesForRadio(int radio_idx)
 			wifi_setApEnable(ap_idx, FALSE);
 
 		wifi_GetInterfaceName(ap_idx, inf_name);
-		wifi_debug(DEBUG_ERROR, "bring up %s\n", inf_name);
+		wifi_debug(DEBUG_OFF, "bring up %s\n", inf_name);
 
 		memset(cmd, 0, MAX_CMD_SIZE);
 		memset(ret_buf, 0, MAX_BUF_SIZE);
@@ -8155,9 +8181,7 @@ INT wifi_setRadioBasicDataTransmitRates(INT radioIndex, CHAR *TransmitRates)
 	params.name= "basic_rates";
 	params.value =TransmitRates;
 
-	wifi_dbg_printf("\n%s:",__func__);
-	wifi_dbg_printf("\nparams.value=%s\n",params.value);
-	wifi_dbg_printf("\n******************Transmit rates=%s\n",TransmitRates);
+	wifi_debug(DEBUG_INFO, "params.value=%s, Transmit rates=%s\n", params.value, TransmitRates);
 	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
 		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
 		return RETURN_ERR;
@@ -8672,7 +8696,7 @@ INT wifi_getSSIDName(INT apIndex, CHAR *output)
 	}
 	wifi_hostapdRead(config_file,"ssid",output, MAX_SSID_NAME_LEN);
 
-	wifi_dbg_printf("\n[%s]: SSID Name is : %s",__func__,output);
+	wifi_debug(DEBUG_INFO, "SSID Name is : %s\n", output);
 	return RETURN_OK;
 }
 
@@ -8973,7 +8997,7 @@ INT wifi_getNeighboringWiFiDiagnosticResult2(INT radioIndex, wifi_neighbor_ap2_t
 				tmp = realloc(scan_array, sizeof(wifi_neighbor_ap2_t)*(index+1));
 				if (tmp == NULL) {			  // no more memory to use
 					index--;
-					wifi_dbg_printf("%s: realloc failed\n", __func__);
+					wifi_debug(DEBUG_INFO, "realloc failed\n");
 					break;
 				}
 				scan_array = tmp;
@@ -11052,7 +11076,7 @@ INT wifi_getApWpaEncryptionMode(INT apIndex, CHAR *output_string)
 		memset(output_string, '\0', 32);
 		wifi_hostapdRead(config_file, param_name, output_string, 32);
 	}
-	wifi_dbg_printf("\n%s output_string=%s",__func__,output_string);
+	wifi_debug(DEBUG_INFO, "output_string=%s\n", output_string);
 
 	if(strcmp(output_string,"TKIP CCMP") == 0) {
 		len = strlen("TKIPandAESEncryption");
@@ -11194,7 +11218,7 @@ INT wifi_setApAuthMode(INT apIndex, INT mode)
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n", __func__, __LINE__);
 
-	wifi_dbg_printf("\n%s algo_mode=%d", __func__, mode);
+	wifi_debug(DEBUG_INFO, "algo_mode=%d\n", mode);
 	params.name = "auth_algs";
 
 	if ((mode & 1 && mode & 2) || mode & 4)
@@ -11231,7 +11255,7 @@ INT wifi_setApBasicAuthenticationMode(INT apIndex, CHAR *authMode)
 	if(authMode ==  NULL)
 		return RETURN_ERR;
 
-	wifi_dbg_printf("\n%s AuthMode=%s",__func__,authMode);
+	wifi_debug(DEBUG_INFO, "AuthMode=%s\n", authMode);
 	params.name = "wpa_key_mgmt";
 
 	if((strcmp(authMode,"PSKAuthentication") == 0) || (strcmp(authMode,"SharedAuthentication") == 0))
@@ -11285,7 +11309,7 @@ INT wifi_getApBasicAuthenticationMode(INT apIndex, CHAR *authMode)
 			return RETURN_ERR;
 		}
 		wifi_hostapdRead(config_file, "wpa_key_mgmt", authMode, 32);
-		wifi_dbg_printf("\n[%s]: AuthMode Name is : %s",__func__,authMode);
+		wifi_debug(DEBUG_INFO, "AuthMode Name is : %s\n", authMode);
 		if(strcmp(authMode,"WPA-PSK") == 0) {
 			len = strlen("SharedAuthentication");
 			memcpy(authMode, "SharedAuthentication", len);
@@ -13284,14 +13308,13 @@ INT wifi_getApSecurityPreSharedKey(INT apIndex, CHAR *output_string)
 		return RETURN_ERR;
 	}
 
-	wifi_dbg_printf("\nFunc=%s\n",__func__);
 	res = snprintf(config_file, sizeof(config_file), "%s%d.conf",CONFIG_PREFIX,apIndex);
 	if (os_snprintf_error(sizeof(config_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
 	}
 	wifi_hostapdRead(config_file,"wpa_psk",output_string,65);
-	wifi_dbg_printf("\noutput_string=%s\n",output_string);
+	wifi_debug(DEBUG_INFO, "output_string=%s\n", output_string);
 
 	return RETURN_OK;
 }
@@ -13337,7 +13360,6 @@ INT wifi_getApSecurityKeyPassphrase(INT apIndex, CHAR *output_string)
 	char config_file[MAX_BUF_SIZE] = {0}, buf[32] = {0};
 	int res;
 
-	wifi_dbg_printf("\nFunc=%s\n",__func__);
 	if (NULL == output_string)
 		return RETURN_ERR;
 
@@ -13355,7 +13377,7 @@ INT wifi_getApSecurityKeyPassphrase(INT apIndex, CHAR *output_string)
 	}
 
 	wifi_hostapdRead(config_file,"wpa_passphrase",output_string,64);
-	wifi_dbg_printf("\noutput_string=%s\n",output_string);
+	wifi_debug(DEBUG_INFO, "output_string=%s\n", output_string);
 
 	return RETURN_OK;
 }
@@ -15692,7 +15714,7 @@ INT wifi_getApSecurityMFPConfig(INT apIndex, CHAR *output_string)
 		return RETURN_ERR;
 	}
 
-	wifi_dbg_printf("\n[%s]: ieee80211w is : %s", __func__, output);
+	wifi_debug(DEBUG_INFO, "ieee80211w is : %s\n", output);
 	return RETURN_OK;
 }
 INT wifi_setApMBOConfig(INT apIndex)
@@ -17102,7 +17124,7 @@ INT wifi_getApAssociatedDeviceDiagnosticResult2(INT apIndex,wifi_associated_dev2
 
 					}
 					memcpy(temp[count].cli_MACAddress,mac,(sizeof(unsigned char))*6);
-					wifi_dbg_printf("MAC %d = %X:%X:%X:%X:%X:%X \n", count, temp[count].cli_MACAddress[0],temp[count].cli_MACAddress[1], temp[count].cli_MACAddress[2], temp[count].cli_MACAddress[3], temp[count].cli_MACAddress[4], temp[count].cli_MACAddress[5]);
+					wifi_debug(DEBUG_INFO, "MAC %d = %X:%X:%X:%X:%X:%X \n", count, temp[count].cli_MACAddress[0],temp[count].cli_MACAddress[1], temp[count].cli_MACAddress[2], temp[count].cli_MACAddress[3], temp[count].cli_MACAddress[4], temp[count].cli_MACAddress[5]);
 				}
 				temp[count].cli_AuthenticationState = 1; //TODO
 				temp[count].cli_Active = 1; //TODO
@@ -18383,7 +18405,7 @@ static int fetch_survey_from_buf(INT radioIndex, const char *buf, wifi_channelSt
 		val = strtok(NULL, " ");
 		if (val == NULL)
 			continue;
-		wifi_dbg_printf("%s: key='%s' val='%s'\n", __func__, key, val);
+		wifi_debug(DEBUG_INFO, "key='%s' val='%s'\n", key, val);
 
 		if (!strcmp(key, "noise")) {
 			if (sscanf(val, "%d", &stats->ch_noise) == EOF)
@@ -18520,7 +18542,7 @@ INT wifi_getRadioChannelStats(INT radioIndex,wifi_channelStats_t *input_output_c
 		input_output_channelStats_array[i].ch_utilization_busy *= 1000;
 		input_output_channelStats_array[i].ch_utilization_total *= 1000;
 
-		wifi_dbg_printf("%s: ch_number=%d ch_noise=%d total=%llu busy=%llu busy_rx=%llu busy_tx=%llu busy_self=%llu busy_ext=%llu\n",
+		wifi_debug(DEBUG_INFO, "%s: ch_number=%d ch_noise=%d total=%llu busy=%llu busy_rx=%llu busy_tx=%llu busy_self=%llu busy_ext=%llu\n",
 				   __func__,
 				   input_output_channelStats_array[i].ch_number,
 				   input_output_channelStats_array[i].ch_noise,
@@ -19008,7 +19030,7 @@ INT wifi_getRadioChannels(INT radioIndex, wifi_channelMap_t *outputMap, INT outp
 			return RETURN_ERR;
 		}
 
-		wifi_dbg_printf("DFS state = '%s'\n", dfs_state_buf);
+		wifi_debug(DEBUG_INFO, "DFS state = '%s'\n", dfs_state_buf);
 
 		if (!strcmp(dfs_state_buf, "usable")) {
 			outputMap[i].ch_state = CHAN_STATE_DFS_NOP_FINISHED;
@@ -19672,7 +19694,6 @@ INT wifi_getBSSColor(INT radio_index, UCHAR *color)
 	int res;
 	unsigned long tmp;
 
-	wifi_dbg_printf("\nFunc=%s\n", __func__);
 	if (NULL == color)
 		return RETURN_ERR;
 
@@ -19697,7 +19718,7 @@ INT wifi_getBSSColor(INT radio_index, UCHAR *color)
 		wifi_debug(DEBUG_ERROR, "Unexpected strtoul fail\n");
 	}
 	*color = tmp;
-	wifi_dbg_printf("\noutput_string=%s\n", color);
+	wifi_debug(DEBUG_INFO, "output_string=%s\n", color);
 
 	return RETURN_OK;
 }
@@ -19878,7 +19899,7 @@ INT wifi_setNeighborReports(UINT apIndex,
 	unsigned char hex_ssid_len;
 
 	/*rmeove all neighbors*/
-	wifi_dbg_printf("\n[%s]: removing all neighbors from %s\n", __func__, interface_name);
+	wifi_debug(DEBUG_INFO, "removing all neighbors from %s\n", interface_name);
 	if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 
@@ -23570,7 +23591,7 @@ INT wifi_getProxyArp(INT apIndex, BOOL *enable)
 	else
 		*enable = FALSE;
 
-	wifi_dbg_printf("\n[%s]: proxy_arp is : %s", __func__, output);
+	wifi_debug(DEBUG_INFO, "proxy_arp is : %s\n", output);
 	return RETURN_OK;
 }
 
