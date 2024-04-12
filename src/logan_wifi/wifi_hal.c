@@ -21369,7 +21369,7 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 	int ret, bss_num, i;
 	char ret_buf[MAX_BUF_SIZE] = {0};
 	BOOL enabled = FALSE;
-	struct timeval tv_now;
+	int bss_idx;
 
 	ret = wifi_BandProfileRead(0, index, "BssidNum", ret_buf, sizeof(ret_buf), "1");
 	if (ret != 0) {
@@ -21395,10 +21395,20 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 		wifi_debug(DEBUG_ERROR, "wifi_getRadioEnable return error.\n");
 		return RETURN_ERR;
 	}
-	if (enabled == FALSE && operationParam->enable == TRUE) {
-		wifi_setRadioEnable(index, TRUE);
-		gettimeofday(&tv_now, NULL);
-		radio_start_uptime[index] = wifi_getSystemUpSecs();
+	if (operationParam->enable == TRUE) {
+		if (enabled == FALSE) {
+			wifi_setRadioEnable(index, TRUE);
+			radio_start_uptime[index] = wifi_getSystemUpSecs();
+		} else {
+			for (bss_idx = 0; bss_idx < bss_num; bss_idx++) {
+				if (array_index_to_vap_index(index, bss_idx, &ApIndex) != RETURN_OK) {
+					wifi_debug(DEBUG_ERROR, "invalid radioIndex %d, bss_idx %d\n", index, bss_idx);
+					continue;
+				}
+				if (getVapEnableConfig(ApIndex) == TRUE)
+					wifi_setApEnable(ApIndex, TRUE);
+			}
+		}
 	} else if (enabled == TRUE && operationParam->enable == FALSE) {
 		wifi_setRadioEnable(index, FALSE);
 		return RETURN_OK;
