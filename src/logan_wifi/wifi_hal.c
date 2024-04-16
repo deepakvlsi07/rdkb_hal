@@ -6210,7 +6210,7 @@ INT wifi_setRadioChannel(INT radioIndex, ULONG channel)	//RDKB	//AP only
 	// We only write hostapd config here
 	char str_channel[8]={0};
 	char *list_channel;
-	char possible_channels[512] = {0};
+	char possible_channels[256] = {0};
 	char config_file_dat[128] = {0};
 	struct params dat = {0};
 	struct params acs = {0};
@@ -6230,7 +6230,7 @@ INT wifi_setRadioChannel(INT radioIndex, ULONG channel)	//RDKB	//AP only
 		return RETURN_ERR;
 	}
 
-	wifi_getRadioCapChannels(radioIndex, possible_channels);
+	wifi_getRadioPossibleChannels(radioIndex, possible_channels);
 	list_channel = strtok(possible_channels, ",");
 	while(true)
 	{
