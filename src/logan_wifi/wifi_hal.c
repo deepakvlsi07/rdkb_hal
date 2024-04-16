@@ -5573,7 +5573,7 @@ INT wifi_getRadioPossibleChannels(INT radioIndex, CHAR *output_string)	//RDKB
 	if (NULL == output_string)
 		return RETURN_ERR;
 
-	char buf[128] = {0};
+	char buf[256] = {0};
 	BOOL dfs_enable = false;
 	int phyId = 0, res;
 
@@ -5589,8 +5589,8 @@ INT wifi_getRadioPossibleChannels(INT radioIndex, CHAR *output_string)	//RDKB
 	if (res) {
 		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 	}
-	strncpy(output_string, buf, strlen(buf) < sizeof(buf) ? strlen(buf) : sizeof(buf));
-
+	strncpy(output_string, buf, strlen(buf));
+	output_string[strlen(buf)]='\0';
 	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 	return RETURN_OK;
 }
