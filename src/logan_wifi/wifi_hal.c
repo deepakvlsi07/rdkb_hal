@@ -2525,9 +2525,98 @@ INT wifi_setLED(INT radioIndex, BOOL enable)
 {
    return 0;
 }
+
+INT wifi_setACSPeriod_netlink(INT radioIndex, ULONG seconds)
+{
+	int main_vap_idx;
+	char interface_name[IF_NAME_SIZE] = {0};
+	unsigned int if_idx = 0;
+	struct mtk_nl80211_param param;
+	int ret;
+	struct unl unl_ins;
+	struct nl_msg *msg  = NULL;
+	struct nlattr * msg_data = NULL;
+
+	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+		return RETURN_ERR;
+	}
+
+	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
+		return RETURN_ERR;
+
+	if_idx = if_nametoindex(interface_name);
+	if (!if_idx) {
+		wifi_debug(DEBUG_ERROR,"can't finde ifname(%s) index,ERROR\n", interface_name);
+		return RETURN_ERR;
+	}
+
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_AUTO_CH_SEL;
+	param.if_type = NL80211_ATTR_IFINDEX;
+	param.if_idx = if_idx;
+
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+
+	/*add mtk vendor cmd data*/
+	if (nla_put_u32(msg, MTK_NL80211_VENDOR_ATTR_AUTO_CH_CHECK_TIME, seconds)) {
+		wifi_debug(DEBUG_ERROR, "Nla put AUTO_CH_CHECK_TIME attribute error\n");
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	/*send mtk nl80211 vendor msg*/
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, NULL, NULL);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		goto err;
+	}
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_INFO, "set cmd success.\n");
+	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
+
+	return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR, "set cmd fails.\n");
+	return RETURN_ERR;
+}
+
 INT wifi_setRadioAutoChannelRefreshPeriod(INT radioIndex, ULONG seconds)
 {
-   return RETURN_OK;
+	char config_file_dat[128] = {0};
+	struct params dat = {0};
+	char str_acs_period[16] = {0};
+	int res;
+	wifi_band band = band_invalid;
+
+	if (seconds == 0)
+		wifi_debug(DEBUG_WARN, "ACS RefreshPeriod is set to 0!!!\n");
+
+	res = snprintf(str_acs_period, sizeof(str_acs_period), "%lu", seconds);
+	if (os_snprintf_error(sizeof(str_acs_period), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
+
+	/*set to dat profile*/
+	band = radio_index_to_band(radioIndex);
+	res = snprintf(config_file_dat, sizeof(config_file_dat), "%s%d.dat", LOGAN_DAT_FILE, band);
+	if (os_snprintf_error(sizeof(config_file_dat), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		return RETURN_ERR;
+	}
+	dat.name = "ACSCheckTime";
+	dat.value = str_acs_period;
+	wifi_datfileWrite(config_file_dat, &dat, 1);
+
+	/*do quick setting*/
+	return wifi_setACSPeriod_netlink(radioIndex, seconds);
 }
 /**********************************************************************************
  *
@@ -6908,70 +6997,26 @@ int get_ACS_RefreshPeriod_callback(struct nl_msg *msg, void *arg)
 //Get the ACS refresh period in seconds
 INT wifi_getRadioAutoChannelRefreshPeriod(INT radioIndex, ULONG *output_ulong) //Tr181
 {
-	char interface_name[IF_NAME_SIZE] = {0};
-	int ret = -1;
-	unsigned int if_idx = 0;
-	struct unl unl_ins;
-	struct nl_msg *msg  = NULL;
-	struct nlattr * msg_data = NULL;
-	struct mtk_nl80211_param param;
-	unsigned long checktime = 0;
-	int main_vap_idx;
+	wifi_band band = band_invalid;
+	int res;
+	char config_file[128] = {0};
+	char period_str[16] = {0};
 
-	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-	if (NULL == output_ulong)
+	if (output_ulong == NULL)
 		return RETURN_ERR;
 
-	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
-		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
+	band = radio_index_to_band(radioIndex);
+	res = snprintf(config_file, sizeof(config_file), "%s%d.dat", LOGAN_DAT_FILE, band);
+	if (os_snprintf_error(sizeof(config_file), res)) {
+		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
 	}
 
-	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
-		return RETURN_ERR;
+	wifi_datfileRead(config_file, "ACSCheckTime", period_str, sizeof(period_str));
+	if (hal_strtoul(period_str, 10, output_ulong) < 0)
+		wifi_debug(DEBUG_ERROR, "strtol fail\n");
 
-	if_idx = if_nametoindex(interface_name);
-	if (!if_idx) {
-		wifi_debug(DEBUG_ERROR, "can't finde ifname(%s) index,ERROR\n", interface_name);
-		return RETURN_ERR;
-	}
-	/*init mtk nl80211 vendor cmd*/
-	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_GET_RUNTIME_INFO;
-	param.if_type = NL80211_ATTR_IFINDEX;
-	param.if_idx = if_idx;
-
-	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
-	if (ret) {
-		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
-		return RETURN_ERR;
-	}
-
-	/*add mtk vendor cmd data*/
-	if (nla_put_u32(msg, MTK_NL80211_VENDOR_ATTR_GET_RUNTIME_INFO_GET_ACS_REFRESH_PERIOD, 0)) {
-		wifi_debug(DEBUG_ERROR, "Nla put GET_RUNTIME_INFO_GET_ACS_REFRESH_PERIOD attribute error\n");
-		nlmsg_free(msg);
-		goto err;
-	}
-
-	/*send mtk nl80211 vendor msg*/
-	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, get_ACS_RefreshPeriod_callback, &checktime);
-
-	if (ret) {
-		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
-		goto err;
-	}
-	/*deinit mtk nl80211 vendor msg*/
-	mtk_nl80211_deint(&unl_ins);
-	*output_ulong = checktime;
-	wifi_debug(DEBUG_INFO,"send cmd success\n");
-
-	WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
 	return RETURN_OK;
-err:
-	mtk_nl80211_deint(&unl_ins);
-	wifi_debug(DEBUG_ERROR,"send cmd fails\n");
-	return RETURN_ERR;
-
 }
 
 //Set the ACS refresh period in seconds
@@ -20539,6 +20584,21 @@ int main(int argc,char **argv)
 		return 0;
 	}
 
+	if(strstr(argv[1], "wifi_setACSPeriod") != NULL)
+	{
+		ULONG seconds;
+		if(argc <= 3)
+		{
+			wifi_debug(DEBUG_ERROR, "Insufficient arguments \n");
+			exit(-1);
+		}
+		seconds = atoi(argv[3]);
+
+		wifi_setRadioAutoChannelRefreshPeriod(index, seconds);
+		printf("Ap SET ACSPeriod %ld\n", seconds);
+		return 0;
+	}
+
 	if(strstr(argv[1], "wifi_setExtCh") != NULL)
 	{
 		if(argc <= 3)
@@ -21172,6 +21232,13 @@ int main(int argc,char **argv)
 		ULONG channel = 0;
 		wifi_getRadioChannel(index, &channel);
 		printf("channel is %ld \n",channel);
+		return 0;
+	}
+	if(strstr(argv[1],"wifi_getACSPeriod") != NULL)
+	{
+		ULONG ACS_Period = 0;
+		wifi_getRadioAutoChannelRefreshPeriod(index, &ACS_Period);
+		printf("ACS_Period is %ld \n", ACS_Period);
 		return 0;
 	}
 	if(strstr(argv[1],"wifi_getApBridgeInfo")!=NULL)
