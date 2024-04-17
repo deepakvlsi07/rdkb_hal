@@ -530,6 +530,7 @@ int hostapd_raw_remove_bss(int apIndex);
 INT wifi_getApDevicesAssociated(INT apIndex, CHAR *macArray, UINT buf_size);
 static int wifi_GetInterfaceName(int apIndex, char *interface_name);
 bool wifi_get_ap_status_ioctl(char *interface_name);
+int wifi_get_ap_status_hostapd(char *interface_name, BOOL *output_bool);
 
 static inline int hal_strtol(char *src, int base, long int *out)
 {
@@ -2219,25 +2220,40 @@ static int wifi_hostapdProcessUpdate(int apIndex, struct params *list, int item_
 	char interface_name[16] = {0};
 	char output[32]="";
 	FILE *fp;
-	int i;
+	int i, res;
+	BOOL hostapd_state = FALSE;
+	char buf[MAX_BUF_SIZE] = {0};
 	//NOTE RELOAD should be done in ApplySSIDSettings
 	if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
 		return RETURN_ERR;
 
-	for (i=0; i<item_count; i++, list++) {
-		fp = v_secure_popen("r", "hostapd_cli -i%s SET %s %s", interface_name, list->name, list->value);
-
-		if (fp == NULL) {
-			perror("v_secure_popen failed");
-			return -1;
-		}
-		if (!fgets(output, sizeof(output), fp) || strncmp(output, "OK", 2)) {
-			v_secure_pclose(fp);
-			perror("fgets failed");
-			return -1;
-		}
-		v_secure_pclose(fp);
+	res = _syscmd_secure(buf, sizeof(buf), "hostapd_cli -i %s status | grep state | cut -d '=' -f2", interface_name);
+	if (res) {
+		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 	}
+
+	if (strncmp(buf, "ENABLED", 7) == 0 || strncmp(buf, "ACS", 3) == 0 ||
+		strncmp(buf, "HT_SCAN", 7) == 0 || strncmp(buf, "DFS", 3) == 0)  {
+		hostapd_state = TRUE;
+	}
+
+	if (hostapd_state == TRUE) {
+		for (i=0; i<item_count; i++, list++) {
+			fp = v_secure_popen("r", "hostapd_cli -i%s SET %s %s", interface_name, list->name, list->value);
+
+			if (fp == NULL) {
+				perror("v_secure_popen failed");
+				return -1;
+			}
+			if (!fgets(output, sizeof(output), fp) || strncmp(output, "OK", 2)) {
+				v_secure_pclose(fp);
+				perror("fgets failed");
+				return -1;
+			}
+			v_secure_pclose(fp);
+		}
+	} else
+		wifi_debug(DEBUG_NOTICE, "hostapd_state = FALSE\n");
 	return 0;
 }
 
@@ -12391,7 +12407,7 @@ INT wifi_setApEnable(INT apIndex, BOOL enable)
 		phyId = radio_index_to_phy(radioIndex);
 
 		res = _syscmd_secure(buf, sizeof(buf), "ifconfig %s up", interface_name);
-	        if (res) {
+		if (res) {
 			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
 		}
 
@@ -12403,6 +12419,15 @@ INT wifi_setApEnable(INT apIndex, BOOL enable)
 		res = _syscmd_secure(buf, sizeof(buf), "hostapd_cli -i global raw ADD bss_config=phy%d:%s", phyId, config_file);
 		if (res) {
 			wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+		}
+
+		if (!is_main_vap_index(apIndex) && strncmp(buf, "FAIL", 4) == 0) {
+			wifi_debug(DEBUG_ERROR, "hostapd_cli raw ADD %s fail.\n", interface_name);
+			res = _syscmd_secure(buf, sizeof(buf), "ifconfig %s down", interface_name);
+			if (res) {
+				wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			}
+			enable = FALSE;
 		}
 	} else {
 		/*Do not REMOVE main interfaces in hostapd*/
@@ -22431,12 +22456,6 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 			continue;
 		}
 
-		if (vap_info->u.bss_info.enabled == TRUE) {
-			wifi_getApEnable(vap_info->vap_index, &apEnable);
-			if (!apEnable)
-				wifi_setApEnable(vap_info->vap_index, TRUE);
-		}
-
 		wifi_debug(DEBUG_OFF, "\nCreate VAP for vap_info->vap_index=%d\n", vap_info->vap_index);
 
 		band_idx = radio_index_to_band(index);
@@ -22498,11 +22517,6 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 			wifi_debug(DEBUG_ERROR, "wifi_setApBeaconRate return error\n");
 		}
 
-		ret = wifi_setRadioIGMPSnoopingEnable(vap_info->radio_index, vap_info->u.bss_info.mcast2ucast);
-		if (ret != RETURN_OK) {
-			wifi_debug(DEBUG_ERROR, "wifi_setRadioIGMPSnoopingEnable\n");
-		}
-
 		ret = wifi_setApSecurity(vap_info->vap_index, &vap_info->u.bss_info.security);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApSecurity return error\n");
@@ -22511,6 +22525,12 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 		ret = wifi_setApWpsEnable(vap_info->vap_index, vap_info->u.bss_info.wps.enable);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApWpsEnable return error\n");
+		}
+
+		if (vap_info->u.bss_info.enabled == TRUE) {
+			wifi_getApEnable(vap_info->vap_index, &apEnable);
+			if (!apEnable)
+				wifi_setApEnable(vap_info->vap_index, TRUE);
 		}
 
 		memset(buf, 0, sizeof(buf));
@@ -22566,6 +22586,11 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 		}
 
 		// If config use hostapd_cli to set, we calling these type of functions after enable the ap.
+		ret = wifi_setRadioIGMPSnoopingEnable(vap_info->radio_index, vap_info->u.bss_info.mcast2ucast);
+		if (ret != RETURN_OK) {
+			wifi_debug(DEBUG_ERROR, "wifi_setRadioIGMPSnoopingEnable\n");
+		}
+
 		ret = wifi_setApMacAddressControlMode(vap_info->vap_index, acl_mode);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApMacAddressControlMode return error\n");
