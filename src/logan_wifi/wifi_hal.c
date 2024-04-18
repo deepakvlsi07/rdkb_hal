@@ -3418,7 +3418,24 @@ static void wifi_upload_reset()
 	}
 }
 #endif
+#define HOSTAPD_DBG "/nvram/wifiVendorHostapdDbg"
+#define HOSTAPD_OPTIONS_FILE_PATH "/etc/default/hostapd"
+#define HOSTAPD_DEFAULT_OPTIONS "-s -f /rdklogs/logs/wifi_vendor_hostapd.log"
+#define HOSTAPD_DEBUG_OPTIONS "-f /tmp/wifiVendorHostapd"
 
+void start_hostapd_service()
+{
+	int res;
+	char buf[8] = {0};
+
+	res = access(HOSTAPD_DBG, F_OK);
+	res = _syscmd_secure(buf, sizeof(buf), "datconf -f %s set OPTIONS %s",
+			HOSTAPD_OPTIONS_FILE_PATH, res == 0 ? HOSTAPD_DEBUG_OPTIONS : HOSTAPD_DEFAULT_OPTIONS);
+	if(res) {
+		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+	}
+	v_secure_system("systemctl start hostapd.service");
+}
 // Initializes the wifi subsystem (all radios)
 INT wifi_init()							//RDKB
 {
@@ -3434,7 +3451,7 @@ INT wifi_init()							//RDKB
 		wifi_PrepareEnableSSIDConfig(FALSE);
 		wifi_psk_file_reset();
 		//v_secure_system("/usr/sbin/iw reg set US");
-		v_secure_system("systemctl start hostapd.service");
+		start_hostapd_service();
 		sleep(2);
 		setbuf(stdout, NULL);
 		wifi_vap_status_reset();
