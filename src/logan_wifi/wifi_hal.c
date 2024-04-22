@@ -3509,8 +3509,8 @@ static void wifi_upload_reset()
 #endif
 #define HOSTAPD_DBG "/nvram/wifiVendorHostapdDbg"
 #define HOSTAPD_OPTIONS_FILE_PATH "/etc/default/hostapd"
-#define HOSTAPD_DEFAULT_OPTIONS "-s -f /rdklogs/logs/wifi_vendor_hostapd.log"
-#define HOSTAPD_DEBUG_OPTIONS "-f /tmp/wifiVendorHostapd"
+#define HOSTAPD_DEFAULT_OPTIONS "-s -t -f /rdklogs/logs/wifi_vendor_hostapd.log"
+#define HOSTAPD_DEBUG_OPTIONS "-t -f /tmp/wifiVendorHostapd"
 
 void start_hostapd_service()
 {
