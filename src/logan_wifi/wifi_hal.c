@@ -19676,6 +19676,11 @@ INT wifi_setGuardInterval(INT radio_index, wifi_guard_interval_t guard_interval)
 	char dat_file[64] = {'\0'};
 	struct params params[3];
 	int res;
+	char *str_zro = "0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0";/*default 16bss per band.*/
+	char *str_one = "1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1";
+	UCHAR bss_cnt = 0;
+	UCHAR val_cnt = 0;
+	char valbuf[64] = {0};
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -19735,18 +19740,29 @@ INT wifi_setGuardInterval(INT radio_index, wifi_guard_interval_t guard_interval)
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
 	}
+	get_bssnum_byindex(radio_index, &bss_cnt);
+	if (bss_cnt <= 0)
+	{
+		wifi_debug(DEBUG_ERROR, "Unexpected bss_cnt\n");
+		return RETURN_ERR;
+	}
+	if (bss_cnt > LOGAN_MAX_NUM_VAP_PER_RADIO)
+		bss_cnt = LOGAN_MAX_NUM_VAP_PER_RADIO;
+	val_cnt = 2*bss_cnt - 1;
 	if (guard_interval == wifi_guard_interval_400) {
+		strncpy(valbuf, str_one, val_cnt);
 		params[0].name = "HT_GI";
-		params[0].value = "1";
+		params[0].value = valbuf;
 		params[1].name = "VHT_SGI";
-		params[1].value = "1";
+		params[1].value = valbuf;
 		wifi_datfileWrite(dat_file, params, 2);
 		memcpy(GI, "0.4", 3);
 	} else {
+		strncpy(valbuf, str_zro, val_cnt);
 		params[0].name = "HT_GI";
-		params[0].value = "0";
+		params[0].value = valbuf;
 		params[1].name = "VHT_SGI";
-		params[1].value = "0";
+		params[1].value = valbuf;
 		/*should enable FIXED_HE_GI_SUPPORT in driver*/
 		params[2].name = "FgiFltf";
 		if (guard_interval == wifi_guard_interval_800) {
