@@ -6258,7 +6258,11 @@ INT wifi_setApEnable(INT apIndex, BOOL enable)
         if (!(apIndex/max_radio_num)) {
 	        sprintf(cmd, "iw %s del", interface_name);
 	        _syscmd(cmd, buf, sizeof(buf));
+#ifdef SINGLE_WIPHY_SUPPORT
+	        sprintf(cmd, "iw phy phy0 interface add %s type __ap", interface_name);
+#else
 	        sprintf(cmd, "iw phy phy%d interface add %s type __ap", phyId, interface_name);
+#endif
 	        _syscmd(cmd, buf, sizeof(buf));
         }
         sprintf(cmd, "hostapd_cli -i global raw ADD bss_config=phy%d:%s", phyId, config_file);
