@@ -99,7 +99,6 @@ Licensed under the ISC license
 #define VLAN_FILE "/nvram/hostapd.vlan"
 #define PSK_FILE "/nvram/hostapd"
 #define MCS_FILE "/tmp/MCS"
-#define POWER_PERCENTAGE "/tmp/POWER"
 #define MGMT_POWER_CTRL "/tmp/mgmt_power_ctrl"
 /*LOGAN_DAT_FILE: may be different on customer's platform.*/
 #ifdef WIFI_7992
@@ -3434,35 +3433,6 @@ static void wifi_guard_interval_file_check()
 	}
 }
 
-static void wifi_power_percentage_file_check()
-{
-	char ret_buf[MAX_BUF_SIZE] = {0};
-	int res;
-	unsigned char band = 0;
-	char file[MAX_SUB_CMD_SIZE] = {0};
-	FILE *f = NULL;
-
-	for (band = band_2_4; band <= band_6; band++) {
-		res = snprintf(file, sizeof(file), "%s%d.txt", POWER_PERCENTAGE, band);
-		if (os_snprintf_error(sizeof(file), res)) {
-			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
-		}
-		wifi_debug(DEBUG_INFO, "%s:file %s", __func__, file);
-		if (access(file, F_OK) != 0) {
-			res =  _syscmd_secure(ret_buf, sizeof(ret_buf), "touch %s", file);
-			if (res) {
-				wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-			}
-		}
-		f = fopen(file, "w");
-		if (f == NULL)
-			return;
-		fprintf(f, "%s", "100");
-		if (fclose(f) == EOF)
-			wifi_debug(DEBUG_ERROR, "Unexpected fclose fail\n");
-	}
-}
-
 static void wifi_mcs_file_check()
 {
 	char ret_buf[MAX_BUF_SIZE] = {0};
@@ -3491,7 +3461,33 @@ static void wifi_mcs_file_check()
 			wifi_debug(DEBUG_ERROR, "Unexpected fclose fail\n");
 	}
 }
+static void wifi_mgmt_pwr_file_check()
+{
+	char ret_buf[MAX_BUF_SIZE] = {0};
+	int res;
+	unsigned char i = 0;
+	char file[MAX_SUB_CMD_SIZE] = {0};
+	FILE *f = NULL;
 
+	for (i = 0; i < get_runtime_max_radio(); i++) {
+		res = snprintf(file, sizeof(file), "%s%d.txt", MGMT_POWER_CTRL, i);
+		if (os_snprintf_error(sizeof(file), res)) {
+			wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
+		}
+		if (access(file, F_OK) != 0) {
+			res =  _syscmd_secure(ret_buf, sizeof(ret_buf), "touch %s", file);
+			if (res) {
+				wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
+			}
+		}
+		f = fopen(file, "w");
+		if (f == NULL)
+			return;
+		fprintf(f, "%s", "0");
+		if (fclose(f) == EOF)
+			wifi_debug(DEBUG_ERROR, "Unexpected fclose fail\n");
+	}
+}
 #ifdef WIFI_AGENT_TDK_TEST
 static void wifi_upload_reset()
 {
@@ -3550,8 +3546,8 @@ INT wifi_init()							//RDKB
 		CallOnce = 0;
 		mld_info_display();
 		wifi_guard_interval_file_check();
-		wifi_power_percentage_file_check();
 		wifi_mcs_file_check();
+		wifi_mgmt_pwr_file_check();
 #ifdef WIFI_AGENT_TDK_TEST
 		/* for wifiagent TDK test */
 		wifi_upload_reset();
@@ -7789,35 +7785,21 @@ INT wifi_getRadioTransmitPowerSupported(INT radioIndex, CHAR *output_list) //Tr1
 //The transmite power level is in units of full power for this radio.
 INT wifi_getRadioTransmitPower(INT radioIndex, ULONG *output_ulong)	//RDKB
 {
-	char interface_name[16] = {0};
-	char buf[16]={0};
-	char pwr_file[128]={0};
+	char config_dat_file[MAX_BUF_SIZE] = {0};
+	char buf[64]={'\0'};
 	int res;
-	int main_vap_idx;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
 	if(output_ulong == NULL)
 		return RETURN_ERR;
 
-	if (array_index_to_vap_index(radioIndex, 0, &main_vap_idx) != RETURN_OK) {
-		wifi_debug(DEBUG_ERROR, "invalid radio_index[%d]\n", radioIndex);
-		return RETURN_ERR;
-	}
-
-	if (wifi_GetInterfaceName(main_vap_idx, interface_name) != RETURN_OK)
-		return RETURN_ERR;
-	res = snprintf(pwr_file, sizeof(pwr_file), "%s%d.txt", POWER_PERCENTAGE, radio_index_to_band(radioIndex));
-	if (os_snprintf_error(sizeof(pwr_file), res)) {
+	res = snprintf(config_dat_file, sizeof(config_dat_file), "%s%d.dat", LOGAN_DAT_FILE, radio_index_to_band(radioIndex));
+	if (os_snprintf_error(sizeof(config_dat_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
 	}
-
-	res = _syscmd_secure(buf, sizeof(buf),"cat %s 2> /dev/null", pwr_file);
-	if(res) {
-		wifi_debug(DEBUG_ERROR, "_syscmd_secure fail\n");
-	}
-
+	wifi_datfileRead(config_dat_file, "TxPower", buf, sizeof(buf));
 	if (strlen(buf) > 0) {
 		if (hal_strtoul(buf, 10, output_ulong) < 0) {
 			wifi_debug(DEBUG_ERROR, "strtol fail\n");
@@ -7836,8 +7818,6 @@ INT wifi_setRadioTransmitPower(INT radioIndex, ULONG TransmitPower)	//RDKB
 	char *support;
 	char buf[128]={0};
 	char txpower_str[64] = {0};
-	char pwr_file[128]={0};
-	FILE *f = NULL;
 	int if_idx, ret = 0;
 	struct nl_msg *msg  = NULL;
 	struct nlattr * msg_data = NULL;
@@ -7845,6 +7825,8 @@ INT wifi_setRadioTransmitPower(INT radioIndex, ULONG TransmitPower)	//RDKB
 	struct unl unl_ins;
 	int res;
 	int main_vap_idx;
+	char config_dat_file[MAX_BUF_SIZE] = {0};
+	struct params dat={0};
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -7908,20 +7890,14 @@ INT wifi_setRadioTransmitPower(INT radioIndex, ULONG TransmitPower)	//RDKB
 	mtk_nl80211_deint(&unl_ins);
 	wifi_debug(DEBUG_INFO, "set cmd success.\n");
 
-	res = snprintf(pwr_file, sizeof(pwr_file), "%s%d.txt", POWER_PERCENTAGE, radio_index_to_band(radioIndex));
-	if (os_snprintf_error(sizeof(pwr_file), res)) {
+	res = snprintf(config_dat_file, sizeof(config_dat_file), "%s%d.dat", LOGAN_DAT_FILE, radio_index_to_band(radioIndex));
+	if (os_snprintf_error(sizeof(config_dat_file), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
 	}
-
-	f = fopen(pwr_file, "w");
-	if (f == NULL) {
-		wifi_debug(DEBUG_ERROR, "%s: fopen failed\n", __func__);
-		return RETURN_ERR;
-	}
-	fprintf(f, "%lu", TransmitPower);
-	if (fclose(f) == EOF)
-		wifi_debug(DEBUG_ERROR, "Unexpected fclose fail\n");
+	dat.name = "TxPower";
+	dat.value = txpower_str;
+	wifi_datfileWrite(config_dat_file, &dat, 1);
 	return RETURN_OK;
 err:
 	mtk_nl80211_deint(&unl_ins);
@@ -17526,7 +17502,76 @@ err:
     wifi_debug(DEBUG_ERROR,"send cmd fails\n");
     return RETURN_ERR;
 }
+int get_mgmt_real_pwr_handler(struct nl_msg *msg, void *data)
+{
+	struct nlattr *tb[NL80211_ATTR_MAX + 1];
+	struct nlattr *vndr_tb[MTK_NL80211_VENDOR_TXPWR_ATTR_MAX + 1];
+	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+	unsigned char *mgmt_pwr = (unsigned char *)data;
+	int err = 0;
 
+	err = nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+			  genlmsg_attrlen(gnlh, 0), NULL);
+	if (err < 0)
+		return err;
+
+	if (tb[NL80211_ATTR_VENDOR_DATA]) {
+		err = nla_parse_nested(vndr_tb, MTK_NL80211_VENDOR_TXPWR_ATTR_MAX,
+			tb[NL80211_ATTR_VENDOR_DATA], NULL);
+		if (err < 0)
+			return err;
+
+		if (vndr_tb[MTK_NL80211_VENDOR_ATTR_TXPWR_GET_MGMT]) {
+			*mgmt_pwr = nla_get_u8(vndr_tb[MTK_NL80211_VENDOR_ATTR_TXPWR_GET_MGMT]);
+		}
+	}
+	wifi_debug(DEBUG_INFO, "get_mgmt_real_pwr_handler--\n");
+
+	return 0;
+}
+
+INT mtk_wifi_get_mgmt_real_pwr(
+	int if_idx, INT vendor_data_attr, mtk_nl80211_cb call_back, void *output)
+{
+	int ret = -1;
+	struct unl unl_ins;
+	struct nl_msg *msg	= NULL;
+	struct nlattr * msg_data = NULL;
+	struct mtk_nl80211_param param;
+
+	/*init mtk nl80211 vendor cmd*/
+	param.sub_cmd = MTK_NL80211_VENDOR_SUBCMD_SET_TXPOWER;
+	param.if_type = NL80211_ATTR_IFINDEX;
+	param.if_idx = if_idx;
+
+	ret = mtk_nl80211_init(&unl_ins, &msg, &msg_data, &param);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
+		return RETURN_ERR;
+	}
+	/*add mtk vendor cmd data*/
+	if (nla_put_u8(msg, vendor_data_attr, 1)) {
+		wifi_debug(DEBUG_ERROR, "Nla put vendor_data_attr(%d) attribute error\n", vendor_data_attr);
+		nlmsg_free(msg);
+		goto err;
+	}
+
+	/*send mtk nl80211 vendor msg*/
+	ret = mtk_nl80211_send(&unl_ins, msg, msg_data, call_back, output);
+	if (ret) {
+		wifi_debug(DEBUG_ERROR, "send mtk nl80211 vender msg fails\n");
+		goto err;
+	}
+	/*deinit mtk nl80211 vendor msg*/
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_INFO, "send cmd success.\n");
+
+	return RETURN_OK;
+err:
+	mtk_nl80211_deint(&unl_ins);
+	wifi_debug(DEBUG_ERROR,"send cmd fails,%d\n", ret);
+	return RETURN_ERR;
+}
 INT wifi_getApManagementFramePowerControl(INT apIndex, INT *output_dBm)
 {
 	char mgmtpwr_file[32] = {0};
@@ -17553,7 +17598,7 @@ INT wifi_getApManagementFramePowerControl(INT apIndex, INT *output_dBm)
 		}
 		*output_dBm = tmp;
 	} else
- 		*output_dBm = 23;
+ 		*output_dBm = 0;/*Agent range:-20 ~ 0*/
 	return RETURN_OK;
 }
 
@@ -17569,6 +17614,7 @@ INT wifi_setApManagementFramePowerControl(INT wlanIndex, INT dBm)
 	struct unl unl_ins;
 	char power[16] = {0};
 	int res;
+	unsigned char mgmt_real_pwr = 0;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
@@ -17586,9 +17632,19 @@ INT wifi_setApManagementFramePowerControl(INT wlanIndex, INT dBm)
 		wifi_debug(DEBUG_ERROR, "init mtk 80211 netlink and msg fails\n");
 		return RETURN_ERR;
 	}
-
+	if (dBm > 0)
+		dBm = 0;
+	if (dBm < -20)
+		dBm = -20;
+	/*Generally, management tx power is 23dBm, the input dBm is not a target power, it's range is -20 ~ 0,
+	it may be delta power.*/
+	mtk_wifi_get_mgmt_real_pwr(if_idx, MTK_NL80211_VENDOR_ATTR_TXPWR_GET_MGMT, get_mgmt_real_pwr_handler, &mgmt_real_pwr);
+	wifi_debug(DEBUG_INFO, "mgmt_real_pwr = %d\n", mgmt_real_pwr);
 	/*add mtk vendor cmd data*/
-	res = snprintf(power, sizeof(power), "%d", dBm);
+	if (mgmt_real_pwr != 0)
+		res = snprintf(power, sizeof(power), "%d", (mgmt_real_pwr + dBm));
+	else
+		res = snprintf(power, sizeof(power), "%d", (23 + dBm));
 	if (os_snprintf_error(sizeof(power), res)) {
 		wifi_debug(DEBUG_ERROR, "Unexpected snprintf fail\n");
 		return RETURN_ERR;
@@ -22702,6 +22758,11 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 		ret = wifi_setApIsolationEnable(vap_info->vap_index, vap_info->u.bss_info.isolation);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApIsolationEnable return error\n");
+		}
+		ret = wifi_setApManagementFramePowerControl(vap_info->vap_index, vap_info->u.bss_info.mgmtPowerControl);
+		if (ret != RETURN_OK) {
+			wifi_debug(DEBUG_ERROR, "wifi_setApManagementFramePowerControl return error\n");
+			return RETURN_ERR;
 		}
 		// TODO mgmtPowerControl, interworking, wps
 	}
