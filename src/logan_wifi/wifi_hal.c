@@ -22778,7 +22778,6 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 		ret = wifi_setApManagementFramePowerControl(vap_info->vap_index, vap_info->u.bss_info.mgmtPowerControl);
 		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApManagementFramePowerControl return error\n");
-			return RETURN_ERR;
 		}
 		// TODO mgmtPowerControl, interworking, wps
 	}
