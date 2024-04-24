@@ -22605,7 +22605,7 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 	unsigned char ap_array_num;
 	char interface_name[IF_NAME_SIZE] = {0};
 	char bridge_name[WIFI_BRIDGE_NAME_LEN] = {0};
-	unsigned char hostapd_if_restart = 0, hostapd_allif_restart = 0, hostapd_disable_enable = 0;
+	unsigned char hostapd_if_restart = 0, hostapd_allif_restart = 0;
 	struct params params[1];
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
@@ -22692,10 +22692,10 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 			wifi_debug(DEBUG_ERROR, "wifi_setApSecurity return error\n");
 		}
 
-		if (wifi_setApWpsEnable(vap_info->vap_index, vap_info->u.bss_info.wps.enable) == RETURN_OK)
-			hostapd_disable_enable = 1;
-		else
+		ret = wifi_setApWpsEnable(vap_info->vap_index, vap_info->u.bss_info.wps.enable);
+		if (ret != RETURN_OK) {
 			wifi_debug(DEBUG_ERROR, "wifi_setApWpsEnable return error\n");
+		}
 
 		if (vap_info->u.bss_info.enabled == TRUE) {
 			wifi_getApEnable(vap_info->vap_index, &apEnable);
@@ -22724,8 +22724,6 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 		if (!hostapd_allif_restart) {
 			if (hostapd_if_restart)
 				hostapd_raw_restart_bss(vap_info->vap_index);
-			else if (hostapd_disable_enable)
-				wifi_reloadAp(vap_info->vap_index);
 			else
 				wifi_quick_reload_ap(vap_info->vap_index);
 		}
