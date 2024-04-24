@@ -22607,6 +22607,7 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 	char bridge_name[WIFI_BRIDGE_NAME_LEN] = {0};
 	unsigned char hostapd_if_restart = 0, hostapd_allif_restart = 0;
 	struct params params[1];
+	BOOL enableWps = FALSE;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	wifi_debug(DEBUG_OFF, "Entering %s radio[%d], map->num_vaps = %d\n", __func__, (int)index, map->num_vaps);
@@ -22692,9 +22693,15 @@ INT wifi_createVAP(wifi_radio_index_t index, wifi_vap_info_map_t *map)
 			wifi_debug(DEBUG_ERROR, "wifi_setApSecurity return error\n");
 		}
 
-		ret = wifi_setApWpsEnable(vap_info->vap_index, vap_info->u.bss_info.wps.enable);
-		if (ret != RETURN_OK) {
-			wifi_debug(DEBUG_ERROR, "wifi_setApWpsEnable return error\n");
+		wifi_getApWpsEnable(vap_info->vap_index, &enableWps);
+		if (enableWps != vap_info->u.bss_info.wps.enable) {
+			if (wifi_setApWpsEnable(vap_info->vap_index, vap_info->u.bss_info.wps.enable) == RETURN_OK) {
+				if (!is_main_vap_index(vap_info->vap_index))
+					hostapd_if_restart = 1;
+				else
+					hostapd_allif_restart = 1;
+			} else
+				wifi_debug(DEBUG_ERROR, "wifi_setApWpsEnable return error\n");
 		}
 
 		if (vap_info->u.bss_info.enabled == TRUE) {
