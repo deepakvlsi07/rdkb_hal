@@ -21641,6 +21641,13 @@ INT wifi_setRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 		drv_dat_change = TRUE;
 	}
 
+	if (current_param.autoChanRefreshPeriod != operationParam->autoChanRefreshPeriod) {
+		if (wifi_setRadioAutoChannelRefreshPeriod(index, operationParam->autoChanRefreshPeriod) != RETURN_OK) {
+			wifi_debug(DEBUG_ERROR, "wifi_setRadioAutoChannelRefreshPeriod return error.\n");
+			goto err;
+		}
+	}
+
 	if (current_param.channelWidth != operationParam->channelWidth ||
 		current_param.channel != operationParam->channel ||
 		current_param.autoChannelEnabled != operationParam->autoChannelEnabled) {
@@ -21879,6 +21886,7 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 	CHAR country_string[64] = {0};
 	USHORT country_idx;
 	UCHAR country_find = FALSE;
+	ULONG ACS_period = 0;
 
 	WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 	wifi_debug(DEBUG_OFF, "Entering %s index = %d\n", __func__, (int)index);
@@ -21926,6 +21934,12 @@ INT wifi_getRadioOperatingParameters(wifi_radio_index_t index, wifi_radio_operat
 		operationParam->autoChannelEnabled = TRUE;
 	else
 		operationParam->autoChannelEnabled = FALSE;
+
+	if (wifi_getRadioAutoChannelRefreshPeriod(index, &ACS_period) != RETURN_OK) {
+		wifi_debug(DEBUG_ERROR, "wifi_getRadioAutoChannelRefreshPeriod return error.\n");
+		return RETURN_ERR;
+	}
+	operationParam->autoChanRefreshPeriod = ACS_period;
 
 	memset(buf, 0, sizeof(buf));
 	if (wifi_getRadioOperatingChannelBandwidth(index, buf) != RETURN_OK) {
