@@ -135,6 +135,13 @@ Licensed under the ISC license
 
 #define PS_MAX_TID 16
 
+
+#ifdef SINGLE_WIPHY_SUPPORT
+#define single_wiphy TRUE
+#else
+#define single_wiphy FALSE
+#endif
+
 static wifi_radioQueueType_t _tid_ac_index_get[PS_MAX_TID] = {
     WIFI_RADIO_QUEUE_TYPE_BE,      /* 0 */
     WIFI_RADIO_QUEUE_TYPE_BK,      /* 1 */
@@ -491,7 +498,7 @@ INT wifi_getMaxRadioNumber(INT *max_radio_num)
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
-    snprintf(cmd, sizeof(cmd), "iw list | grep Wiphy | wc -l");
+    snprintf(cmd, sizeof(cmd), "ls /sys/class/ieee80211 | wc -l");
     _syscmd(cmd, buf, sizeof(buf));
     *max_radio_num = strtoul(buf, NULL, 10) > MAX_NUM_RADIOS ? MAX_NUM_RADIOS:strtoul(buf, NULL, 10);
 
@@ -551,34 +558,17 @@ wifi_band wifi_index_to_band(int apIndex)
 
     wifi_getMaxRadioNumber(&max_radio_num);
     radioIndex = apIndex % max_radio_num;
-    phyIndex = radio_index_to_phy(radioIndex);
-    snprintf(cmd, sizeof(cmd), "cat /sys/class/ieee80211/phy%d/device/device 2> /dev/null", phyIndex);
-    _syscmd(cmd, buf, sizeof(buf));
-    if (strncmp(buf, "0x7915", 6) == 0) {   // harrier have two bands, consider as a special case.
-        snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, apIndex);
-        wifi_hostapdRead(config_file, "hw_mode", buf, sizeof(buf));
-        if (strncmp(buf, "a", 1) == 0)
-            return band_5;
-        else
-            return band_2_4;
-    }
-    while(i < 10){
-        snprintf(cmd, sizeof(cmd), "iw phy%d info | grep 'Band .:' | tr -d ':\\n' | awk '{print $2}'", phyIndex);
-        _syscmd(cmd, buf, sizeof(buf));
-        nl80211_band = strtol(buf, NULL, 10);
-        if (nl80211_band == 1)
-            band = band_2_4;
-        else if (nl80211_band == 2)
-            band = band_5;
-        else if (nl80211_band == 4)     // band == 3 is 60GHz
-            band = band_6;
+    snprintf(config_file, sizeof(config_file), "%s%d.conf", CONFIG_PREFIX, apIndex);
+    wifi_hostapdRead(config_file, "op_class", buf, sizeof(buf));
+    if (strlen(buf) > 0)
+        return band_6;
 
-        if(band != band_invalid)
-            break;
-            
-        i++;
-        sleep(1);
-    }
+    memset(buf, 0, sizeof(buf));
+    wifi_hostapdRead(config_file, "hw_mode", buf, sizeof(buf));
+    if (strncmp(buf, "a", 1) == 0)
+        return band_5;
+    else
+        return band_2_4;
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
     return band;
@@ -1419,8 +1409,9 @@ INT wifi_setRadioEnable(INT radioIndex, BOOL enable)
                     }
                 }
                 snprintf(cmd, sizeof(cmd), "hostapd_cli -i global raw ADD bss_config=phy%d:/nvram/hostapd%d.conf",
-                              phyId, apIndex);
+                              single_wiphy ? radioIndex : phyId, apIndex);
                 _syscmd(cmd, buf, sizeof(buf));
+
                 if(strncmp(buf, "OK", 2))
                     fprintf(stderr, "Could not detach %s from hostapd daemon", interface_name);
             }
@@ -3180,7 +3171,7 @@ INT wifi_getRadioTransmitPower(INT radioIndex, ULONG *output_ulong)	//RDKB
 
     // Get the maximum tx power of the device
     snprintf(cmd, sizeof(cmd),  "cat /sys/kernel/debug/ieee80211/phy%d/mt76/txpower_info | "
-                                "grep 'Percentage Control:' | awk '{print $3}' | tr -d '\\n'", phyIndex);
+                                "grep 'Percentage Control:' | awk '{print $3}' | tr -d '\\n'", single_wiphy ? radioIndex : phyIndex);
     _syscmd(cmd, buf, sizeof(buf));
     if (strcmp(buf, "enable") == 0)
         enabled = true;
@@ -3193,7 +3184,7 @@ INT wifi_getRadioTransmitPower(INT radioIndex, ULONG *output_ulong)	//RDKB
     memset(cmd, 0, sizeof(cmd));
     memset(buf, 0, sizeof(buf));
     snprintf(cmd, sizeof(cmd),  "cat /sys/kernel/debug/ieee80211/phy%d/mt76/txpower_info | "
-                                "grep 'Power Drop:' | awk '{print $3}' | tr -d '\\n'", phyIndex);
+                                "grep 'Power Drop:' | awk '{print $3}' | tr -d '\\n'", single_wiphy ? radioIndex : phyIndex);
     _syscmd(cmd, buf, sizeof(buf));
     cur_tx_dbm = strtol(buf, NULL, 10);
 
@@ -3258,7 +3249,7 @@ INT wifi_setRadioTransmitPower(INT radioIndex, ULONG TransmitPower)	//RDKB
 
     phyId = radio_index_to_phy(radioIndex);
     snprintf(cmd, sizeof(cmd),  "echo %lu > /sys/kernel/debug/ieee80211/phy%d/mt76/txpower_level",
-                                TransmitPower, phyId);
+                                TransmitPower, single_wiphy ? radioIndex : phyId);
     _syscmd(cmd, buf, sizeof(buf));
 
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
@@ -6258,14 +6249,10 @@ INT wifi_setApEnable(INT apIndex, BOOL enable)
         if (!(apIndex/max_radio_num)) {
 	        sprintf(cmd, "iw %s del", interface_name);
 	        _syscmd(cmd, buf, sizeof(buf));
-#ifdef SINGLE_WIPHY_SUPPORT
-	        sprintf(cmd, "iw phy phy0 interface add %s type __ap", interface_name);
-#else
 	        sprintf(cmd, "iw phy phy%d interface add %s type __ap", phyId, interface_name);
-#endif
 	        _syscmd(cmd, buf, sizeof(buf));
         }
-        sprintf(cmd, "hostapd_cli -i global raw ADD bss_config=phy%d:%s", phyId, config_file);
+        sprintf(cmd, "hostapd_cli -i global raw ADD bss_config=phy%d:%s", single_wiphy ? radioIndex : phyId, config_file);
         _syscmd(cmd, buf, sizeof(buf));
     }
     else {
@@ -11310,7 +11297,7 @@ INT wifi_getRadioPercentageTransmitPower(INT apIndex, ULONG *txpwr_pcntg)
 
     // Get the maximum tx power of the device
     snprintf(cmd, sizeof(cmd),  "cat /sys/kernel/debug/ieee80211/phy%d/mt76/txpower_info | "
-                                "grep 'Percentage Control:' | awk '{print $3}' | tr -d '\\n'", phyIndex);
+                                "grep 'Percentage Control:' | awk '{print $3}' | tr -d '\\n'", single_wiphy ? radioIndex : phyIndex);
     _syscmd(cmd, buf, sizeof(buf));
     if (strcmp(buf, "enable") == 0)
         enabled = true;
@@ -11323,7 +11310,7 @@ INT wifi_getRadioPercentageTransmitPower(INT apIndex, ULONG *txpwr_pcntg)
     memset(cmd, 0, sizeof(cmd));
     memset(buf, 0, sizeof(buf));
     snprintf(cmd, sizeof(cmd),  "cat /sys/kernel/debug/ieee80211/phy%d/mt76/txpower_info | "
-                                "grep 'Power Drop:' | awk '{print $3}' | tr -d '\\n'", phyIndex);
+                                "grep 'Power Drop:' | awk '{print $3}' | tr -d '\\n'", single_wiphy ? radioIndex : phyIndex);
     _syscmd(cmd, buf, sizeof(buf));
     cur_tx_dbm = strtol(buf, NULL, 10);
 
@@ -13975,7 +13962,7 @@ INT wifi_getTWTsessions(INT ap_index, UINT maxNumberSessions, wifi_twt_sessions_
     radio_index = ap_index % max_radio_num;
 
     phyId = radio_index_to_phy(radio_index);
-    sprintf(cmd, "cat /sys/kernel/debug/ieee80211/phy%d/mt76/twt_stats | wc -l", phyId);
+    sprintf(cmd, "cat /sys/kernel/debug/ieee80211/phy%d/mt76/twt_stats | wc -l", single_wiphy ? radio_index : phyId);
     _syscmd(cmd, buf, sizeof(buf));
     *numSessionReturned = strtol(buf, NULL, 10) - 1;
     if (*numSessionReturned > maxNumberSessions)
@@ -13985,7 +13972,7 @@ INT wifi_getTWTsessions(INT ap_index, UINT maxNumberSessions, wifi_twt_sessions_
         return RETURN_OK;
     }
 
-    sprintf(cmd, "cat /sys/kernel/debug/ieee80211/phy%d/mt76/twt_stats | tail -n %d | tr '|' ' ' | tr -s ' '", phyId, *numSessionReturned);
+    sprintf(cmd, "cat /sys/kernel/debug/ieee80211/phy%d/mt76/twt_stats | tail -n %d | tr '|' ' ' | tr -s ' '", single_wiphy ? radio_index : phyId, *numSessionReturned);
     if ((f = popen(cmd, "r")) == NULL) {
         wifi_dbg_printf("%s: popen %s error\n", __func__, cmd);
         return RETURN_ERR;
