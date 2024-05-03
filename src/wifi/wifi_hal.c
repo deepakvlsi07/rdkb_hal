@@ -208,7 +208,7 @@ static int util_get_sec_chan_offset(int channel, const char* ht_mode);
 wifi_secur_list *       wifi_get_item_by_key(wifi_secur_list *list, int list_sz, int key);
 wifi_secur_list *       wifi_get_item_by_str(wifi_secur_list *list, int list_sz, const char *str);
 char *                  wifi_get_str_by_key(wifi_secur_list *list, int list_sz, int key);
-static int ieee80211_channel_to_frequency(int channel, int *freqMHz);
+static int ieee80211_channel_to_frequency(int chan, wifi_band band);
 
 static wifi_secur_list map_security[] =
 {
@@ -803,7 +803,6 @@ INT wifi_getApBeaconRate(INT radioIndex, CHAR *beaconRate)
     char buf[128] = {'\0'};
     char cmd[128] = {'\0'};
     int rate = 0;
-    int phyId = 0;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
     if (NULL == beaconRate)
@@ -811,7 +810,6 @@ INT wifi_getApBeaconRate(INT radioIndex, CHAR *beaconRate)
 
     sprintf(config_file, "%s%d.conf", CONFIG_PREFIX, radioIndex);
     wifi_hostapdRead(config_file, "beacon_rate", buf, sizeof(buf));
-    phyId = radio_index_to_phy(radioIndex);
     // Hostapd unit is 100kbps. To convert to 100kbps to Mbps, the value need to divide 10.
     if(strlen(buf) > 0) {
         if (strncmp(buf, "55", 2) == 0)
@@ -822,9 +820,9 @@ INT wifi_getApBeaconRate(INT radioIndex, CHAR *beaconRate)
         }
     } else {
         // config not set, so we would use lowest rate as default
-        sprintf(cmd, "iw phy%d info | grep Bitrates -A1 | tail -n 1 | awk '{print $2}' | tr -d '.0\\n'", phyId);
+        sprintf(cmd, "hostapd_cli -i wifi%d status | grep supported_rates | sed 's/=/ 0x/' | awk '{print $2}'", radioIndex);
         _syscmd(cmd, buf, sizeof(buf));
-        snprintf(temp_output, sizeof(temp_output), "%sMbps", buf);
+        snprintf(temp_output, sizeof(temp_output), "%dMbps", strtol(buf, NULL, 0)*5/10);
     }
     strncpy(beaconRate, temp_output, sizeof(temp_output));
     WIFI_ENTRY_EXIT_DEBUG("Exiting %s:%d\n",__func__, __LINE__);
@@ -1411,7 +1409,6 @@ INT wifi_setRadioEnable(INT radioIndex, BOOL enable)
                 snprintf(cmd, sizeof(cmd), "hostapd_cli -i global raw ADD bss_config=phy%d:/nvram/hostapd%d.conf",
                               single_wiphy ? radioIndex : phyId, apIndex);
                 _syscmd(cmd, buf, sizeof(buf));
-
                 if(strncmp(buf, "OK", 2))
                     fprintf(stderr, "Could not detach %s from hostapd daemon", interface_name);
             }
@@ -2234,16 +2231,38 @@ INT wifi_getRadioPossibleChannels(INT radioIndex, CHAR *output_string)	//RDKB
     char cmd[256] = {0};
     char buf[128] = {0};
     BOOL dfs_enable = false;
-    int phyId = 0;
+    int phyId = 0, band_remap = 0, range_remap = 0;
+    wifi_band band = band_invalid;
 
+    band = wifi_index_to_band(radioIndex);
+    switch (band) {
+        case band_2_4:
+            band_remap = 1;
+            range_remap = 2;
+            break;
+        case band_5:
+            band_remap = 2;
+            range_remap = 4;
+            break;
+        case band_6:
+            band_remap = 4;
+            range_remap = 4;
+            break;
+        default:
+            break;
+    }
     // Parse possible channel number and separate them with commas.
     wifi_getRadioDfsEnable(radioIndex, &dfs_enable);
     phyId = radio_index_to_phy(radioIndex);
     // Channel 68 and 96 only allow bandwidth 20MHz, so we remove them with their frequency.
     if (dfs_enable)
-        snprintf(cmd, sizeof(cmd), "iw phy phy%d info | grep -e '\\*.*MHz .*dBm' | grep -v 'no IR\\|5340\\|5480' | cut -d '[' -f2 | cut -d ']' -f1 | tr '\\n' ',' | sed 's/.$//'", phyId);
+        snprintf(cmd, sizeof(cmd),
+                 "iw phy phy%d info | grep -e '\\*.*MHz .*dBm\\|Band ' | sed -n '/Band %d/,/Band %d/{/Band %d/n;/Band %d/b;p}' | grep -v 'no IR\\|5340\\|5480' | cut -d '[' -f2 | cut -d ']' -f1 | tr '\\n' ',' | sed 's/.$//'",
+                 phyId, band_remap, range_remap, band_remap, range_remap);
     else 
-        snprintf(cmd, sizeof(cmd), "iw phy phy%d info | grep -e '\\*.*MHz .*dBm' | grep -v 'radar\\|no IR\\|5340\\|5480' | cut -d '[' -f2 | cut -d ']' -f1 | tr '\\n' ',' | sed 's/.$//'", phyId);
+        snprintf(cmd, sizeof(cmd),
+                 "iw phy phy%d info | grep -e '\\*.*MHz .*dBm\\|Band ' | sed -n '/Band %d/,/Band %d/{/Band %d/n;/Band %d/b;p}' | grep -v 'radar\\|no IR\\|5340\\|5480' | cut -d '[' -f2 | cut -d ']' -f1 | tr '\\n' ',' | sed 's/.$//'",
+                 phyId, band_remap, range_remap, band_remap, range_remap);
 
     _syscmd(cmd,buf,sizeof(buf));
     strncpy(output_string, buf, sizeof(buf));
@@ -10118,13 +10137,15 @@ INT wifi_startNeighborScan(INT apIndex, wifi_neighborScanMode_t scan_mode, INT d
     char cmd[128]={0};
     char buf[128]={0};
     int freq = 0;
+    wifi_band band = band_invalid;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
 
+    band = wifi_index_to_band(apIndex);
     // full mode is used to scan all channels.
     // multiple channels is ambiguous, iw can not set multiple frequencies in one time.
     if (scan_mode != WIFI_RADIO_SCAN_MODE_FULL)
-        ieee80211_channel_to_frequency(chan_list[0], &freq);
+        freq = ieee80211_channel_to_frequency(chan_list[0], band);
 
     if (wifi_GetInterfaceName(apIndex, interface_name) != RETURN_OK)
         return RETURN_ERR;
@@ -10613,25 +10634,36 @@ static int chanSurveyInfo_callback(struct nl_msg *msg, void *arg) {
 }
 #endif
 
-static int ieee80211_channel_to_frequency(int channel, int *freqMHz)
+static int ieee80211_channel_to_frequency(int chan, wifi_band band)
 {
-    char command[MAX_CMD_SIZE], output[MAX_BUF_SIZE];
-    FILE *fp;
-
-    if(access("/tmp/freq-channel-map.txt", F_OK)==-1)
-    {
-        printf("Creating Frequency-Channel Map\n");
-        system("iw phy | grep 'MHz \\[' | cut -d' ' -f2,4 > /tmp/freq-channel-map.txt");
+	/* see 802.11 17.3.8.3.2 and Annex J
+	 * there are overlapping channel numbers in 5GHz and 2GHz bands */
+    if (chan <= 0)
+        return -1; /* not supported */
+    switch (band) {
+        case band_2_4:
+            if (chan == 14)
+                return 2484;
+            else if (chan < 14)
+                return (2407 + chan * 5);
+            break;
+        case band_5:
+            if (chan >= 182 && chan <= 196)
+                return (4000 + chan * 5);
+            else
+                return (5000 + chan * 5);
+            break;
+        case band_6:
+            /* see 802.11ax D6.1 27.3.23.2 */
+            if (chan == 2)
+                return 5935;
+            if (chan <= 233)
+                return (5950 + chan * 5);
+            break;
+        default:
+            return -1;
+            break;
     }
-    snprintf(command, sizeof(command), "cat /tmp/freq-channel-map.txt | grep '\\[%d\\]$' | cut -d' ' -f1", channel);
-    if((fp = popen(command, "r")))
-    {
-        fgets(output, sizeof(output), fp);
-        *freqMHz = atoi(output);
-        pclose(fp);
-    }
-
-    return 0;
 }
 
 static int get_survey_dump_buf(INT radioIndex, int channel, const char *buf, size_t bufsz)
@@ -10639,8 +10671,10 @@ static int get_survey_dump_buf(INT radioIndex, int channel, const char *buf, siz
     int freqMHz = -1;
     char cmd[MAX_CMD_SIZE] = {'\0'};
     char interface_name[16] = {0};
+    wifi_band band = band_invalid;
 
-    ieee80211_channel_to_frequency(channel, &freqMHz);
+    band = wifi_index_to_band(radioIndex);
+    freqMHz = ieee80211_channel_to_frequency(channel, band);
     if (freqMHz == -1) {
         wifi_dbg_printf("%s: failed to get channel frequency for channel: %d\n", __func__, channel);
         return -1;
@@ -11189,20 +11223,41 @@ INT wifi_setRMBeaconRequest(UINT apIndex, CHAR *peer, wifi_BeaconRequest_t *in_r
 INT wifi_getRadioChannels(INT radioIndex, wifi_channelMap_t *outputMap, INT outputMapSize)
 {
     int i;
-    int phyId = -1;
+    int phyId = -1, band_remap = 0, range_remap = 0;
     char cmd[256] = {0};
     char channel_numbers_buf[256] = {0};
     char dfs_state_buf[256] = {0};
     char line[256] = {0};
     const char *ptr;
     BOOL dfs_enable = false;
+    wifi_band band = band_invalid;
+
+    band = wifi_index_to_band(radioIndex);
+    switch (band) {
+        case band_2_4:
+            band_remap = 1;
+            range_remap = 2;
+            break;
+        case band_5:
+            band_remap = 2;
+            range_remap = 4;
+            break;
+        case band_6:
+            band_remap = 4;
+            range_remap = 4;
+            break;
+        default:
+            break;
+    }
 
     memset(outputMap, 0, outputMapSize*sizeof(wifi_channelMap_t)); // all unused entries should be zero
 
     wifi_getRadioDfsEnable(radioIndex, &dfs_enable);
     phyId = radio_index_to_phy(radioIndex);
 
-    snprintf(cmd, sizeof (cmd), "iw phy phy%d info | grep -e '\\*.*MHz .*dBm' | grep -v '%sno IR\\|5340\\|5480' | awk '{print $4}' | tr -d '[]'", phyId, dfs_enable?"":"radar\\|");
+    snprintf(cmd, sizeof (cmd),
+             "iw phy phy%d info | grep -e '\\*.*MHz .*dBm\\|Band ' | sed -n '/Band %d/,/Band %d/{/Band %d/n;/Band %d/b;p}' | grep -v '%sno IR\\|5340\\|5480' | awk '{print $4}' | tr -d '[]'",
+             phyId, band_remap, range_remap, band_remap, range_remap, dfs_enable?"":"radar\\|");
 
     if (_syscmd(cmd, channel_numbers_buf, sizeof(channel_numbers_buf)) == RETURN_ERR) {
         wifi_dbg_printf("%s: failed to execute '%s'\n", __FUNCTION__, cmd);
