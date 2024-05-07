@@ -1785,21 +1785,34 @@ INT wifi_getRadioSupportedStandards(INT radioIndex, CHAR *output_string) //Tr181
     char buf[128]={0};
     char temp_output[128] = {0};
     wifi_band band;
-    int phyId = 0;
+    int phyId = 0, band_remap = 0, range_remap = 0;;
 
     WIFI_ENTRY_EXIT_DEBUG("Inside %s:%d\n",__func__, __LINE__);
-    if (NULL == output_string) 
+    if (NULL == output_string)
         return RETURN_ERR;
 
     band = wifi_index_to_band(radioIndex);
-    if (band == band_2_4) {
-        strcat(temp_output, "b,g,");
-    } else if (band == band_5) {
-        strcat(temp_output, "a,");
+    switch (band) {
+        case band_2_4:
+            band_remap = 1;
+            range_remap = 2;
+            strcat(temp_output, "b,g,");
+        break;
+        case band_5:
+            band_remap = 2;
+            range_remap = 4;
+            strcat(temp_output, "a,");
+        break;
+        case band_6:
+            band_remap = 4;
+            range_remap = 4;
+        break;
     }
     phyId = radio_index_to_phy(radioIndex);
     // ht capabilities
-    snprintf(cmd, sizeof(cmd),  "iw phy%d info | grep '[^PHY|MAC|VHT].Capabilities' | head -n 1 | cut -d ':' -f2 | sed 's/^.//' | tr -d '\\n'", phyId);
+    snprintf(cmd, sizeof(cmd),
+             "iw phy%d info | grep 'Band \\|[^PHY|MAC|VHT].Capabilities' | sed -n '/Band %d/,/Band %d/{/Band %d/n;/Band %d/b;p}' | head -n 1 | cut -d ':' -f2 | sed 's/^.//' | tr -d '\\n'",
+             phyId, band_remap, range_remap, band_remap, range_remap);
     _syscmd(cmd, buf, sizeof(buf));
     if (strlen(buf) >= 4 && strncmp(buf, "0x00", 4) != 0) {
         strcat(temp_output, "n,");
@@ -1807,7 +1820,9 @@ INT wifi_getRadioSupportedStandards(INT radioIndex, CHAR *output_string) //Tr181
 
     // vht capabilities
     if (band == band_5) {
-        snprintf(cmd, sizeof(cmd),  "iw phy%d info | grep 'VHT Capabilities' | cut -d '(' -f2 | cut -c1-10 | tr -d '\\n'", phyId);
+        snprintf(cmd, sizeof(cmd),
+                 "iw phy%d info | grep 'Band \\|VHT Capabilities' | sed -n '/Band %d/,/Band %d/{/Band %d/n;/Band %d/b;p}' | cut -d '(' -f2 | cut -c1-10 | tr -d '\\n'",
+                 phyId, band_remap, range_remap, band_remap, range_remap);
         _syscmd(cmd, buf, sizeof(buf));
         if (strlen(buf) >= 10 && strncmp(buf, "0x00000000", 10) != 0) {
             strcat(temp_output, "ac,");
@@ -1815,14 +1830,18 @@ INT wifi_getRadioSupportedStandards(INT radioIndex, CHAR *output_string) //Tr181
     }
 
     // he capabilities
-    snprintf(cmd, sizeof(cmd),  "iw phy%d info | grep 'HE MAC Capabilities' | head -n 2 | tail -n 1 | cut -d '(' -f2 | cut -c1-6 | tr -d '\\n'", phyId);
+    snprintf(cmd, sizeof(cmd),
+             "iw phy%d info | grep 'Band \\|HE MAC Capabilities' | sed -n '/Band %d/,/Band %d/{/Band %d/n;/Band %d/b;p}' | head -n 2 | tail -n 1 | cut -d '(' -f2 | cut -c1-6 | tr -d '\\n'",
+             phyId, band_remap, range_remap, band_remap, range_remap);
     _syscmd(cmd, buf, sizeof(buf));
     if (strlen(buf) >= 6 && strncmp (buf, "0x0000", 6) != 0) {
         strcat(temp_output, "ax,");
     }
 
     // eht capabilities
-    snprintf(cmd, sizeof(cmd),  "iw phy%d info | grep 'EHT MAC Capabilities' | head -n 2 | tail -n 1 | cut -d '(' -f2 | cut -c1-6 | tr -d '\\n'", phyId);
+    snprintf(cmd, sizeof(cmd),
+             "iw phy%d info | grep 'Band \\|EHT MAC Capabilities' | sed -n '/Band %d/,/Band %d/{/Band %d/n;/Band %d/b;p}' | head -n 2 | tail -n 1 | cut -d '(' -f2 | cut -c1-6 | tr -d '\\n'",
+             phyId, band_remap, range_remap, band_remap, range_remap);
     _syscmd(cmd, buf, sizeof(buf));
     if (strlen(buf) >= 6 && strncmp (buf, "0x0000", 6) != 0) {
         strcat(temp_output, "be,");
