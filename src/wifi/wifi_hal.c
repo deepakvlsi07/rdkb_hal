@@ -1781,7 +1781,7 @@ INT wifi_getRadioOperatingFrequencyBand(INT radioIndex, CHAR *output_string) //T
 //The output_string is a max length 64 octet string that is allocated by the RDKB code.  Implementations must ensure that strings are not longer than this.
 INT wifi_getRadioSupportedStandards(INT radioIndex, CHAR *output_string) //Tr181
 {
-    char cmd[128]={0};
+    char cmd[256]={0};
     char buf[128]={0};
     char temp_output[128] = {0};
     wifi_band band;
